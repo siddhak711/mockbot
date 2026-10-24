@@ -1,0 +1,341 @@
+/*
+  Theme tokens for the workspace. A later visual design can replace this
+  file without changing the component markup.
+*/
+:root {
+  color-scheme: dark;
+  --bg: #212121;
+  --bg-sidebar: #171717;
+  --bg-elevated: #2a2a2a;
+  --bg-hover: rgba(255, 255, 255, 0.06);
+  --bg-code: #111111;
+  --user-bg: #303030;
+  --text: #ececec;
+  --text-muted: #a3a3a3;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.18);
+  --button-bg: #f4f4f4;
+  --button-text: #171717;
+  --danger: #f0a8a8;
+  --danger-bg: rgba(224, 108, 117, 0.12);
+  --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --sidebar-width: 280px;
+  --transcript-width: 740px;
+  --radius: 12px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+}
+
+button,
+textarea,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+button.primary {
+  background: var(--button-bg);
+  color: var(--button-text);
+}
+
+button.primary:hover:not(:disabled) {
+  background: #ffffff;
+}
+
+button.danger:hover:not(:disabled) {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+button.stop {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border-color: transparent;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  height: 100vh;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--border);
+}
+
+.sidebar-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px;
+}
+
+.brand {
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.conversation-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 8px 12px;
+  overflow: auto;
+  flex: 1;
+}
+
+.conversation-list li {
+  display: flex;
+  border-radius: 10px;
+}
+
+.conversation-list li.active {
+  background: var(--bg-elevated);
+}
+
+.conversation-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.conversation-list .empty {
+  color: var(--text-muted);
+  padding: 12px;
+}
+
+.provider-label {
+  padding: 12px 16px 16px;
+  color: var(--text-muted);
+  font-size: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.thread {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.thread-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 60px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.thread-header h1 {
+  flex: 1;
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.rename-form {
+  display: flex;
+  gap: 8px;
+  flex: 1;
+}
+
+.rename-form input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.transcript {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 24px 16px 8px;
+}
+
+.transcript-column {
+  width: min(var(--transcript-width), 100%);
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.transcript-empty {
+  margin: auto;
+  max-width: 420px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.transcript-empty h2 {
+  margin: 0 0 8px;
+  color: var(--text);
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.message-role {
+  margin-bottom: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.message.user {
+  align-self: flex-end;
+  max-width: min(85%, 560px);
+}
+
+.user-text {
+  margin: 0;
+  white-space: pre-wrap;
+  background: var(--user-bg);
+  padding: 10px 14px;
+  border-radius: 16px;
+  line-height: 1.5;
+}
+
+.markdown {
+  line-height: 1.55;
+}
+
+.markdown :first-child {
+  margin-top: 0;
+}
+
+.markdown :last-child {
+  margin-bottom: 0;
+}
+
+.markdown p,
+.markdown ul,
+.markdown ol,
+.markdown pre,
+.markdown blockquote {
+  margin: 0.6em 0;
+}
+
+.markdown ul,
+.markdown ol {
+  padding-left: 1.3em;
+}
+
+.markdown blockquote {
+  padding-left: 12px;
+  border-left: 3px solid var(--border-strong);
+  color: var(--text-muted);
+}
+
+.markdown pre {
+  background: var(--bg-code);
+  padding: 12px 14px;
+  border-radius: 10px;
+  overflow: auto;
+}
+
+.markdown code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.92em;
+}
+
+.markdown p code,
+.markdown li code {
+  background: var(--bg-code);
+  padding: 0.1em 0.35em;
+  border-radius: 6px;
+}
+
+.markdown h1,
+.markdown h2,
+.markdown h3 {
+  font-size: 1em;
+  margin: 1em 0 0.4em;
+}
+
+.error {
+  width: min(var(--transcript-width), calc(100% - 32px));
+  margin: 0 auto 8px;
+  color: var(--danger);
+}
+
+.composer {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  width: min(var(--transcript-width), calc(100% - 32px));
+  margin: 0 auto 20px;
+  padding: 8px 8px 8px 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+}
+
+.composer textarea {
+  flex: 1;
+  resize: none;
+  border: 0;
+  outline: none;
+  background: transparent;
+  padding: 8px 4px;
+  min-height: 48px;
+  max-height: 180px;
+}
+
+@media (max-width: 800px) {
+  .workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(160px, 34vh) minmax(0, 1fr);
+  }
+
+  .sidebar {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+}
