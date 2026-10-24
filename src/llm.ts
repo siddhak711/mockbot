@@ -1,4 +1,5 @@
-import type { LlmMessage, ProviderId } from "./types";
+import type { LlmMessage, LlmStreamEvent, ProviderId } from "./types";
+import { readOpenAiEvents } from "./openai-events";
 import { SseParser } from "./sse";
 
 export const SYSTEM_PROMPT =
@@ -7,10 +8,15 @@ export const SYSTEM_PROMPT =
 const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
 const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
 
+export const MOCK_TOOL_ID = "call_lookup";
+export const MOCK_TOOL_NAME = "lookup_context";
+export const MOCK_TOOL_RESULT =
+  "Local context only. No API key is configured, so this reply stays on the mock provider.";
+
 export interface LlmProvider {
   readonly id: ProviderId;
   readonly model: string | null;
-  stream(messages: LlmMessage[], signal?: AbortSignal): AsyncIterable<string>;
+  stream(messages: LlmMessage[], signal?: AbortSignal): AsyncIterable<LlmStreamEvent>;
 }
 
 export function buildMockReply(userText: string): string {
@@ -36,6 +42,24 @@ export function buildMockReply(userText: string): string {
     "",
     "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.",
   ].join("\n");
+}
+
+export function buildMockReasoning(userText: string): string {
+  const quoted = userText.replace(/\s+/g, " ").trim();
+  return `The request is “${quoted}”. I should check local context before answering, and I should not send an API key.`;
+}
+
+export function buildMockToolArguments(userText: string): string {
+  return JSON.stringify({ query: userText.replace(/\s+/g, " ").trim() });
+}
+
+function chunkText(text: string, size: number): string[] {
+  const width = Math.max(1, size);
+  const parts: string[] = [];
+  for (let index = 0; index < text.length; index += width) {
+    parts.push(text.slice(index, index + width));
+  }
+  return parts;
 }
 
 function abortError(): Error {
@@ -70,17 +94,52 @@ export class MockProvider implements LlmProvider {
     } = {},
   ) {}
 
-  async *stream(messages: LlmMessage[], signal?: AbortSignal): AsyncIterable<string> {
+  async *stream(messages: LlmMessage[], signal?: AbortSignal): AsyncIterable<LlmStreamEvent> {
     const lastUser = [...messages].reverse().find((message) => message.role === "user");
-    const text = this.options.reply?.(messages) ?? buildMockReply(lastUser?.content ?? "");
+    const userText = lastUser?.content ?? "";
+    const scripted = !this.options.reply;
+    const text = this.options.reply?.(messages) ?? buildMockReply(userText);
     const size = Math.max(1, this.options.chunkSize ?? 24);
     const delay = this.options.delayMs ?? 0;
-    for (let index = 0; index < text.length; index += size) {
+
+    if (signal?.aborted) return;
+    yield { type: "start", role: "assistant" };
+
+    if (scripted) {
+      for (const piece of chunkText(buildMockReasoning(userText), size)) {
+        await sleep(delay, signal);
+        if (signal?.aborted) return;
+        yield { type: "reasoning", text: piece };
+      }
+      await sleep(delay, signal);
       if (signal?.aborted) return;
-      if (index > 0) await sleep(delay, signal);
+      yield { type: "tool_call", index: 0, id: MOCK_TOOL_ID, name: MOCK_TOOL_NAME };
+      for (const piece of chunkText(buildMockToolArguments(userText), size)) {
+        await sleep(delay, signal);
+        if (signal?.aborted) return;
+        yield { type: "tool_call", index: 0, arguments: piece };
+      }
+      await sleep(delay, signal);
       if (signal?.aborted) return;
-      yield text.slice(index, index + size);
+      yield {
+        type: "tool_result",
+        id: MOCK_TOOL_ID,
+        name: MOCK_TOOL_NAME,
+        content: MOCK_TOOL_RESULT,
+      };
     }
+
+    let started = false;
+    for (const piece of chunkText(text, size)) {
+      if (started) await sleep(delay, signal);
+      started = true;
+      if (signal?.aborted) return;
+      yield { type: "text", text: piece };
+    }
+    if (signal?.aborted) return;
+    await sleep(delay, signal);
+    if (signal?.aborted) return;
+    yield { type: "end", finishReason: "stop" };
   }
 }
 
@@ -102,7 +161,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     this.model = options.model;
   }
 
-  async *stream(messages: LlmMessage[], signal?: AbortSignal): AsyncIterable<string> {
+  async *stream(messages: LlmMessage[], signal?: AbortSignal): AsyncIterable<LlmStreamEvent> {
     let response: Response;
     try {
       response = await fetch(`${this.#baseUrl}/chat/completions`, {
@@ -138,37 +197,34 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     const parser = new SseParser();
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
+    let ended = false;
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       for (const message of parser.push(decoder.decode(value, { stream: true }))) {
         const payload = message.data.trim();
-        if (payload === "[DONE]") return;
+        if (payload === "[DONE]") {
+          if (!ended) yield { type: "end", finishReason: "stop" };
+          return;
+        }
         let parsed: unknown;
         try {
           parsed = JSON.parse(payload);
         } catch {
           continue;
         }
-        const content = readDelta(parsed);
-        if (content) yield content;
+        for (const event of readOpenAiEvents(parsed)) {
+          if (event.type === "end") ended = true;
+          yield event;
+        }
       }
     }
+    if (!ended) yield { type: "end", finishReason: "stop" };
   }
 
   #redact(text: string): string {
     return this.#apiKey ? text.split(this.#apiKey).join("[redacted]") : text;
   }
-}
-
-function readDelta(payload: unknown): string {
-  if (!payload || typeof payload !== "object") return "";
-  const choices = (payload as { choices?: unknown }).choices;
-  if (!Array.isArray(choices) || !choices[0] || typeof choices[0] !== "object") return "";
-  const delta = (choices[0] as { delta?: unknown }).delta;
-  if (!delta || typeof delta !== "object") return "";
-  const content = (delta as { content?: unknown }).content;
-  return typeof content === "string" ? content : "";
 }
 
 export function selectProvider(env: Record<string, string | undefined> = process.env): LlmProvider {

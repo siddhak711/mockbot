@@ -1,6 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
-import type { Conversation, Message, Role } from "./types";
+import { parseTrace } from "./trace";
+import type { Conversation, Message, MessageTrace, Role } from "./types";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS conversations (
@@ -16,8 +17,11 @@ CREATE TABLE IF NOT EXISTS messages (
   conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
   content TEXT NOT NULL,
+  trace JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS trace JSONB;
 
 CREATE INDEX IF NOT EXISTS messages_conversation_idx ON messages (conversation_id, seq);
 `;
@@ -35,6 +39,7 @@ type MessageRow = {
   role: Role;
   content: string;
   created_at: Date | string;
+  trace: unknown;
 };
 
 function asIso(value: Date | string): string {
@@ -58,7 +63,12 @@ function mapMessage(row: MessageRow): Message {
     role: row.role,
     content: row.content,
     createdAt: asIso(row.created_at),
+    trace: parseTrace(row.trace),
   };
+}
+
+function traceParam(trace: MessageTrace | null): string | null {
+  return trace ? JSON.stringify(trace) : null;
 }
 
 export function titleFromMessage(message: string): string {
@@ -115,7 +125,7 @@ export class ConversationStore {
     const conversation = conversations.rows[0];
     if (!conversation) return null;
     const messages = await this.db.query<MessageRow>(
-      `SELECT id, conversation_id, role, content, created_at
+      `SELECT id, conversation_id, role, content, trace, created_at
        FROM messages
        WHERE conversation_id = $1
        ORDER BY seq ASC`,
@@ -144,13 +154,18 @@ export class ConversationStore {
     return result.rows.length > 0;
   }
 
-  async addMessage(conversationId: string, role: Role, content: string): Promise<Message> {
+  async addMessage(
+    conversationId: string,
+    role: Role,
+    content: string,
+    trace: MessageTrace | null = null,
+  ): Promise<Message> {
     const id = crypto.randomUUID();
     const inserted = await this.db.query<MessageRow>(
-      `INSERT INTO messages (id, conversation_id, role, content)
-       VALUES ($1, $2, $3, $4)
-       RETURNING id, conversation_id, role, content, created_at`,
-      [id, conversationId, role, content],
+      `INSERT INTO messages (id, conversation_id, role, content, trace)
+       VALUES ($1, $2, $3, $4, $5::jsonb)
+       RETURNING id, conversation_id, role, content, trace, created_at`,
+      [id, conversationId, role, content, traceParam(trace)],
     );
     await this.db.query(`UPDATE conversations SET updated_at = NOW() WHERE id = $1`, [
       conversationId,
@@ -160,7 +175,11 @@ export class ConversationStore {
     return mapMessage(row);
   }
 
-  async updateMessageContent(id: string, content: string): Promise<void> {
-    await this.db.query(`UPDATE messages SET content = $2 WHERE id = $1`, [id, content]);
+  async updateMessage(id: string, content: string, trace: MessageTrace | null): Promise<void> {
+    await this.db.query(`UPDATE messages SET content = $2, trace = $3::jsonb WHERE id = $1`, [
+      id,
+      content,
+      traceParam(trace),
+    ]);
   }
 }

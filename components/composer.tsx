@@ -42,7 +42,7 @@ export function Composer({
           }}
         />
         <div className="composer-row">
-          {streaming ? <span className="hint">Responding</span> : null}
+          {streaming ? <span className="hint">Streaming</span> : null}
           <span className="grow" />
           {streaming ? (
             <button type="button" className="stop" aria-label="Stop generating" onClick={onStop}>

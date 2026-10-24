@@ -1,7 +1,8 @@
 import { encodeSse, ssePadding } from "./sse";
 import { titleFromMessage, type ConversationStore } from "./store";
 import { SYSTEM_PROMPT, type LlmProvider } from "./llm";
-import type { LlmMessage } from "./types";
+import { applyStreamEvent, emptyTrace, hasVisibleStream } from "./trace";
+import type { LlmMessage, LlmStreamEvent, MessageTrace } from "./types";
 
 const MAX_MESSAGE_LENGTH = 20_000;
 
@@ -15,6 +16,33 @@ const SSE_HEADERS = {
 function isAbort(error: unknown, signal?: AbortSignal): boolean {
   if (signal?.aborted) return true;
   return error instanceof Error && error.name === "AbortError";
+}
+
+function eventName(event: LlmStreamEvent): string {
+  return event.type === "text" ? "delta" : event.type;
+}
+
+function eventData(event: LlmStreamEvent): unknown {
+  switch (event.type) {
+    case "start":
+      return { role: event.role };
+    case "reasoning":
+    case "text":
+      return { text: event.text };
+    case "tool_call": {
+      const data: { index: number; id?: string; name?: string; arguments?: string } = {
+        index: event.index,
+      };
+      if (event.id) data.id = event.id;
+      if (event.name) data.name = event.name;
+      if (event.arguments) data.arguments = event.arguments;
+      return data;
+    }
+    case "tool_result":
+      return { id: event.id, name: event.name, content: event.content };
+    case "end":
+      return { finishReason: event.finishReason };
+  }
 }
 
 export async function streamChatTurn(options: {
@@ -42,26 +70,31 @@ export async function streamChatTurn(options: {
   const stored = await options.store.getConversation(conversation.id);
   const history: LlmMessage[] = [
     { role: "system", content: SYSTEM_PROMPT },
-    ...(stored?.messages ?? []).map((item) => ({ role: item.role, content: item.content })),
+    ...(stored?.messages ?? [])
+      .filter((item) => item.content.length > 0)
+      .map((item) => ({ role: item.role, content: item.content })),
   ];
 
   const { store, provider, signal } = options;
   const conversationSnapshot = conversation;
   let partial = "";
+  let trace = emptyTrace();
   let assistantId: string | null = null;
   let saved = "";
   let persistQueue = Promise.resolve();
 
-  const persist = (text: string) => {
+  const persist = (text: string, current: MessageTrace) => {
+    const encoded = JSON.stringify({ text, trace: current });
     persistQueue = persistQueue.then(async () => {
-      if (!text || text === saved) return;
+      if (encoded === saved) return;
+      if (!hasVisibleStream(current, text)) return;
       if (!assistantId) {
-        const created = await store.addMessage(conversationSnapshot.id, "assistant", text);
+        const created = await store.addMessage(conversationSnapshot.id, "assistant", text, current);
         assistantId = created.id;
       } else {
-        await store.updateMessageContent(assistantId, text);
+        await store.updateMessage(assistantId, text, current);
       }
-      saved = text;
+      saved = encoded;
     });
     return persistQueue;
   };
@@ -87,6 +120,14 @@ export async function streamChatTurn(options: {
         }
       };
 
+      const publish = async (next: MessageTrace, event: LlmStreamEvent) => {
+        trace = next;
+        partial = next.text;
+        await persist(partial, trace);
+        if (signal?.aborted) return;
+        enqueue(eventName(event), eventData(event));
+      };
+
       try {
         controller.enqueue(ssePadding());
         enqueue("meta", {
@@ -95,13 +136,30 @@ export async function streamChatTurn(options: {
           userMessageId: user.id,
         });
 
-        for await (const delta of provider.stream(history, signal)) {
+        let sawStart = false;
+        let sawEnd = false;
+        for await (const event of provider.stream(history, signal)) {
           if (signal?.aborted) break;
-          partial += delta;
-          enqueue("delta", { text: delta });
-          await persist(partial);
+          if (!sawStart && event.type !== "start") {
+            sawStart = true;
+            await publish(applyStreamEvent(trace, { type: "start", role: "assistant" }), {
+              type: "start",
+              role: "assistant",
+            });
+            if (signal?.aborted) break;
+          }
+          if (event.type === "start") sawStart = true;
+          if (event.type === "end") sawEnd = true;
+          await publish(applyStreamEvent(trace, event), event);
+          if (signal?.aborted) break;
         }
-        await persist(partial);
+        if (!signal?.aborted && sawStart && !sawEnd) {
+          await publish(applyStreamEvent(trace, { type: "end", finishReason: "stop" }), {
+            type: "end",
+            finishReason: "stop",
+          });
+        }
+        await persist(partial, trace);
         if (!signal?.aborted) {
           enqueue("done", {
             conversationId: conversationSnapshot.id,
@@ -109,18 +167,18 @@ export async function streamChatTurn(options: {
           });
         }
       } catch (error) {
-        await persist(partial);
+        await persist(partial, trace);
         if (!isAbort(error, signal)) {
           const text = error instanceof Error ? error.message : "The model request failed";
           enqueue("error", { message: text });
         }
       } finally {
-        await persist(partial);
+        await persist(partial, trace);
         close();
       }
     },
     async cancel() {
-      await persist(partial);
+      await persist(partial, trace);
     },
   });
 

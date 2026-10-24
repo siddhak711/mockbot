@@ -1,16 +1,17 @@
 import { useEffect, useRef } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import type { Message } from "../src/types";
+import type { LivePhase, Message } from "../src/types";
+import { AssistantStream } from "./assistant-stream";
 import { ToolActivityCards, type ToolActivity } from "./tool-activity";
 
 export function Transcript({
   messages,
   streaming = false,
+  livePhase = null,
   activities = [],
 }: {
   messages: Message[];
   streaming?: boolean;
+  livePhase?: LivePhase | null;
   activities?: ToolActivity[];
 }) {
   const endRef = useRef<HTMLDivElement>(null);
@@ -27,7 +28,10 @@ export function Transcript({
       <div className="transcript">
         <div className="transcript-empty">
           <h2>Start a conversation</h2>
-          <p>Messages stream here. With no API key, Mockbot replies locally.</p>
+          <p>
+            Replies stream in full: the start token, reasoning, tool calls, the answer, and the end
+            token.
+          </p>
         </div>
       </div>
     );
@@ -54,11 +58,7 @@ export function Transcript({
               {message.id === lastAssistantId ? (
                 <ToolActivityCards activities={activities} />
               ) : null}
-              <div className={live ? "markdown streaming" : "markdown"}>
-                {message.content ? (
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
-                ) : null}
-              </div>
+              <AssistantStream message={message} live={live} livePhase={live ? livePhase : null} />
             </article>
           );
         })}
