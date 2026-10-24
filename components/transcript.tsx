@@ -2,16 +2,23 @@ import { useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Message } from "../src/types";
-import { ToolActivityCards, type ToolActivity } from "./tool-activity";
+import type { ToolActivity } from "../src/tools/display";
+import { ToolActivityCards } from "./tool-activity";
 
 export function Transcript({
   messages,
   streaming = false,
   activities = [],
+  decidingId,
+  onDecide,
+  onSelectTool,
 }: {
   messages: Message[];
   streaming?: boolean;
   activities?: ToolActivity[];
+  decidingId?: string | null;
+  onDecide?: (id: string, decision: "approve" | "deny") => void;
+  onSelectTool?: (id: string) => void;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
   const lastAssistantId = [...messages]
@@ -45,16 +52,26 @@ export function Transcript({
               </article>
             );
           }
+          const messageActivities = activities.filter(
+            (activity) => activity.messageId === message.id,
+          );
+          const waiting =
+            live &&
+            messageActivities.some((activity) => activity.state === "approval") &&
+            !message.content;
           return (
             <article
               key={message.id}
               className="message assistant"
               aria-label={live ? "Reply still streaming" : "Mockbot"}
             >
-              {message.id === lastAssistantId ? (
-                <ToolActivityCards activities={activities} />
-              ) : null}
-              <div className={live ? "markdown streaming" : "markdown"}>
+              <ToolActivityCards
+                activities={messageActivities}
+                decidingId={decidingId}
+                onDecide={onDecide}
+                onSelect={onSelectTool}
+              />
+              <div className={live && !waiting ? "markdown streaming" : "markdown"}>
                 {message.content ? (
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
                 ) : null}

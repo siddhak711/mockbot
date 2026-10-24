@@ -2,10 +2,12 @@ import { useState } from "react";
 
 export function Composer({
   streaming,
+  awaitingApproval = false,
   onSend,
   onStop,
 }: {
   streaming: boolean;
+  awaitingApproval?: boolean;
   onSend: (text: string) => void;
   onStop: () => void;
 }) {
@@ -42,7 +44,9 @@ export function Composer({
           }}
         />
         <div className="composer-row">
-          {streaming ? <span className="hint">Responding</span> : null}
+          {streaming ? (
+            <span className="hint">{awaitingApproval ? "Needs approval" : "Responding"}</span>
+          ) : null}
           <span className="grow" />
           {streaming ? (
             <button type="button" className="stop" aria-label="Stop generating" onClick={onStop}>

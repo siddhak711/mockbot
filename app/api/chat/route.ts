@@ -5,7 +5,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request): Promise<Response> {
-  const { store, provider } = await getAppContext();
+  const { store, provider, tools, approvals } = await getAppContext();
   let body: unknown;
   try {
     body = await request.json();
@@ -19,6 +19,8 @@ export async function POST(request: Request): Promise<Response> {
   return streamChatTurn({
     store,
     provider,
+    tools,
+    approvals,
     message: typeof record.message === "string" ? record.message : "",
     conversationId: typeof record.conversationId === "string" ? record.conversationId : undefined,
     signal: request.signal,

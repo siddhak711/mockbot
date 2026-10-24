@@ -6,7 +6,13 @@ import { ComputerPane } from "./computer-pane";
 import { ConversationList } from "./conversation-list";
 import { Transcript } from "./transcript";
 import { SseParser } from "../src/sse";
-import type { Conversation, Message } from "../src/types";
+import {
+  activitiesFromMessages,
+  describeTool,
+  previewText,
+  type ToolActivity,
+} from "../src/tools/display";
+import type { Conversation, Message, ToolCallStatus } from "../src/types";
 
 function isAbort(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
@@ -35,8 +41,14 @@ export function Workspace() {
   const [computerOpen, setComputerOpen] = useState(true);
   const [navOpen, setNavOpen] = useState(false);
   const [mobilePane, setMobilePane] = useState<"chat" | "computer">("chat");
+  const [activities, setActivities] = useState<ToolActivity[]>([]);
+  const [selectedToolId, setSelectedToolId] = useState<string | null>(null);
+  const [decidingId, setDecidingId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const activeIdRef = useRef<string | null>(null);
+  const activitiesRef = useRef(activities);
+  const decidingRef = useRef<string | null>(null);
+  activitiesRef.current = activities;
 
   useEffect(() => {
     activeIdRef.current = activeId;
@@ -47,11 +59,20 @@ export function Workspace() {
     if (!response.ok) {
       setActiveId(null);
       setMessages([]);
+      setActivities([]);
+      setSelectedToolId(null);
       return;
     }
     const data = (await response.json()) as { conversation: Conversation; messages: Message[] };
     setActiveId(data.conversation.id);
     setMessages(data.messages);
+    const nextActivities = activitiesFromMessages(data.messages);
+    setActivities(nextActivities);
+    setSelectedToolId((current) =>
+      current && nextActivities.some((item) => item.id === current)
+        ? current
+        : (nextActivities[nextActivities.length - 1]?.id ?? null),
+    );
     setEditing(false);
     setConversations((prev) =>
       prev.map((item) => (item.id === data.conversation.id ? data.conversation : item)),
@@ -105,6 +126,8 @@ export function Workspace() {
     setMobilePane("chat");
     setActiveId(null);
     setMessages([]);
+    setActivities([]);
+    setSelectedToolId(null);
     setError(null);
     setEditing(false);
     const url = new URL(window.location.href);
@@ -138,6 +161,8 @@ export function Workspace() {
     if (activeIdRef.current === id) {
       setActiveId(null);
       setMessages([]);
+      setActivities([]);
+      setSelectedToolId(null);
       setEditing(false);
       const url = new URL(window.location.href);
       url.searchParams.delete("c");
@@ -151,6 +176,7 @@ export function Workspace() {
     const data = (await response.json()) as { conversation: Conversation; messages: Message[] };
     setActiveId(data.conversation.id);
     setMessages((local) => preferLongerAssistant(local, data.messages));
+    setActivities(activitiesFromMessages(data.messages));
     setConversations((prev) =>
       prev.map((item) => (item.id === data.conversation.id ? data.conversation : item)),
     );
@@ -183,6 +209,28 @@ export function Workspace() {
     let assistantLocalId: string | null = null;
     let conversationId = activeIdRef.current;
     let sawMeta = false;
+
+    const ensureAssistant = (id: string, convId: string) => {
+      if (assistantLocalId) return;
+      assistantLocalId = id;
+      setMessages((prev) => {
+        if (prev.some((item) => item.id === id)) return prev;
+        return [
+          ...prev,
+          {
+            id,
+            conversationId: convId,
+            role: "assistant",
+            content: "",
+            createdAt: new Date().toISOString(),
+          },
+        ];
+      });
+    };
+
+    const patchActivity = (id: string, patch: Partial<ToolActivity>) => {
+      setActivities((prev) => prev.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+    };
 
     try {
       const response = await fetch("/api/chat", {
@@ -228,28 +276,74 @@ export function Workspace() {
             );
           } else if (event.event === "delta") {
             const chunk = String(payload.text ?? "");
-            const id = conversationId ?? "";
-            if (!assistantLocalId) {
-              assistantLocalId = `local-${crypto.randomUUID()}`;
-              const assistantId = assistantLocalId;
-              setMessages((prev) => [
-                ...prev,
-                {
-                  id: assistantId,
-                  conversationId: id,
-                  role: "assistant",
-                  content: chunk,
-                  createdAt: new Date().toISOString(),
-                },
-              ]);
-            } else {
-              const assistantId = assistantLocalId;
-              setMessages((prev) =>
-                prev.map((item) =>
-                  item.id === assistantId ? { ...item, content: item.content + chunk } : item,
-                ),
-              );
-            }
+            const id = String(payload.assistantMessageId ?? assistantLocalId ?? "");
+            if (id) ensureAssistant(id, conversationId ?? "");
+            const assistantId = assistantLocalId;
+            if (!assistantId) continue;
+            setMessages((prev) =>
+              prev.map((item) =>
+                item.id === assistantId ? { ...item, content: item.content + chunk } : item,
+              ),
+            );
+          } else if (event.event === "tool_start") {
+            const id = String(payload.id ?? "");
+            const name = String(payload.name ?? "");
+            const messageId = String(payload.assistantMessageId ?? "");
+            if (!id || !messageId) continue;
+            ensureAssistant(messageId, conversationId ?? "");
+            const described = describeTool(name, "");
+            setActivities((prev) => [
+              ...prev.filter((item) => item.id !== id),
+              {
+                id,
+                messageId,
+                name,
+                arguments: "",
+                output: "",
+                preview: "",
+                state: "running",
+                ...described,
+              },
+            ]);
+            setSelectedToolId(id);
+          } else if (event.event === "tool_args") {
+            const id = String(payload.id ?? "");
+            const raw = String(payload.arguments ?? "");
+            setActivities((prev) =>
+              prev.map((item) => {
+                if (item.id !== id) return item;
+                return { ...item, arguments: raw, ...describeTool(item.name, raw) };
+              }),
+            );
+          } else if (event.event === "approval_required") {
+            const id = String(payload.id ?? "");
+            const raw = String(payload.arguments ?? "");
+            const summary = String(payload.summary ?? "");
+            setActivities((prev) =>
+              prev.map((item) => {
+                if (item.id !== id) return item;
+                const described = describeTool(item.name, raw || item.arguments);
+                return {
+                  ...item,
+                  ...described,
+                  state: "approval",
+                  arguments: raw || item.arguments,
+                  summary: summary || described.summary,
+                };
+              }),
+            );
+            setSelectedToolId(id);
+          } else if (event.event === "tool_result") {
+            const id = String(payload.id ?? "");
+            const status = String(payload.status ?? "done") as ToolCallStatus;
+            const output = String(payload.output ?? "");
+            patchActivity(id, {
+              state: status,
+              output,
+              preview: output ? previewText(output) : "",
+            });
+            decidingRef.current = null;
+            setDecidingId((current) => (current === id ? null : current));
           } else if (event.event === "error") {
             setError(String(payload.message ?? "The model request failed"));
           }
@@ -279,7 +373,31 @@ export function Workspace() {
     }
   }
 
+  async function decide(id: string, decision: "approve" | "deny") {
+    if (decidingRef.current) return;
+    decidingRef.current = id;
+    setDecidingId(id);
+    const response = await fetch("/api/tools/approvals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, decision }),
+    });
+    if (!response.ok) {
+      const activity = activitiesRef.current.find((item) => item.id === id);
+      if (!activity || activity.state === "approval") {
+        setError(
+          response.status === 404
+            ? "That approval expired. Send the request again."
+            : "Could not save the decision",
+        );
+      }
+      decidingRef.current = null;
+      setDecidingId((current) => (current === id ? null : current));
+    }
+  }
+
   const active = conversations.find((item) => item.id === activeId) ?? null;
+  const awaitingApproval = activities.some((activity) => activity.state === "approval");
 
   return (
     <div className={computerOpen ? "app with-computer" : "app"}>
@@ -409,7 +527,14 @@ export function Workspace() {
           )}
         </header>
         <div className="chat-body">
-          <Transcript messages={messages} streaming={streaming} />
+          <Transcript
+            messages={messages}
+            streaming={streaming}
+            activities={activities}
+            decidingId={decidingId}
+            onDecide={(id, decision) => void decide(id, decision)}
+            onSelectTool={setSelectedToolId}
+          />
           {error ? (
             <p className="error" role="alert">
               {error}
@@ -417,15 +542,27 @@ export function Workspace() {
           ) : null}
           <Composer
             streaming={streaming}
+            awaitingApproval={awaitingApproval}
             onSend={(text) => void send(text)}
             onStop={() => abortRef.current?.abort()}
           />
         </div>
         <div className="computer-sheet">
-          <ComputerPane />
+          <ComputerPane
+            activities={activities}
+            selectedId={selectedToolId}
+            onSelect={setSelectedToolId}
+          />
         </div>
       </main>
-      {computerOpen ? <ComputerPane onHide={() => setComputerOpen(false)} /> : null}
+      {computerOpen ? (
+        <ComputerPane
+          activities={activities}
+          selectedId={selectedToolId}
+          onSelect={setSelectedToolId}
+          onHide={() => setComputerOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }

@@ -153,6 +153,9 @@ it("does not reference provider secrets from browser code", () => {
     const source = readFileSync(file, "utf8");
     expect(source, file).not.toContain("LLM_API_KEY");
     expect(source, file).not.toContain("LLM_BASE_URL");
+    expect(source, file).not.toContain("TAVILY_API_KEY");
+    expect(source, file).not.toContain("GITHUB_TOKEN");
+    expect(source, file).not.toContain("GOOGLE_CALENDAR_ACCESS_TOKEN");
     expect(source, file).not.toContain("Authorization");
   }
 });

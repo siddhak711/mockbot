@@ -1,6 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
-import type { Conversation, Message, Role } from "./types";
+import type { Conversation, Message, Role, StoredToolCall, ToolCallStatus } from "./types";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS conversations (
@@ -20,6 +20,21 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 
 CREATE INDEX IF NOT EXISTS messages_conversation_idx ON messages (conversation_id, seq);
+
+CREATE TABLE IF NOT EXISTS tool_calls (
+  seq BIGSERIAL PRIMARY KEY,
+  id TEXT NOT NULL UNIQUE,
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  arguments TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL CHECK (status IN ('running', 'approval', 'done', 'denied', 'error')),
+  output TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS tool_calls_message_idx ON tool_calls (message_id, seq);
 `;
 
 type ConversationRow = {
@@ -34,6 +49,17 @@ type MessageRow = {
   conversation_id: string;
   role: Role;
   content: string;
+  created_at: Date | string;
+};
+
+type ToolCallRow = {
+  id: string;
+  conversation_id: string;
+  message_id: string;
+  name: string;
+  arguments: string;
+  status: ToolCallStatus;
+  output: string | null;
   created_at: Date | string;
 };
 
@@ -57,6 +83,19 @@ function mapMessage(row: MessageRow): Message {
     conversationId: row.conversation_id,
     role: row.role,
     content: row.content,
+    createdAt: asIso(row.created_at),
+  };
+}
+
+function mapToolCall(row: ToolCallRow): StoredToolCall {
+  return {
+    id: row.id,
+    conversationId: row.conversation_id,
+    messageId: row.message_id,
+    name: row.name,
+    arguments: row.arguments,
+    status: row.status,
+    output: row.output,
     createdAt: asIso(row.created_at),
   };
 }
@@ -121,7 +160,21 @@ export class ConversationStore {
        ORDER BY seq ASC`,
       [id],
     );
-    return { conversation: mapConversation(conversation), messages: messages.rows.map(mapMessage) };
+    const toolCalls = await this.db.query<ToolCallRow>(
+      `SELECT id, conversation_id, message_id, name, arguments, status, output, created_at
+       FROM tool_calls
+       WHERE conversation_id = $1
+       ORDER BY seq ASC`,
+      [id],
+    );
+    const tools = toolCalls.rows.map(mapToolCall);
+    return {
+      conversation: mapConversation(conversation),
+      messages: messages.rows.map((row) => ({
+        ...mapMessage(row),
+        tools: tools.filter((tool) => tool.messageId === row.id),
+      })),
+    };
   }
 
   async renameConversation(id: string, title: string): Promise<Conversation | null> {
@@ -162,5 +215,38 @@ export class ConversationStore {
 
   async updateMessageContent(id: string, content: string): Promise<void> {
     await this.db.query(`UPDATE messages SET content = $2 WHERE id = $1`, [id, content]);
+  }
+
+  async deleteMessage(id: string): Promise<void> {
+    await this.db.query(`DELETE FROM messages WHERE id = $1`, [id]);
+  }
+
+  async saveToolCall(input: {
+    id: string;
+    conversationId: string;
+    messageId: string;
+    name: string;
+    arguments: string;
+    status: ToolCallStatus;
+    output: string | null;
+  }): Promise<void> {
+    await this.db.query(
+      `INSERT INTO tool_calls (id, conversation_id, message_id, name, arguments, status, output)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (id) DO UPDATE SET
+         arguments = EXCLUDED.arguments,
+         status = EXCLUDED.status,
+         output = EXCLUDED.output,
+         updated_at = NOW()`,
+      [
+        input.id,
+        input.conversationId,
+        input.messageId,
+        input.name,
+        input.arguments,
+        input.status,
+        input.output,
+      ],
+    );
   }
 }

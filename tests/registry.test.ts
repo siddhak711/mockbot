@@ -1,0 +1,71 @@
+import { expect, it } from "vitest";
+import { ToolCallAssembler } from "../src/llm";
+import { toolSearchTool, ToolRegistry } from "../src/tools/registry";
+import { MAX_EXPOSED_TOOLS, type ToolDefinition } from "../src/tools/types";
+
+function stub(
+  name: string,
+  exposure: ToolDefinition["exposure"],
+  description = name,
+): ToolDefinition {
+  return {
+    name,
+    description,
+    exposure,
+    approval: "never",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    async invoke() {
+      return { content: name };
+    },
+  };
+}
+
+it("caps the tools exposed to the model and lets tool_search promote the rest", async () => {
+  const registry = new ToolRegistry();
+  registry.register(toolSearchTool(registry));
+  for (let index = 0; index < 14; index += 1) {
+    registry.register(stub(`tool_${String(index).padStart(2, "0")}`, "default", `Helper ${index}`));
+  }
+  registry.register(stub("archive_lookup", "hidden", "Search the secret archive"));
+
+  const first = registry.exposed({ limit: 100 });
+  expect(first).toHaveLength(MAX_EXPOSED_TOOLS);
+  expect(first.map((tool) => tool.name)).toContain("tool_search");
+  expect(first.map((tool) => tool.name)).not.toContain("archive_lookup");
+
+  const found = registry.search("secret archive");
+  expect(found.map((tool) => tool.name)).toEqual(["archive_lookup"]);
+
+  const promoted = new Set<string>();
+  const result = await registry
+    .get("tool_search")!
+    .invoke(
+      { query: "secret archive" },
+      { promote: (names) => names.forEach((name) => promoted.add(name)) },
+    );
+  expect(result.content).toContain("archive_lookup");
+  expect(result.isError).toBeFalsy();
+
+  const second = registry.exposed({ promoted });
+  expect(second).toHaveLength(MAX_EXPOSED_TOOLS);
+  expect(second.map((tool) => tool.name)).toContain("archive_lookup");
+  expect(second.map((tool) => tool.name)).toContain("tool_search");
+  expect(second.map((tool) => tool.name)).not.toContain("tool_13");
+});
+
+it("assembles streamed tool-call arguments without repeating earlier chunks", () => {
+  const assembler = new ToolCallAssembler();
+  expect(
+    assembler.push({
+      index: 0,
+      id: "call_1",
+      function: { name: "web_search", arguments: "" },
+    }),
+  ).toEqual([{ type: "tool_call", id: "call_1", name: "web_search", argumentsDelta: "" }]);
+  expect(assembler.push({ index: 0, function: { arguments: '{"query":' } })).toEqual([
+    { type: "tool_call", id: "call_1", argumentsDelta: '{"query":' },
+  ]);
+  expect(assembler.push({ index: 0, function: { arguments: '"weather"}' } })).toEqual([
+    { type: "tool_call", id: "call_1", argumentsDelta: '"weather"}' },
+  ]);
+});
