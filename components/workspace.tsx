@@ -8,7 +8,7 @@ import { SseParser } from "../src/sse";
 import type { Conversation, Message } from "../src/types";
 
 function isAbort(error: unknown): boolean {
-  return error instanceof DOMException && error.name === "AbortError";
+  return error instanceof Error && error.name === "AbortError";
 }
 
 function wait(ms: number): Promise<void> {

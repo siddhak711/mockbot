@@ -42,7 +42,7 @@ export function Composer({
       />
       {streaming ? (
         <button type="button" className="stop" onClick={onStop}>
-          Stop
+          Stop generating
         </button>
       ) : (
         <button type="submit" className="primary" disabled={!value.trim()}>

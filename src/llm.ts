@@ -25,7 +25,7 @@ export function buildMockReply(userText: string): string {
     "### Still here after a refresh",
     "",
     "- The conversation list and this transcript are stored locally.",
-    "- Press **Stop** to keep a partial answer.",
+    "- Use the Stop generating button to keep a partial answer.",
     "- Set `LLM_PROVIDER=openai` when you want a live model.",
     "",
     "```text",
