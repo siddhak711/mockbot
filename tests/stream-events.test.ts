@@ -10,6 +10,7 @@ import {
   MOCK_TOOL_ID,
   MOCK_TOOL_NAME,
   MOCK_TOOL_RESULT,
+  MockProvider,
   selectProvider,
   type LlmProvider,
 } from "../src/llm";
@@ -27,7 +28,7 @@ function firstIndex(events: Array<{ event: string }>, name: string): number {
   return events.findIndex((event) => event.event === name);
 }
 
-it("streams start, reasoning, a tool call, text, and end from the mock provider", async () => {
+it("streams start, reasoning, answer text, and end from the mock provider", async () => {
   const store = await ConversationStore.open();
   setAppContext({
     store,
@@ -45,10 +46,10 @@ it("streams start, reasoning, a tool call, text, and end from the mock provider"
   const kinds = events.map((event) => event.event);
 
   expect(firstIndex(events, "start")).toBeLessThan(firstIndex(events, "reasoning"));
-  expect(firstIndex(events, "reasoning")).toBeLessThan(firstIndex(events, "tool_call"));
-  expect(firstIndex(events, "tool_call")).toBeLessThan(firstIndex(events, "tool_result"));
-  expect(firstIndex(events, "tool_result")).toBeLessThan(firstIndex(events, "delta"));
+  expect(firstIndex(events, "reasoning")).toBeLessThan(firstIndex(events, "delta"));
   expect(firstIndex(events, "delta")).toBeLessThan(firstIndex(events, "end"));
+  expect(kinds).not.toContain("tool_call");
+  expect(kinds).not.toContain("tool_result");
   expect(kinds.at(-1)).toBe("done");
 
   const start = events.find((event) => event.event === "start");
@@ -59,6 +60,42 @@ it("streams start, reasoning, a tool call, text, and end from the mock provider"
     .join("");
   expect(reasoning).toBe(buildMockReasoning("Say hello"));
   expect(deltas(events)).toBe(buildMockReply("Say hello"));
+  expect(events.find((event) => event.event === "end")?.data).toEqual({ finishReason: "stop" });
+
+  const loaded = await store.getConversation((await store.listConversations())[0]!.id);
+  const assistant = loaded?.messages[1];
+  expect(assistant?.content).toBe(buildMockReply("Say hello"));
+  expect(assistant?.trace).toEqual({
+    started: true,
+    role: "assistant",
+    reasoning,
+    tools: [],
+    text: buildMockReply("Say hello"),
+    finishReason: "stop",
+    ended: true,
+  });
+  expect(loaded?.messages[0]?.trace).toBeNull();
+});
+
+it("streams a scripted tool call only when the test option is set", async () => {
+  const store = await ConversationStore.open();
+  setAppContext({
+    store,
+    provider: new MockProvider({ delayMs: 0, chunkSize: 12, scriptToolCall: true }),
+  });
+
+  const response = await POST(
+    new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Say hello" }),
+    }),
+  );
+  const events = await readSse(response);
+
+  expect(firstIndex(events, "reasoning")).toBeLessThan(firstIndex(events, "tool_call"));
+  expect(firstIndex(events, "tool_call")).toBeLessThan(firstIndex(events, "tool_result"));
+  expect(firstIndex(events, "tool_result")).toBeLessThan(firstIndex(events, "delta"));
 
   const calls = events.filter((event) => event.event === "tool_call");
   expect(calls.some((event) => (event.data as { name?: string }).name === MOCK_TOOL_NAME)).toBe(
@@ -74,29 +111,17 @@ it("streams start, reasoning, a tool call, text, and end from the mock provider"
     name: MOCK_TOOL_NAME,
     content: MOCK_TOOL_RESULT,
   });
-  expect(events.find((event) => event.event === "end")?.data).toEqual({ finishReason: "stop" });
 
   const loaded = await store.getConversation((await store.listConversations())[0]!.id);
-  const assistant = loaded?.messages[1];
-  expect(assistant?.content).toBe(buildMockReply("Say hello"));
-  expect(assistant?.trace).toEqual({
-    started: true,
-    role: "assistant",
-    reasoning,
-    tools: [
-      {
-        index: 0,
-        id: MOCK_TOOL_ID,
-        name: MOCK_TOOL_NAME,
-        arguments: args,
-        result: MOCK_TOOL_RESULT,
-      },
-    ],
-    text: buildMockReply("Say hello"),
-    finishReason: "stop",
-    ended: true,
-  });
-  expect(loaded?.messages[0]?.trace).toBeNull();
+  expect(loaded?.messages[1]?.trace?.tools).toEqual([
+    {
+      index: 0,
+      id: MOCK_TOOL_ID,
+      name: MOCK_TOOL_NAME,
+      arguments: args,
+      result: MOCK_TOOL_RESULT,
+    },
+  ]);
 });
 
 it("forwards upstream reasoning, tool calls, text, and the finish reason", async () => {

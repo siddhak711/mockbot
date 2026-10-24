@@ -91,13 +91,14 @@ export class MockProvider implements LlmProvider {
       reply?: (messages: LlmMessage[]) => string;
       delayMs?: number;
       chunkSize?: number;
+      /** Test-only. The live mock provider leaves this unset and does not invent a tool call. */
+      scriptToolCall?: boolean;
     } = {},
   ) {}
 
   async *stream(messages: LlmMessage[], signal?: AbortSignal): AsyncIterable<LlmStreamEvent> {
     const lastUser = [...messages].reverse().find((message) => message.role === "user");
     const userText = lastUser?.content ?? "";
-    const scripted = !this.options.reply;
     const text = this.options.reply?.(messages) ?? buildMockReply(userText);
     const size = Math.max(1, this.options.chunkSize ?? 24);
     const delay = this.options.delayMs ?? 0;
@@ -105,12 +106,15 @@ export class MockProvider implements LlmProvider {
     if (signal?.aborted) return;
     yield { type: "start", role: "assistant" };
 
-    if (scripted) {
+    if (!this.options.reply) {
       for (const piece of chunkText(buildMockReasoning(userText), size)) {
         await sleep(delay, signal);
         if (signal?.aborted) return;
         yield { type: "reasoning", text: piece };
       }
+    }
+
+    if (this.options.scriptToolCall) {
       await sleep(delay, signal);
       if (signal?.aborted) return;
       yield { type: "tool_call", index: 0, id: MOCK_TOOL_ID, name: MOCK_TOOL_NAME };

@@ -29,8 +29,8 @@ export function Transcript({
         <div className="transcript-empty">
           <h2>Start a conversation</h2>
           <p>
-            Replies stream in full: the start token, reasoning, tool calls, the answer, and the end
-            token.
+            Replies stream in full: the start token, reasoning, the answer, and the end token. Tool
+            calls show up when the model sends them.
           </p>
         </div>
       </div>
