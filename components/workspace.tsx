@@ -2,11 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Composer } from "./composer";
-import { ComputerPane } from "./computer-pane";
 import { ConversationList } from "./conversation-list";
+import { SidePane } from "./side-pane";
 import { Transcript } from "./transcript";
 import { SseParser } from "../src/sse";
-import type { Conversation, Message } from "../src/types";
+import type { ToolActivity } from "./tool-activity";
+import type { Conversation, Memory, Message } from "../src/types";
 
 function isAbort(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
@@ -14,6 +15,22 @@ function isAbort(error: unknown): boolean {
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function readActivity(payload: Record<string, unknown>): ToolActivity | null {
+  if (typeof payload.id !== "string" || typeof payload.title !== "string") return null;
+  const state = payload.state === "running" ? "running" : "done";
+  const kind =
+    payload.kind === "search" || payload.kind === "read" || payload.kind === "draft"
+      ? payload.kind
+      : "generic";
+  return {
+    id: payload.id,
+    title: payload.title,
+    detail: typeof payload.detail === "string" ? payload.detail : undefined,
+    state,
+    kind,
+  };
 }
 
 function preferLongerAssistant(local: Message[], remote: Message[]): Message[] {
@@ -33,8 +50,12 @@ export function Workspace() {
   const [editing, setEditing] = useState(false);
   const [draftTitle, setDraftTitle] = useState("");
   const [computerOpen, setComputerOpen] = useState(true);
+  const [sideTab, setSideTab] = useState<"computer" | "memory">("computer");
+  const [memories, setMemories] = useState<Memory[] | null>(null);
+  const [memoryError, setMemoryError] = useState<string | null>(null);
+  const [activities, setActivities] = useState<ToolActivity[]>([]);
   const [navOpen, setNavOpen] = useState(false);
-  const [mobilePane, setMobilePane] = useState<"chat" | "computer">("chat");
+  const [mobilePane, setMobilePane] = useState<"chat" | "computer" | "memory">("chat");
   const abortRef = useRef<AbortController | null>(null);
   const activeIdRef = useRef<string | null>(null);
 
@@ -68,21 +89,42 @@ export function Workspace() {
     setConversations(data.conversations);
   }, []);
 
+  const refreshMemories = useCallback(async () => {
+    const response = await fetch("/api/memories");
+    if (!response.ok) {
+      setMemoryError("Could not load memories");
+      return;
+    }
+    const data = (await response.json()) as { memories: Memory[] };
+    setMemories(data.memories);
+    setMemoryError(null);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const [listResponse, statusResponse] = await Promise.all([
+      const [listResponse, statusResponse, memoryResponse] = await Promise.all([
         fetch("/api/conversations"),
         fetch("/api/status"),
+        fetch("/api/memories"),
       ]);
       if (cancelled) return;
       if (statusResponse.ok) {
-        const status = (await statusResponse.json()) as { provider: string; model: string | null };
-        setProviderLabel(
+        const status = (await statusResponse.json()) as {
+          provider: string;
+          model: string | null;
+          database?: string;
+        };
+        const providerName =
           status.provider === "openai"
             ? `OpenAI-compatible${status.model ? ` · ${status.model}` : ""}`
-            : "Mock provider",
-        );
+            : "Mock provider";
+        const databaseName = status.database === "neon" ? "Neon" : "Local";
+        setProviderLabel(`${providerName} · ${databaseName}`);
+      }
+      if (memoryResponse.ok) {
+        const data = (await memoryResponse.json()) as { memories: Memory[] };
+        setMemories(data.memories);
       }
       if (!listResponse.ok) return;
       const data = (await listResponse.json()) as { conversations: Conversation[] };
@@ -98,6 +140,14 @@ export function Workspace() {
       cancelled = true;
     };
   }, [selectConversation]);
+
+  function showMemory() {
+    setComputerOpen(true);
+    setSideTab("memory");
+    setMobilePane("memory");
+    setNavOpen(false);
+    void refreshMemories();
+  }
 
   function newChat() {
     if (streaming) return;
@@ -167,6 +217,7 @@ export function Workspace() {
     const controller = new AbortController();
     abortRef.current = controller;
     setStreaming(true);
+    setActivities([]);
 
     const localUserId = `local-${crypto.randomUUID()}`;
     setMessages((prev) => [
@@ -226,6 +277,29 @@ export function Workspace() {
                 item.id === localUserId ? { ...item, conversationId: id } : item,
               ),
             );
+          } else if (event.event === "tool") {
+            const activity = readActivity(payload);
+            if (!activity) continue;
+            const id = conversationId ?? "";
+            if (!assistantLocalId) {
+              assistantLocalId = `local-${crypto.randomUUID()}`;
+              const assistantId = assistantLocalId;
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: assistantId,
+                  conversationId: id,
+                  role: "assistant",
+                  content: "",
+                  createdAt: new Date().toISOString(),
+                },
+              ]);
+            }
+            setActivities((prev) => {
+              const index = prev.findIndex((item) => item.id === activity.id);
+              if (index === -1) return [...prev, activity];
+              return prev.map((item) => (item.id === activity.id ? activity : item));
+            });
           } else if (event.event === "delta") {
             const chunk = String(payload.text ?? "");
             const id = conversationId ?? "";
@@ -259,6 +333,7 @@ export function Workspace() {
       if (conversationId) {
         await selectConversation(conversationId);
         await refreshList();
+        await refreshMemories();
       }
     } catch (sendError) {
       if (isAbort(sendError)) {
@@ -275,6 +350,7 @@ export function Workspace() {
       }
     } finally {
       setStreaming(false);
+      setActivities([]);
       abortRef.current = null;
     }
   }
@@ -303,7 +379,7 @@ export function Workspace() {
         tabIndex={navOpen ? 0 : -1}
         onClick={() => setNavOpen(false)}
       />
-      <main className={mobilePane === "computer" ? "main pane-computer" : "main pane-chat"}>
+      <main className={mobilePane === "chat" ? "main pane-chat" : "main pane-side"}>
         <header className="top">
           <button
             type="button"
@@ -344,6 +420,18 @@ export function Workspace() {
           >
             Computer
           </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mobilePane === "memory"}
+            className={mobilePane === "memory" ? "on" : undefined}
+            onClick={() => {
+              setMobilePane("memory");
+              setSideTab("memory");
+            }}
+          >
+            Memory
+          </button>
         </div>
         <header className="thread-header">
           {editing && active ? (
@@ -372,6 +460,9 @@ export function Workspace() {
             <>
               <h1>{active?.title ?? "New chat"}</h1>
               <div className="header-actions">
+                <button type="button" className="ghost-text" onClick={showMemory}>
+                  Memory
+                </button>
                 {active ? (
                   <>
                     <button
@@ -409,7 +500,7 @@ export function Workspace() {
           )}
         </header>
         <div className="chat-body">
-          <Transcript messages={messages} streaming={streaming} />
+          <Transcript messages={messages} streaming={streaming} activities={activities} />
           {error ? (
             <p className="error" role="alert">
               {error}
@@ -422,10 +513,25 @@ export function Workspace() {
           />
         </div>
         <div className="computer-sheet">
-          <ComputerPane />
+          <SidePane
+            tab={mobilePane === "memory" ? "memory" : "computer"}
+            onTab={(tab) => setMobilePane(tab)}
+            memories={memories}
+            memoryError={memoryError}
+            onMemoriesChanged={refreshMemories}
+          />
         </div>
       </main>
-      {computerOpen ? <ComputerPane onHide={() => setComputerOpen(false)} /> : null}
+      {computerOpen ? (
+        <SidePane
+          tab={sideTab}
+          onTab={setSideTab}
+          onHide={() => setComputerOpen(false)}
+          memories={memories}
+          memoryError={memoryError}
+          onMemoriesChanged={refreshMemories}
+        />
+      ) : null}
     </div>
   );
 }

@@ -4,3 +4,4 @@ coverage
 package-lock.json
 .next
 .data
+evals/data

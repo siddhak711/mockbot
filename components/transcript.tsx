@@ -27,7 +27,7 @@ export function Transcript({
       <div className="transcript">
         <div className="transcript-empty">
           <h2>Start a conversation</h2>
-          <p>Messages stream here. With no API key, Mockbot replies locally.</p>
+          <p>Ask Mockbot to remember a fact. It can use that fact in a later chat.</p>
         </div>
       </div>
     );

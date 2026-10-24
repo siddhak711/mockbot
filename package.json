@@ -14,7 +14,8 @@
     "typecheck": "next typegen && tsc --noEmit",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "eval:memory": "tsx scripts/eval-memory.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -24,12 +25,14 @@
     "eslint": "^10.13.0",
     "globals": "^17.13.0",
     "prettier": "^3.9.10",
+    "tsx": "^4.23.15",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.72.0",
     "vitest": "^5.0.5"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.11",
+    "@neondatabase/serverless": "^1.2.0",
     "next": "^16.4.3",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",

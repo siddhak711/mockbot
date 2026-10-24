@@ -20,9 +20,8 @@ export async function resetAppContext(): Promise<void> {
 
 export async function getAppContext(): Promise<AppContext> {
   if (!current) {
-    const dataDir = process.env.DATA_DIR?.trim() || ".data/pglite";
     current = {
-      store: await ConversationStore.open(dataDir),
+      store: await ConversationStore.connect(process.env),
       provider: selectProvider(process.env),
     };
   }

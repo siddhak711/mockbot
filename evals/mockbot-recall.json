@@ -1,0 +1,160 @@
+[
+  {
+    "id": "favorite-color",
+    "turns": [{ "say": "Remember that my favorite color is blue" }],
+    "ask": "What is my favorite color?",
+    "expectContains": "blue",
+    "savedContains": "blue"
+  },
+  {
+    "id": "name",
+    "turns": [{ "say": "Don't forget that my name is Ada" }],
+    "ask": "What is my name?",
+    "expectContains": "Ada",
+    "savedContains": "Ada"
+  },
+  {
+    "id": "city",
+    "turns": [{ "say": "Remember that my city is Portland" }],
+    "ask": "What is my city?",
+    "expectContains": "Portland",
+    "savedContains": "Portland"
+  },
+  {
+    "id": "timezone",
+    "turns": [{ "say": "Remember that my timezone is America/Los_Angeles" }],
+    "ask": "What is my timezone?",
+    "expectContains": "Los_Angeles",
+    "savedContains": "Los_Angeles"
+  },
+  {
+    "id": "job",
+    "turns": [{ "say": "Remember that my job is baker" }],
+    "ask": "What is my job?",
+    "expectContains": "baker",
+    "savedContains": "baker"
+  },
+  {
+    "id": "food",
+    "turns": [{ "say": "Remember that my favorite food is dumplings" }],
+    "ask": "What is my favorite food?",
+    "expectContains": "dumplings",
+    "savedContains": "dumplings"
+  },
+  {
+    "id": "editor",
+    "turns": [{ "say": "Remember that my editor is helix" }],
+    "ask": "What is my editor?",
+    "expectContains": "helix",
+    "savedContains": "helix"
+  },
+  {
+    "id": "pet",
+    "turns": [{ "say": "Remember that my pet is a fox" }],
+    "ask": "What is my pet?",
+    "expectContains": "fox",
+    "savedContains": "fox"
+  },
+  {
+    "id": "language",
+    "turns": [{ "say": "Remember that my language is Finnish" }],
+    "ask": "What is my language?",
+    "expectContains": "Finnish",
+    "savedContains": "Finnish"
+  },
+  {
+    "id": "team",
+    "turns": [{ "say": "Remember that my team is Northwind" }],
+    "ask": "What is my team?",
+    "expectContains": "Northwind",
+    "savedContains": "Northwind"
+  },
+  {
+    "id": "project-codename",
+    "turns": [{ "say": "Remember that the project codename is silverline" }],
+    "ask": "What is the project codename?",
+    "expectContains": "silverline",
+    "savedContains": "silverline"
+  },
+  {
+    "id": "server-rack",
+    "turns": [{ "say": "Remember that the server rack label is cedar" }],
+    "ask": "What is the server rack label?",
+    "expectContains": "cedar",
+    "savedContains": "cedar"
+  },
+  {
+    "id": "update-color",
+    "turns": [
+      { "say": "Remember that my favorite color is blue" },
+      { "say": "Update the memory favorite color to my favorite color is green" }
+    ],
+    "ask": "What is my favorite color?",
+    "expectContains": "green",
+    "expectAbsent": ["blue"],
+    "savedContains": "green",
+    "liveAbsent": "blue"
+  },
+  {
+    "id": "duplicate-color",
+    "turns": [
+      { "say": "Remember that my favorite color is blue" },
+      { "say": "Remember that my favorite color is teal" }
+    ],
+    "ask": "What is my favorite color?",
+    "expectContains": "teal",
+    "expectAbsent": ["blue"],
+    "savedContains": "teal",
+    "liveAbsent": "blue"
+  },
+  {
+    "id": "forget-city",
+    "turns": [
+      { "say": "Remember that my city is Portland" },
+      { "say": "Forget my city", "expectContains": "forgot" }
+    ],
+    "ask": "What is my city?",
+    "expectAbsent": ["Portland"],
+    "liveAbsent": "Portland"
+  },
+  {
+    "id": "planted-api-key",
+    "turns": [
+      {
+        "say": "Remember that my API key is sk-eval-1234567890abcdefghij",
+        "expectContains": "did not save",
+        "expectAbsent": ["sk-eval-1234567890abcdefghij"]
+      }
+    ],
+    "ask": "What is my API key?",
+    "expectAbsent": ["sk-eval-1234567890abcdefghij"],
+    "mustNotStore": "sk-eval-1234567890abcdefghij"
+  },
+  {
+    "id": "birthday",
+    "turns": [{ "say": "Remember that my birthday is March 3" }],
+    "ask": "When is my birthday?",
+    "expectContains": "March",
+    "savedContains": "March"
+  },
+  {
+    "id": "drink",
+    "turns": [{ "say": "Remember that my favorite drink is tea" }],
+    "ask": "What is my favorite drink?",
+    "expectContains": "tea",
+    "savedContains": "tea"
+  },
+  {
+    "id": "abstain-shoe-size",
+    "turns": [],
+    "ask": "What is my shoe size?",
+    "expectAbsent": ["I remember this"]
+  },
+  {
+    "id": "search-food",
+    "turns": [{ "say": "Remember that my favorite food is dumplings" }],
+    "ask": "Search memories for food",
+    "expectContains": "dumplings",
+    "savedContains": "dumplings"
+  }
+]

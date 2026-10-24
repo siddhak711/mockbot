@@ -1,7 +1,11 @@
+import { DEFAULT_AGENT_ID } from "./agent";
+import type { LlmProvider } from "./llm";
+import { findSecrets } from "./memory/scrub";
 import { encodeSse, ssePadding } from "./sse";
 import { titleFromMessage, type ConversationStore } from "./store";
-import { SYSTEM_PROMPT, type LlmProvider } from "./llm";
-import type { LlmMessage } from "./types";
+import { executeRegisteredTool, runToolLoop } from "./tools/loop";
+import type { MemoryToolDeps, ToolDefinition } from "./tools/types";
+import { buildModelInput } from "./turn";
 
 const MAX_MESSAGE_LENGTH = 20_000;
 
@@ -22,7 +26,9 @@ export async function streamChatTurn(options: {
   provider: LlmProvider;
   message: string;
   conversationId?: string;
+  agentId?: string;
   signal?: AbortSignal;
+  contextTokens?: number;
 }): Promise<Response> {
   const message = options.message.trim();
   if (!message) {
@@ -32,18 +38,21 @@ export async function streamChatTurn(options: {
     return Response.json({ error: "Message is too long" }, { status: 400 });
   }
 
+  const agentId = options.agentId ?? DEFAULT_AGENT_ID;
   const conversationId = options.conversationId?.trim() || undefined;
   const conversation = conversationId
-    ? (await options.store.getConversation(conversationId))?.conversation
-    : await options.store.createConversation(titleFromMessage(message));
+    ? (await options.store.getConversation(conversationId, agentId))?.conversation
+    : await options.store.createConversation(titleFromMessage(message), agentId);
   if (!conversation) return Response.json({ error: "Conversation not found" }, { status: 404 });
 
-  const user = await options.store.addMessage(conversation.id, "user", message);
-  const stored = await options.store.getConversation(conversation.id);
-  const history: LlmMessage[] = [
-    { role: "system", content: SYSTEM_PROMPT },
-    ...(stored?.messages ?? []).map((item) => ({ role: item.role, content: item.content })),
-  ];
+  const user = await options.store.addMessage(conversation.id, "user", message, agentId);
+  const prepared = await buildModelInput({
+    store: options.store,
+    conversationId: conversation.id,
+    agentId,
+    contextTokens: options.contextTokens,
+  });
+  if (!prepared) return Response.json({ error: "Conversation not found" }, { status: 404 });
 
   const { store, provider, signal } = options;
   const conversationSnapshot = conversation;
@@ -56,10 +65,10 @@ export async function streamChatTurn(options: {
     persistQueue = persistQueue.then(async () => {
       if (!text || text === saved) return;
       if (!assistantId) {
-        const created = await store.addMessage(conversationSnapshot.id, "assistant", text);
+        const created = await store.addMessage(conversationSnapshot.id, "assistant", text, agentId);
         assistantId = created.id;
       } else {
-        await store.updateMessageContent(assistantId, text);
+        await store.updateMessageContent(assistantId, text, agentId);
       }
       saved = text;
     });
@@ -95,10 +104,32 @@ export async function streamChatTurn(options: {
           userMessageId: user.id,
         });
 
-        for await (const delta of provider.stream(history, signal)) {
-          if (signal?.aborted) break;
-          partial += delta;
-          enqueue("delta", { text: delta });
+        const result = await runToolLoop({
+          provider,
+          messages: prepared.messages,
+          tools: prepared.tools,
+          signal,
+          onText: async (chunk) => {
+            partial += chunk;
+            enqueue("delta", { text: chunk });
+            await persist(partial);
+          },
+          onTool: (call, phase) => {
+            enqueue("tool", toolActivity(call, phase));
+          },
+          execute: async (call) => {
+            const executed = await executeRegisteredTool(prepared.tools, call, signal);
+            rememberToolOutput(prepared.deps, prepared.tools, call.name, executed.output);
+            return executed;
+          },
+        });
+
+        if (!signal?.aborted && !partial && result.toolCalls > 0) {
+          const extra = result.capped
+            ? "I stopped because the tool step limit was reached."
+            : "Done.";
+          partial = extra;
+          enqueue("delta", { text: extra });
           await persist(partial);
         }
         await persist(partial);
@@ -125,4 +156,52 @@ export async function streamChatTurn(options: {
   });
 
   return new Response(stream, { headers: SSE_HEADERS });
+}
+
+function rememberToolOutput(
+  deps: MemoryToolDeps,
+  tools: readonly ToolDefinition[],
+  name: string,
+  output: string,
+): void {
+  if (!tools.some((tool) => tool.name === name)) return;
+  if (name.startsWith("memory_")) return;
+  deps.toolOutputs.push(output);
+}
+
+function toolActivity(
+  call: { id: string; name: string; output: string; isError: boolean },
+  phase: "running" | "done",
+): {
+  id: string;
+  title: string;
+  detail: string;
+  state: "running" | "done";
+  kind: "search" | "draft";
+} {
+  const blocked = phase === "done" && (call.isError || findSecrets(call.output).length > 0);
+  const title = blocked
+    ? "Memory write blocked"
+    : call.name === "memory_search"
+      ? "Searching memory"
+      : call.name === "memory_delete"
+        ? "Forgetting a memory"
+        : call.name === "memory_update"
+          ? "Updating a memory"
+          : call.name === "memory_write"
+            ? "Saving a memory"
+            : call.name;
+  const detail =
+    phase === "running"
+      ? "Running"
+      : findSecrets(call.output).length > 0
+        ? "Blocked. A secret was not stored."
+        : call.output.slice(0, 240);
+  return {
+    id: call.id,
+    title,
+    detail,
+    state: phase === "running" ? "running" : "done",
+    kind: call.name === "memory_search" ? "search" : "draft",
+  };
 }
