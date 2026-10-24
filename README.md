@@ -2,7 +2,7 @@
 
 Mockbot is a personal agent workspace. The product grows in six steps: a single chat agent, tools and connectors, durable memory, a sandboxed computer per agent, routines, and multi-agent coordination.
 
-The build order and the acceptance criteria for each step are in [docs/ROADMAP.md](docs/ROADMAP.md). This repository currently holds that roadmap and the TypeScript tooling used to check later work.
+The build order and the acceptance criteria for each step are in [docs/ROADMAP.md](docs/ROADMAP.md). This repository currently holds that roadmap, the TypeScript tooling used to check later work, and static UI options for milestone 1 in [mockups](mockups/README.md).
 
 ## Checks
 

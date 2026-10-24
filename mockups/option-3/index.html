@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mockbot — Lisbon, four days</title>
+    <link rel="stylesheet" href="../fonts/fonts.css" />
+    <style>
+      :root {
+        color-scheme: light;
+        --shell: #e6e5e0;
+        --pane: #fcfcfb;
+        --ink: #1b1b19;
+        --soft: #4a4946;
+        --muted: #7c7b76;
+        --line: #e4e3de;
+        --fill: #f1f0eb;
+        --active: #eeeee8;
+        --blue: #2f6feb;
+        --sans: "IBM Plex Sans", "Helvetica Neue", Helvetica, sans-serif;
+        --mono: "IBM Plex Mono", ui-monospace, monospace;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; }
+      body {
+        height: 100vh;
+        height: 100dvh;
+        overflow: hidden;
+        background: var(--shell);
+        color: var(--ink);
+        font-family: var(--sans);
+        font-size: 13.5px;
+        letter-spacing: -0.006em;
+        -webkit-font-smoothing: antialiased;
+      }
+      button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+      .shell {
+        height: 100%;
+        display: grid;
+        grid-template-columns: 268px minmax(0, 1fr) 420px;
+        gap: 8px;
+        padding: 8px;
+      }
+      .pane {
+        background: var(--pane);
+        border: 1px solid #dddcd6;
+        border-radius: 12px;
+        min-width: 0;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      .pane-h {
+        height: 46px;
+        flex: none;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 12px 0 14px;
+        border-bottom: 1px solid var(--line);
+      }
+      .pane-h h1, .pane-h h2 { margin: 0; font-size: 13px; font-weight: 500; letter-spacing: -0.01em; }
+      .icon-btn {
+        width: 26px;
+        height: 26px;
+        border-radius: 6px;
+        display: grid;
+        place-items: center;
+        color: var(--soft);
+      }
+      .icon-btn:hover { background: var(--fill); }
+      .chat-h { height: 52px; align-items: center; }
+      .titles { min-width: 0; }
+      .sub {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 2px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .agent-list { padding: 6px; gap: 2px; display: flex; flex-direction: column; }
+      .agent {
+        display: grid;
+        grid-template-columns: 16px minmax(0, 1fr);
+        column-gap: 8px;
+        row-gap: 1px;
+        text-align: left;
+        padding: 8px 8px;
+        border-radius: 8px;
+        color: var(--ink);
+      }
+      .agent:hover { background: #f6f6f3; }
+      .agent.on { background: var(--active); }
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        border: 1.5px solid #c9c8c2;
+        grid-row: 1 / span 2;
+        align-self: center;
+        justify-self: center;
+      }
+      .dot.on {
+        background: var(--blue);
+        border-color: var(--blue);
+        box-shadow: 0 0 0 3px rgba(47, 111, 235, 0.16);
+      }
+      .t {
+        font-size: 13px;
+        font-weight: 500;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .s {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        color: var(--muted);
+        font-size: 12px;
+        min-width: 0;
+      }
+      .s span:first-child {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .s span:last-child { flex: none; }
+      .me {
+        margin-top: auto;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 10px 8px;
+        border-top: 1px solid var(--line);
+        font-size: 13px;
+      }
+      .ava {
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        background: #e6e5e0;
+        display: grid;
+        place-items: center;
+        font-size: 11px;
+        font-weight: 500;
+      }
+      .strip, .segments { display: none; }
+      .scroll { flex: 1; min-height: 0; overflow: auto; padding: 16px 16px 8px; }
+      .msgs { width: min(640px, 100%); margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+      .msg p { margin: 0; }
+      .msg.user {
+        background: var(--fill);
+        border-radius: 10px;
+        padding: 10px 12px;
+        line-height: 1.5;
+        color: var(--ink);
+      }
+      .msg.bot { line-height: 1.55; color: var(--ink); padding: 2px 2px 0; }
+      .tool {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 34px;
+        padding: 0 10px;
+        margin-bottom: 10px;
+        border-radius: 8px;
+        background: #f6f5f1;
+        border: 1px solid #e8e7e1;
+        font-size: 13px;
+      }
+      .tool .verb { color: var(--soft); }
+      .path { font-family: var(--mono); font-size: 12px; letter-spacing: 0; }
+      .writing {
+        margin-left: auto;
+        color: var(--blue);
+        font-size: 12px;
+        font-weight: 500;
+      }
+      .caret {
+        display: inline-block;
+        width: 2px;
+        height: 0.95em;
+        background: currentColor;
+        margin-left: 1px;
+        transform: translateY(0.12em);
+      }
+      .dock { padding: 8px 14px 12px; }
+      .composer {
+        width: min(640px, 100%);
+        margin: 0 auto;
+        height: 46px;
+        border: 1px solid #e3e2dc;
+        background: white;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 6px 0 12px;
+        box-shadow: 0 1px 0 rgba(255, 255, 255, 0.8) inset;
+      }
+      .placeholder { flex: 1; color: #9c9b96; font-size: 13.5px; }
+      .chip {
+        height: 24px;
+        padding: 0 8px;
+        border-radius: 6px;
+        background: var(--fill);
+        color: var(--soft);
+        font-size: 12px;
+        display: inline-flex;
+        align-items: center;
+      }
+      .stop {
+        width: 28px;
+        height: 28px;
+        border-radius: 7px;
+        background: #1b1b19;
+        color: white;
+        display: grid;
+        place-items: center;
+        flex: none;
+      }
+
+      .comp-h { gap: 8px; }
+      .live {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .tabs {
+        display: flex;
+        align-items: flex-end;
+        gap: 4px;
+        padding: 8px 10px 0;
+        border-bottom: 1px solid var(--line);
+        background: #f7f7f4;
+      }
+      .tab {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        height: 28px;
+        padding: 0 10px;
+        background: var(--pane);
+        border: 1px solid var(--line);
+        border-bottom: 0;
+        border-radius: 8px 8px 0 0;
+        font-size: 12px;
+      }
+      .dirty { width: 6px; height: 6px; border-radius: 50%; background: var(--blue); }
+      .editor { flex: 1; min-height: 0; overflow: auto; padding: 8px 0 12px; font-family: var(--mono); font-size: 12.5px; line-height: 22px; letter-spacing: 0; }
+      .ln { display: grid; grid-template-columns: 42px minmax(0, 1fr); }
+      .ln .n { color: #b5b4ae; text-align: right; padding-right: 14px; user-select: none; }
+      .ln .c { white-space: pre-wrap; padding-right: 16px; color: #22221f; }
+      .ln.cur { background: #f4f3ee; }
+      .mk { color: #9a9890; }
+      .h { font-weight: 500; }
+      .block {
+        display: inline-block;
+        width: 8px;
+        height: 14px;
+        background: #1b1b19;
+        transform: translateY(2px);
+        margin-left: 1px;
+      }
+      .status {
+        height: 28px;
+        flex: none;
+        border-top: 1px solid var(--line);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 12px;
+        color: var(--muted);
+        font-size: 11px;
+        letter-spacing: 0;
+      }
+
+      @media (max-width: 900px) {
+        .shell { display: block; padding: 0; background: var(--pane); }
+        .agents, .computer { display: none; }
+        .pane.chat { border: 0; border-radius: 0; height: 100%; }
+        .strip {
+          display: flex;
+          gap: 6px;
+          padding: 8px 12px;
+          overflow: hidden;
+          border-bottom: 1px solid var(--line);
+          -webkit-mask-image: linear-gradient(90deg, #000 78%, transparent);
+          mask-image: linear-gradient(90deg, #000 78%, transparent);
+        }
+        .strip button {
+          flex: none;
+          height: 28px;
+          padding: 0 10px;
+          border-radius: 999px;
+          background: transparent;
+          color: var(--soft);
+          font-size: 12.5px;
+        }
+        .strip button.on { background: var(--active); color: var(--ink); font-weight: 500; }
+        .segments {
+          display: flex;
+          margin: 8px 12px 0;
+          padding: 2px;
+          background: #efeee9;
+          border-radius: 8px;
+        }
+        .segments span {
+          flex: 1;
+          text-align: center;
+          font-size: 13px;
+          padding: 6px 0;
+          border-radius: 6px;
+          color: var(--muted);
+        }
+        .segments .on {
+          background: white;
+          color: var(--ink);
+          font-weight: 500;
+          box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+        }
+        .scroll { padding: 12px 12px 8px; }
+        .dock { padding: 8px 12px 12px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="pane agents">
+        <div class="pane-h">
+          <h2>Agents</h2>
+          <button class="icon-btn" type="button" aria-label="New chat">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke-linecap="round"></path></svg>
+          </button>
+        </div>
+        <div class="agent-list">
+          <button class="agent on" type="button">
+            <span class="dot on"></span>
+            <span class="t">Lisbon, four days</span>
+            <span class="s"><span>Writing the page</span><span>Now</span></span>
+          </button>
+          <button class="agent" type="button">
+            <span class="dot"></span>
+            <span class="t">Onboarding email rewrite</span>
+            <span class="s"><span>Last line on the CTA</span><span>Yesterday</span></span>
+          </button>
+          <button class="agent" type="button">
+            <span class="dot"></span>
+            <span class="t">Weekly review · Oct 19</span>
+            <span class="s"><span>Three decisions to keep</span><span>Mon</span></span>
+          </button>
+          <button class="agent" type="button">
+            <span class="dot"></span>
+            <span class="t">CI failure on main</span>
+            <span class="s"><span>Failed on the format job</span><span>Mon</span></span>
+          </button>
+          <button class="agent" type="button">
+            <span class="dot"></span>
+            <span class="t">Note to Maya</span>
+            <span class="s"><span>Launch timing</span><span>Oct 12</span></span>
+          </button>
+        </div>
+        <div class="me"><span class="ava">S</span> Siddha</div>
+      </aside>
+
+      <section class="pane chat">
+        <header class="pane-h chat-h">
+          <div class="titles">
+            <h1>Lisbon, four days</h1>
+            <div class="sub"><span class="dot on"></span> Mockbot · Responding</div>
+          </div>
+        </header>
+        <div class="strip" aria-label="Conversations">
+          <button class="on" type="button">Lisbon, four days</button>
+          <button type="button">Onboarding email</button>
+          <button type="button">Weekly review</button>
+          <button type="button">CI failure on main</button>
+          <button type="button">Note to Maya</button>
+        </div>
+        <div class="segments" aria-hidden="true"><span class="on">Chat</span><span>Computer</span></div>
+        <div class="scroll">
+          <div class="msgs">
+            <article class="msg user">
+              <p>I’m in Lisbon Thursday through Sunday. Keep it walkable, one great meal a day, and don’t book anything new.</p>
+            </article>
+            <article class="msg bot">
+              <p>Four days on foot, around the meals you already have. I’ll keep the page on the computer.</p>
+            </article>
+            <article class="msg user">
+              <p>Yes. River in the morning, somewhere loud at night.</p>
+            </article>
+            <article class="msg bot" aria-label="Reply still streaming">
+              <div class="tool">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
+                  <path d="M7 3.5h7l5 5V20.5H7z"></path>
+                  <path d="M14 3.5V8.5h5"></path>
+                </svg>
+                <span class="verb">Editing</span>
+                <span class="path">notes/lisbon.md</span>
+                <span class="writing">Writing</span>
+              </div>
+              <p>One page, in the order you’ll walk it. Thursday and Friday are on the computer. Saturday —<span class="caret" aria-hidden="true"></span></p>
+            </article>
+          </div>
+        </div>
+        <div class="dock">
+          <div class="composer">
+            <span class="placeholder">Add a follow-up</span>
+            <span class="chip">Mockbot</span>
+            <button class="stop" type="button" aria-label="Stop responding">
+              <svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true"><rect width="12" height="12" rx="1.5" fill="currentColor"></rect></svg>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section class="pane computer">
+        <header class="pane-h comp-h">
+          <h2>Computer</h2>
+          <span class="live"><span class="dot on"></span> Writing</span>
+        </header>
+        <div class="tabs">
+          <div class="tab"><span class="dirty"></span> lisbon.md</div>
+        </div>
+        <div class="editor" aria-label="notes/lisbon.md">
+          <div class="ln"><span class="n">1</span><span class="c h"><span class="mk"># </span>Lisbon, four days</span></div>
+          <div class="ln"><span class="n">2</span><span class="c"></span></div>
+          <div class="ln"><span class="n">3</span><span class="c">On foot. Meals already booked</span></div>
+          <div class="ln"><span class="n">4</span><span class="c">stay booked.</span></div>
+          <div class="ln"><span class="n">5</span><span class="c"></span></div>
+          <div class="ln"><span class="n">6</span><span class="c h"><span class="mk">## </span>Thursday</span></div>
+          <div class="ln"><span class="n">7</span><span class="c">River from Cais do Sodré</span></div>
+          <div class="ln"><span class="n">8</span><span class="c">toward Belém.</span></div>
+          <div class="ln"><span class="n">9</span><span class="c">Dinner is already booked.</span></div>
+          <div class="ln"><span class="n">10</span><span class="c"></span></div>
+          <div class="ln"><span class="n">11</span><span class="c h"><span class="mk">## </span>Friday</span></div>
+          <div class="ln"><span class="n">12</span><span class="c">Morning at Ribeira das Naus.</span></div>
+          <div class="ln"><span class="n">13</span><span class="c">Afternoon in Santos.</span></div>
+          <div class="ln"><span class="n">14</span><span class="c">Night in Bairro Alto.</span></div>
+          <div class="ln"><span class="n">15</span><span class="c"></span></div>
+          <div class="ln"><span class="n">16</span><span class="c h"><span class="mk">## </span>Saturday</span></div>
+          <div class="ln cur"><span class="n">17</span><span class="c">River in the morning, then<span class="block" aria-hidden="true"></span></span></div>
+        </div>
+        <div class="status"><span>notes/lisbon.md</span><span>Ln 17 · Writing</span></div>
+      </section>
+    </div>
+  </body>
+</html>
