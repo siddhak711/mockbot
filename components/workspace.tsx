@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Composer } from "./composer";
+import { ComputerPane } from "./computer-pane";
 import { ConversationList } from "./conversation-list";
 import { Transcript } from "./transcript";
 import { SseParser } from "../src/sse";
@@ -31,6 +32,9 @@ export function Workspace() {
   const [providerLabel, setProviderLabel] = useState("Mock provider");
   const [editing, setEditing] = useState(false);
   const [draftTitle, setDraftTitle] = useState("");
+  const [computerOpen, setComputerOpen] = useState(true);
+  const [navOpen, setNavOpen] = useState(false);
+  const [mobilePane, setMobilePane] = useState<"chat" | "computer">("chat");
   const abortRef = useRef<AbortController | null>(null);
   const activeIdRef = useRef<string | null>(null);
 
@@ -97,6 +101,8 @@ export function Workspace() {
 
   function newChat() {
     if (streaming) return;
+    setNavOpen(false);
+    setMobilePane("chat");
     setActiveId(null);
     setMessages([]);
     setError(null);
@@ -276,18 +282,69 @@ export function Workspace() {
   const active = conversations.find((item) => item.id === activeId) ?? null;
 
   return (
-    <div className="workspace">
+    <div className={computerOpen ? "app with-computer" : "app"}>
       <ConversationList
         conversations={conversations}
         activeId={activeId}
         providerLabel={providerLabel}
         busy={streaming}
+        open={navOpen}
         onNew={newChat}
         onSelect={(id) => {
+          setNavOpen(false);
+          setMobilePane("chat");
           if (!streaming) void selectConversation(id);
         }}
       />
-      <main className="thread">
+      <button
+        type="button"
+        className={navOpen ? "scrim on" : "scrim"}
+        aria-label="Close conversations"
+        tabIndex={navOpen ? 0 : -1}
+        onClick={() => setNavOpen(false)}
+      />
+      <main className={mobilePane === "computer" ? "main pane-computer" : "main pane-chat"}>
+        <header className="top">
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Open conversations"
+            aria-expanded={navOpen}
+            onClick={() => setNavOpen(true)}
+          >
+            <MenuIcon />
+          </button>
+          <h1>{active?.title ?? "New chat"}</h1>
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="New chat"
+            onClick={newChat}
+            disabled={streaming}
+          >
+            <PlusIcon />
+          </button>
+        </header>
+        <div className="segments" role="tablist" aria-label="Workspace">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mobilePane === "chat"}
+            className={mobilePane === "chat" ? "on" : undefined}
+            onClick={() => setMobilePane("chat")}
+          >
+            Chat
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mobilePane === "computer"}
+            className={mobilePane === "computer" ? "on" : undefined}
+            onClick={() => setMobilePane("computer")}
+          >
+            Computer
+          </button>
+        </div>
         <header className="thread-header">
           {editing && active ? (
             <form
@@ -304,53 +361,103 @@ export function Workspace() {
                 onChange={(event) => setDraftTitle(event.target.value)}
                 autoFocus
               />
-              <button type="submit" className="primary">
+              <button type="submit" className="ghost-text">
                 Save
               </button>
-              <button type="button" onClick={() => setEditing(false)}>
+              <button type="button" className="ghost-text" onClick={() => setEditing(false)}>
                 Cancel
               </button>
             </form>
           ) : (
             <>
               <h1>{active?.title ?? "New chat"}</h1>
-              {active ? (
-                <div className="header-actions">
+              <div className="header-actions">
+                {active ? (
+                  <>
+                    <button
+                      type="button"
+                      className="ghost-text"
+                      onClick={() => {
+                        setDraftTitle(active.title);
+                        setEditing(true);
+                      }}
+                      disabled={streaming}
+                    >
+                      Rename
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-text danger"
+                      onClick={() => void remove(active.id)}
+                      disabled={streaming}
+                    >
+                      Delete
+                    </button>
+                  </>
+                ) : null}
+                {computerOpen ? null : (
                   <button
                     type="button"
-                    onClick={() => {
-                      setDraftTitle(active.title);
-                      setEditing(true);
-                    }}
-                    disabled={streaming}
+                    className="ghost-text desktop-only"
+                    onClick={() => setComputerOpen(true)}
                   >
-                    Rename
+                    Show computer
                   </button>
-                  <button
-                    type="button"
-                    className="danger"
-                    onClick={() => void remove(active.id)}
-                    disabled={streaming}
-                  >
-                    Delete
-                  </button>
-                </div>
-              ) : null}
+                )}
+              </div>
             </>
           )}
         </header>
-        <Transcript messages={messages} />
-        {error ? (
-          <p className="error" role="alert">
-            {error}
-          </p>
-        ) : null}
-        <Composer
-          streaming={streaming}
-          onSend={(text) => void send(text)}
-          onStop={() => abortRef.current?.abort()}
-        />
+        <div className="chat-body">
+          <Transcript messages={messages} streaming={streaming} />
+          {error ? (
+            <p className="error" role="alert">
+              {error}
+            </p>
+          ) : null}
+          <Composer
+            streaming={streaming}
+            onSend={(text) => void send(text)}
+            onStop={() => abortRef.current?.abort()}
+          />
+        </div>
+        <div className="computer-sheet">
+          <ComputerPane />
+        </div>
       </main>
+      {computerOpen ? <ComputerPane onHide={() => setComputerOpen(false)} /> : null}
     </div>
+  );
+}
+
+function MenuIcon() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      aria-hidden="true"
+    >
+      <path d="M4 7h16M4 12h16M4 17h10" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function PlusIcon() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      aria-hidden="true"
+    >
+      <path d="M12 5v14M5 12h14" strokeLinecap="round" />
+    </svg>
   );
 }

@@ -2,13 +2,25 @@ import { useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Message } from "../src/types";
+import { ToolActivityCards, type ToolActivity } from "./tool-activity";
 
-export function Transcript({ messages }: { messages: Message[] }) {
+export function Transcript({
+  messages,
+  streaming = false,
+  activities = [],
+}: {
+  messages: Message[];
+  streaming?: boolean;
+  activities?: ToolActivity[];
+}) {
   const endRef = useRef<HTMLDivElement>(null);
+  const lastAssistantId = [...messages]
+    .reverse()
+    .find((message) => message.role === "assistant")?.id;
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
-  }, [messages]);
+  }, [messages, streaming, activities]);
 
   if (messages.length === 0) {
     return (
@@ -24,18 +36,32 @@ export function Transcript({ messages }: { messages: Message[] }) {
   return (
     <div className="transcript">
       <div className="transcript-column">
-        {messages.map((message) => (
-          <article key={message.id} className={`message ${message.role}`}>
-            <div className="message-role">{message.role === "user" ? "You" : "Mockbot"}</div>
-            {message.role === "assistant" ? (
-              <div className="markdown">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+        {messages.map((message) => {
+          const live = streaming && message.id === lastAssistantId;
+          if (message.role === "user") {
+            return (
+              <article key={message.id} className="message user" aria-label="You">
+                <p className="user-text">{message.content}</p>
+              </article>
+            );
+          }
+          return (
+            <article
+              key={message.id}
+              className="message assistant"
+              aria-label={live ? "Reply still streaming" : "Mockbot"}
+            >
+              {message.id === lastAssistantId ? (
+                <ToolActivityCards activities={activities} />
+              ) : null}
+              <div className={live ? "markdown streaming" : "markdown"}>
+                {message.content ? (
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+                ) : null}
               </div>
-            ) : (
-              <p className="user-text">{message.content}</p>
-            )}
-          </article>
-        ))}
+            </article>
+          );
+        })}
         <div ref={endRef} />
       </div>
     </div>
