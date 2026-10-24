@@ -52,6 +52,11 @@ export async function PATCH(request: Request, context: RouteContext): Promise<Re
 export async function DELETE(_request: Request, context: RouteContext): Promise<Response> {
   const { id } = await context.params;
   const { store } = await getAppContext();
+  const existing = await store.memories.getById(DEFAULT_AGENT_ID, id);
+  if (!existing) return Response.json({ error: "Memory not found" }, { status: 404 });
+  if (!isLiveMemory(existing)) {
+    return Response.json({ error: "Only the current memory can be deleted" }, { status: 409 });
+  }
   const deleted = await store.memories.softDeleteById(DEFAULT_AGENT_ID, id);
   if (!deleted) return Response.json({ error: "Memory not found" }, { status: 404 });
   return new Response(null, { status: 204 });

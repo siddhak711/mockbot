@@ -180,7 +180,10 @@ export class MemoryRepository {
     const result = await this.db.query<MemoryRow>(
       `UPDATE memories
        SET deleted_at = NOW()
-       WHERE id = $1 AND agent_id = $2 AND deleted_at IS NULL
+       WHERE id = $1
+         AND agent_id = $2
+         AND deleted_at IS NULL
+         AND valid_to IS NULL
        RETURNING ${MEMORY_COLUMNS}`,
       [id, agentId],
     );

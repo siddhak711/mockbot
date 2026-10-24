@@ -169,7 +169,32 @@ function rememberToolOutput(
   deps.toolOutputs.push(output);
 }
 
-function toolActivity(
+function activityTitle(
+  name: string,
+  phase: "running" | "done",
+  isError: boolean,
+  blockedWrite: boolean,
+): string {
+  if (blockedWrite) return "Memory write blocked";
+  const label =
+    name === "memory_search"
+      ? "Searching memory"
+      : name === "memory_delete"
+        ? "Forgetting a memory"
+        : name === "memory_update"
+          ? "Updating a memory"
+          : name === "memory_write"
+            ? "Saving a memory"
+            : name;
+  if (phase === "running" || !isError) return label;
+  if (name === "memory_delete") return "Could not forget that memory";
+  if (name === "memory_search") return "Memory search failed";
+  if (name === "memory_update") return "Could not update that memory";
+  if (name === "memory_write") return "Could not save that memory";
+  return `${name} failed`;
+}
+
+export function toolActivity(
   call: { id: string; name: string; output: string; isError: boolean },
   phase: "running" | "done",
 ): {
@@ -179,24 +204,19 @@ function toolActivity(
   state: "running" | "done";
   kind: "search" | "draft";
 } {
-  const blocked = phase === "done" && (call.isError || findSecrets(call.output).length > 0);
-  const title = blocked
-    ? "Memory write blocked"
-    : call.name === "memory_search"
-      ? "Searching memory"
-      : call.name === "memory_delete"
-        ? "Forgetting a memory"
-        : call.name === "memory_update"
-          ? "Updating a memory"
-          : call.name === "memory_write"
-            ? "Saving a memory"
-            : call.name;
+  const secret = phase === "done" && findSecrets(call.output).length > 0;
+  const write = call.name === "memory_write" || call.name === "memory_update";
+  const blockedWrite =
+    phase === "done" && write && (secret || /secret|not stored/i.test(call.output));
+  const title = activityTitle(call.name, phase, call.isError, blockedWrite);
   const detail =
     phase === "running"
       ? "Running"
-      : findSecrets(call.output).length > 0
+      : blockedWrite
         ? "Blocked. A secret was not stored."
-        : call.output.slice(0, 240);
+        : secret
+          ? "Finished. The result was not shown."
+          : call.output.slice(0, 240);
   return {
     id: call.id,
     title,

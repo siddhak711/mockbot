@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { memoryPanelMode } from "../src/memory/panel-state";
 import type { Memory, MemoryKind, MemoryVersion } from "../src/types";
 
 export function MemoryPanel({
@@ -12,26 +13,30 @@ export function MemoryPanel({
   error: string | null;
   onChanged: () => Promise<void>;
 }) {
+  const mode = memoryPanelMode(memories, error);
   return (
     <div className="memory-panel">
       {error ? (
         <p className="error memory-error" role="alert">
-          {error}
+          {error}{" "}
+          <button type="button" className="ghost-text" onClick={() => void onChanged()}>
+            Retry
+          </button>
         </p>
       ) : null}
-      {memories == null ? (
+      {mode === "loading" ? (
         <div className="computer-empty">
           <h3>Loading memories</h3>
           <p>Checking what this agent has saved.</p>
         </div>
-      ) : memories.length === 0 ? (
+      ) : mode === "error" ? null : mode === "empty" ? (
         <div className="computer-empty">
           <h3>No memories yet</h3>
           <p>Ask Mockbot to remember a fact. It can use that fact in a later chat.</p>
         </div>
       ) : (
         <div className="memory-scroll">
-          {memories.map((memory) => (
+          {(memories ?? []).map((memory) => (
             <MemoryCard key={memory.id} memory={memory} onChanged={onChanged} />
           ))}
         </div>

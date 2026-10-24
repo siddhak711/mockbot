@@ -71,6 +71,13 @@ it("lists, edits, and deletes memories for this agent only", async () => {
   const still = await store.memories.listLive(DEFAULT_AGENT_ID);
   expect(still.map((memory) => memory.content)).toEqual(["my city is Porto"]);
 
+  const historyId = afterEdit.memories[0]?.history[0]?.id;
+  expect(historyId).toBeTruthy();
+  const stale = await DELETE(new Request("http://localhost"), params(historyId!));
+  expect(stale.status).toBe(409);
+  expect(await store.memories.listLive(DEFAULT_AGENT_ID)).toHaveLength(1);
+  expect(await store.memories.softDeleteById(DEFAULT_AGENT_ID, historyId!)).toBeNull();
+
   const removed = await DELETE(new Request("http://localhost"), params(still[0]!.id));
   expect(removed.status).toBe(204);
   const afterDelete = (await (await GET()).json()) as { memories: Memory[] };

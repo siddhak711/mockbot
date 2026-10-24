@@ -7,6 +7,7 @@ import { SidePane } from "./side-pane";
 import { Transcript } from "./transcript";
 import { SseParser } from "../src/sse";
 import type { ToolActivity } from "./tool-activity";
+import { MEMORY_LOAD_ERROR, nextMemories } from "../src/memory/panel-state";
 import type { Conversation, Memory, Message } from "../src/types";
 
 function isAbort(error: unknown): boolean {
@@ -91,13 +92,11 @@ export function Workspace() {
 
   const refreshMemories = useCallback(async () => {
     const response = await fetch("/api/memories");
-    if (!response.ok) {
-      setMemoryError("Could not load memories");
-      return;
-    }
-    const data = (await response.json()) as { memories: Memory[] };
-    setMemories(data.memories);
-    setMemoryError(null);
+    const loaded = response.ok
+      ? ((await response.json()) as { memories: Memory[] }).memories
+      : null;
+    setMemoryError(response.ok ? null : MEMORY_LOAD_ERROR);
+    setMemories((current) => nextMemories(current, response.ok, loaded).memories);
   }, []);
 
   useEffect(() => {
@@ -124,7 +123,13 @@ export function Workspace() {
       }
       if (memoryResponse.ok) {
         const data = (await memoryResponse.json()) as { memories: Memory[] };
-        setMemories(data.memories);
+        const next = nextMemories(null, true, data.memories);
+        setMemories(next.memories);
+        setMemoryError(next.error);
+      } else {
+        const next = nextMemories(null, false, null);
+        setMemories(next.memories);
+        setMemoryError(next.error ?? MEMORY_LOAD_ERROR);
       }
       if (!listResponse.ok) return;
       const data = (await listResponse.json()) as { conversations: Conversation[] };
@@ -425,10 +430,7 @@ export function Workspace() {
             role="tab"
             aria-selected={mobilePane === "memory"}
             className={mobilePane === "memory" ? "on" : undefined}
-            onClick={() => {
-              setMobilePane("memory");
-              setSideTab("memory");
-            }}
+            onClick={() => showMemory()}
           >
             Memory
           </button>

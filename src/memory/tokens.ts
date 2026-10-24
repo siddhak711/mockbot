@@ -10,11 +10,16 @@ export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-export function trimToTokens(text: string, tokens: number): string {
+export function trimToTokens(
+  text: string,
+  tokens: number,
+  edge: "start" | "end" = "start",
+): string {
   if (tokens <= 0 || !text) return "";
   if (estimateTokens(text) <= tokens) return text;
   const maxChars = Math.max(0, tokens * 4 - 1);
   if (maxChars <= 1) return "";
+  if (edge === "end") return `…${text.slice(text.length - (maxChars - 1))}`;
   return `${text.slice(0, maxChars - 1)}…`;
 }
 

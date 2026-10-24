@@ -49,18 +49,75 @@ export async function compactIfNeeded(
   }
   if (start >= tailStart) return;
   const older = messages.slice(start, tailStart);
-  const last = older[older.length - 1];
-  if (!last) return;
-  const nextSummary = summarizeMessages(summary?.summary ?? null, older);
-  await store.saveSummary(conversationId, agentId, nextSummary, last.id);
+  const summarized = summarizeMessages(summary?.summary ?? null, older);
+  const last = older[summarized.covered - 1];
+  if (!last || summarized.covered <= 0) return;
+  await store.saveSummary(conversationId, agentId, summarized.summary, last.id);
 }
 
-export function summarizeMessages(previous: string | null, messages: readonly Message[]): string {
-  const bullets = messages.map((message) => {
-    const who = message.role === "user" ? "User" : "Assistant";
-    const text = message.content.replace(/\s+/g, " ").trim().slice(0, 180);
-    return `- ${who}: ${text}`;
-  });
-  const combined = [previous?.trim(), ...bullets].filter(Boolean).join("\n");
-  return trimToTokens(combined, SUMMARY_TOKEN_BUDGET);
+function bullet(message: Pick<Message, "role" | "content">, contentChars: number): string {
+  const who = message.role === "user" ? "User" : "Assistant";
+  const text = message.content.replace(/\s+/g, " ").trim().slice(0, Math.max(0, contentChars));
+  return `- ${who}: ${text}`;
+}
+
+function bulletsAt(
+  messages: readonly Pick<Message, "role" | "content">[],
+  contentChars: number,
+): string[] {
+  return messages.map((message) => bullet(message, contentChars));
+}
+
+function bulletsFit(lines: readonly string[], budget: number): boolean {
+  return estimateTokens(lines.join("\n")) <= budget;
+}
+
+function shrinkBullets(
+  messages: readonly Pick<Message, "role" | "content">[],
+  budget: number,
+): { lines: string[]; covered: number } {
+  if (messages.length === 0) return { lines: [], covered: 0 };
+  const full = bulletsAt(messages, 180);
+  if (bulletsFit(full, budget)) return { lines: full, covered: messages.length };
+
+  let bestChars = 0;
+  let lo = 0;
+  let hi = 179;
+  while (lo <= hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (bulletsFit(bulletsAt(messages, mid), budget)) {
+      bestChars = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  if (bulletsFit(bulletsAt(messages, bestChars), budget)) {
+    return { lines: bulletsAt(messages, bestChars), covered: messages.length };
+  }
+
+  let count = 0;
+  for (let size = 1; size <= messages.length; size += 1) {
+    if (!bulletsFit(bulletsAt(messages.slice(0, size), 0), budget)) break;
+    count = size;
+  }
+  return { lines: bulletsAt(messages.slice(0, count), 0), covered: count };
+}
+
+export function summarizeMessages(
+  previous: string | null,
+  messages: readonly Pick<Message, "role" | "content">[],
+): { summary: string; covered: number } {
+  const shrunk = shrinkBullets(messages, SUMMARY_TOKEN_BUDGET);
+  const body = shrunk.lines.join("\n");
+  const prior = previous?.trim() ?? "";
+  if (!prior || shrunk.covered === 0) return { summary: body, covered: shrunk.covered };
+  const room = SUMMARY_TOKEN_BUDGET - estimateTokens(body) - (body ? 1 : 0);
+  if (room < 8) return { summary: body, covered: shrunk.covered };
+  const keptPrior = trimToTokens(prior, room, "end");
+  const combined = body ? `${keptPrior}\n${body}` : keptPrior;
+  if (estimateTokens(combined) > SUMMARY_TOKEN_BUDGET) {
+    return { summary: body, covered: shrunk.covered };
+  }
+  return { summary: combined, covered: shrunk.covered };
 }
