@@ -7,6 +7,8 @@ export type RemoteRead = { ok: true; content: string } | { ok: false; error: str
 
 export type RemoteSandbox = {
   readonly id: string;
+  /** Refresh remote state and start the sandbox when Daytona has stopped it. */
+  ensureRunning(): Promise<void>;
   list(path: string): Promise<{ ok: true; entries: SandboxEntry[] } | { ok: false; error: string }>;
   read(path: string): Promise<RemoteRead>;
   write(path: string, content: string): Promise<void>;
@@ -59,7 +61,8 @@ export class DaytonaRuntime implements SandboxRuntime {
     try {
       const handle = await this.#handle(agentId, false);
       if (!handle) return { ok: true as const, entries: [] };
-      return await handle.list(toSandboxPath(path));
+      const ready = await this.#running(agentId, handle);
+      return await ready.list(toSandboxPath(path));
     } catch (error) {
       return { ok: false as const, error: redact(errorText(error), this.secret) };
     }
@@ -106,7 +109,22 @@ export class DaytonaRuntime implements SandboxRuntime {
   async #require(agentId: string): Promise<RemoteSandbox> {
     const handle = await this.#handle(agentId, true);
     if (!handle) throw new Error("Sandbox is unavailable");
-    return handle;
+    return this.#running(agentId, handle);
+  }
+
+  async #running(agentId: string, handle: RemoteSandbox): Promise<RemoteSandbox> {
+    try {
+      await handle.ensureRunning();
+      return handle;
+    } catch (error) {
+      if (this.#handles.get(agentId) === handle) this.#handles.delete(agentId);
+      const computer = await this.store.getComputer(agentId);
+      if (!computer?.sandboxId) throw error;
+      const restored = await this.fleet.reconnect(computer.sandboxId);
+      if (!restored) throw error;
+      this.#handles.set(agentId, restored);
+      return restored;
+    }
   }
 
   async #handle(agentId: string, create: boolean): Promise<RemoteSandbox | null> {
@@ -185,9 +203,14 @@ class SdkFleet implements RemoteSandboxFleet {
   private async adapt(sandbox: Sandbox): Promise<RemoteSandbox> {
     const secret = this.secret;
     const isTimeout = this.isTimeout;
+    const started = this.started;
     await sandbox.process.executeCommand("mkdir -p workspace", undefined, undefined, 15);
     return {
       id: sandbox.id,
+      async ensureRunning() {
+        await sandbox.refreshData();
+        if (sandbox.state !== started) await sandbox.start(60);
+      },
       async list(dir: string) {
         try {
           const entries = await sandbox.fs.listFiles(dir);

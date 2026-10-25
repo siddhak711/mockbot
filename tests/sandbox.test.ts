@@ -261,6 +261,38 @@ describe("sandbox", { concurrent: false }, () => {
     await supervisor.close();
   });
 
+  it("restarts a cached Daytona sandbox that has stopped", async () => {
+    const fleet = new FakeFleet();
+    const store = await SandboxStore.open("memory://");
+    const runtime = new DaytonaRuntime(fleet, store, "secret");
+    const supervisor = new ComputerSupervisor(store, runtime, 1_000);
+    const first = await supervisor.invoke("agent", "exec", { command: "echo hi" });
+    expect(first.run.exitCode).toBe(0);
+    expect(fleet.creates).toHaveLength(1);
+    expect(fleet.starts).toEqual([]);
+    const id = fleet.creates[0]?.id ?? "";
+    fleet.stop(id);
+
+    const restarted = await supervisor.invoke("agent", "exec", { command: "echo hi" });
+    expect(restarted.run.exitCode).toBe(0);
+    expect(restarted.run.timedOut).toBe(false);
+    expect(restarted.run.stdout).toBe("hi\n");
+    expect(fleet.starts).toEqual([id]);
+    expect(fleet.reconnects).toEqual([]);
+    expect(fleet.creates).toHaveLength(1);
+    expect((await store.getComputer("agent"))?.sandboxId).toBe(id);
+
+    fleet.stop(id);
+    fleet.failNextStart = true;
+    const recovered = await supervisor.invoke("agent", "exec", { command: "echo again" });
+    expect(recovered.run.exitCode).toBe(0);
+    expect(recovered.run.stdout).toBe("again\n");
+    expect(fleet.reconnects).toEqual([id]);
+    expect(fleet.creates).toHaveLength(1);
+    expect((await store.getComputer("agent"))?.sandboxId).toBe(id);
+    await supervisor.close();
+  });
+
   it("streams the sandbox tools through chat and the computer API", async () => {
     const supervisor = await openComputer({ env: {}, dataDir: "memory://" });
     const store = await ConversationStore.open();
@@ -403,19 +435,33 @@ describe("sandbox", { concurrent: false }, () => {
   class FakeFleet implements RemoteSandboxFleet {
     readonly creates: Array<{ id: string; agentId: string; envVars?: unknown }> = [];
     readonly execs: Array<{ command: string; cwd: string; timeoutSec: number }> = [];
+    readonly starts: string[] = [];
+    readonly reconnects: string[] = [];
     bootMs = 0;
+    failNextStart = false;
     readonly #sandboxes = new Map<string, Map<string, string>>();
+    readonly #running = new Set<string>();
+
+    stop(id: string): void {
+      this.#running.delete(id);
+    }
 
     async create(agentId: string): Promise<RemoteSandbox> {
       if (this.bootMs > 0) await new Promise((resolve) => setTimeout(resolve, this.bootMs));
       const id = `sbx-${this.creates.length + 1}`;
       this.creates.push({ id, agentId });
       this.#sandboxes.set(id, new Map());
+      this.#running.add(id);
       return this.#handle(id);
     }
 
     async reconnect(sandboxId: string): Promise<RemoteSandbox | null> {
+      this.reconnects.push(sandboxId);
       if (!this.#sandboxes.has(sandboxId)) return null;
+      if (!this.#running.has(sandboxId)) {
+        this.starts.push(sandboxId);
+        this.#running.add(sandboxId);
+      }
       return this.#handle(sandboxId);
     }
 
@@ -425,6 +471,15 @@ describe("sandbox", { concurrent: false }, () => {
       const execs = this.execs;
       return {
         id,
+        ensureRunning: async () => {
+          if (this.#running.has(id)) return;
+          if (this.failNextStart) {
+            this.failNextStart = false;
+            throw new Error("Sandbox failed to start");
+          }
+          this.starts.push(id);
+          this.#running.add(id);
+        },
         async list(dir: string) {
           const prefix = dir.endsWith("/") ? dir : `${dir}/`;
           const names = new Set<string>();
@@ -447,7 +502,8 @@ describe("sandbox", { concurrent: false }, () => {
         async write(path: string, content: string) {
           files.set(path, content);
         },
-        async exec(command: string, cwd: string, timeoutSec: number) {
+        exec: async (command: string, cwd: string, timeoutSec: number) => {
+          if (!this.#running.has(id)) throw new Error("Sandbox is stopped");
           execs.push({ command, cwd, timeoutSec });
           if (command.startsWith("echo ")) {
             return { stdout: `${command.slice(5)}\n`, stderr: "", exitCode: 0, timedOut: false };
