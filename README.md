@@ -86,7 +86,7 @@ GITHUB_TOKEN=github_pat_...
 
 ## Connectors
 
-The sidebar can register an MCP server. A connector stores a name, a transport (`http` or `stdio`), a target, and an optional secret reference. The reference is the name of an environment variable on the server, such as `MCP_DEMO_TOKEN`. The value stays on the server: it is sent as a bearer token for HTTP, or as that one variable in a stdio process, and it is not written into the prompt, the transcript, or API responses.
+The sidebar can register an MCP server. A connector stores a name, a transport (`http` or `stdio`), a target, and an optional secret reference. The reference is the name of an environment variable on the server and must start with `MCP_`, such as `MCP_DEMO_TOKEN`. The value stays on the server: it is sent as a bearer token for HTTP, or as that one variable in a stdio process, and it is not written into the prompt, the transcript, or API responses.
 
 HTTP targets are `http` or `https` URLs. Stdio targets are a program and arguments separated by spaces, run without a shell. Disabling or removing a connector drops its tools from the next turn. The built-in web, GitHub, and calendar tools stay registered.
 
@@ -131,7 +131,7 @@ node scripts/mock-mcp-server.mjs
   The OpenAI-compatible provider forwards the model phases from a chat-completions stream when the upstream chunk includes them: `delta.role`, `delta.content`, `delta.reasoning` / `reasoning_content` / `thinking`, `delta.tool_calls` (and legacy `function_call`), `delta.refusal`, and `finish_reason`. `data: [DONE]` becomes an end token when the upstream never sent a finish reason. Each stored assistant message includes a `trace` with the reasoning, tool calls, answer text, and finish reason. Registered tools also stay in `tool_calls` on that message. A `finish_reason` of `tool_calls`, or a tool call with no provider result and no answer text, runs through the registry. The default mock omits `tool_call` and `tool_result`. Tests can construct `MockProvider` with `scriptToolCall: true` to emit a display-only `lookup_context` call and result, or `demoTools: true` to run the registry demo.
 
 - `POST /api/tools/approvals` with `{ "id": "...", "decision": "approve" | "deny" | "stop" }` approves, denies, or stops a pending write.
-- `GET /api/connectors` lists connectors. Each row has `id`, `name`, `transport`, `target`, `secretRef`, `enabled`, `createdAt`, and `updatedAt`. `secretRef` is an environment variable name. The secret value is not included.
+- `GET /api/connectors` lists connectors. Each row has `id`, `name`, `transport`, `target`, `secretRef`, `enabled`, `createdAt`, and `updatedAt`. `secretRef` is an environment variable name that starts with `MCP_`. The secret value is not included.
 - `POST /api/connectors` with `{ "name", "transport": "http" | "stdio", "target", "secretRef": "optional" }` checks that the server lists tools, then stores the connector.
 - `PATCH /api/connectors/:id` with `{ "enabled": true | false }` enables or disables it.
 - `DELETE /api/connectors/:id` removes it.

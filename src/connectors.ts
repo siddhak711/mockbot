@@ -18,7 +18,7 @@ export type ConnectorInput = {
   secretRef: string | null;
 };
 
-const SECRET_REF = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const SECRET_REF = /^MCP_[A-Za-z0-9_]+$/;
 
 function hasControlCharacter(value: string): boolean {
   for (let index = 0; index < value.length; index += 1) {
@@ -72,7 +72,10 @@ export function parseConnectorInput(
 
   const secretRef = parseSecretRef(record.secretRef);
   if (secretRef === "invalid") {
-    return { ok: false, error: "Secret reference must be an environment variable name." };
+    return {
+      ok: false,
+      error: "Secret reference must be an environment variable name that starts with MCP_.",
+    };
   }
 
   return { ok: true, value: { name, transport, target, secretRef } };

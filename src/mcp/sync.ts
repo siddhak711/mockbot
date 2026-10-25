@@ -28,9 +28,13 @@ export async function withFreshTools(run: () => Promise<Response>): Promise<Resp
     };
   });
   const previous = queue;
-  queue = previous.then(() => hold);
-  await previous;
+  // A failed turn must not reject the queue, or every later turn waits forever.
+  queue = previous.then(
+    () => hold,
+    () => hold,
+  );
   try {
+    await previous.catch(() => undefined);
     const response = await run();
     const type = response.headers.get("content-type") ?? "";
     if (!response.body || !type.includes("text/event-stream")) {
@@ -51,18 +55,18 @@ function holdResponse(response: Response, release: () => void): Response {
   }
   const reader = response.body.getReader();
   const stream = new ReadableStream<Uint8Array>({
-    async pull(controller) {
+    async start(controller) {
       try {
-        const { done, value } = await reader.read();
-        if (done) {
-          release();
-          controller.close();
-          return;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          controller.enqueue(value);
         }
-        controller.enqueue(value);
+        controller.close();
       } catch (error) {
-        release();
         controller.error(error);
+      } finally {
+        release();
       }
     },
     cancel(reason) {

@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
@@ -9,6 +9,7 @@ import {
 } from "../app/api/connectors/[id]/route";
 import { GET as getConnectors, POST as createConnector } from "../app/api/connectors/route";
 import { GET as readConversation } from "../app/api/conversations/[id]/route";
+import { parseConnectorInput } from "../src/connectors";
 import { resetAppContext, setAppContext } from "../src/context";
 import { MockProvider, streamOptions, type LlmProvider } from "../src/llm";
 import { ConversationStore } from "../src/store";
@@ -166,6 +167,72 @@ it("applies the connectors migration on a fresh database and again on reopen", a
     await reopened.close();
   } finally {
     await rm(dir, { recursive: true, force: true });
+  }
+});
+
+it("applies migrations when the process cwd has no SQL files", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mockbot-cwd-"));
+  const away = join(root, "away");
+  await mkdir(away);
+  const previous = process.cwd();
+  try {
+    process.chdir(away);
+    const store = await ConversationStore.open(join(root, "data"));
+    expect(await store.listConnectors()).toEqual([]);
+    await store.close();
+  } finally {
+    process.chdir(previous);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("rejects secret references that do not start with MCP_", async () => {
+  process.env.LLM_API_KEY = LLM_KEY;
+  process.env.GITHUB_TOKEN = "github-token-should-stay-out";
+  const store = await ConversationStore.open();
+  setAppContext({
+    store,
+    provider: new MockProvider({ delayMs: 0 }),
+    tools: createDefaultTools({}),
+  });
+  try {
+    for (const secretRef of ["LLM_API_KEY", "GITHUB_TOKEN", "PATH"]) {
+      const response = await createConnector(
+        new Request("http://localhost/api/connectors", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: "Demo",
+            transport: "http",
+            target: "http://127.0.0.1:9/mcp",
+            secretRef,
+          }),
+        }),
+      );
+      const body = await response.text();
+      expect(response.status, body).toBe(400);
+      expect(body).toContain("MCP_");
+      expect(body).not.toContain(LLM_KEY);
+      expect(body).not.toContain("github-token-should-stay-out");
+    }
+    expect(await store.listConnectors()).toEqual([]);
+    const allowed = parseConnectorInput({
+      name: "Demo",
+      transport: "http",
+      target: "http://127.0.0.1:9/mcp",
+      secretRef: "MCP_DEMO_TOKEN",
+    });
+    expect(allowed.ok).toBe(true);
+    if (allowed.ok) expect(allowed.value.secretRef).toBe("MCP_DEMO_TOKEN");
+    const empty = parseConnectorInput({
+      name: "Demo",
+      transport: "http",
+      target: "http://127.0.0.1:9/mcp",
+      secretRef: "",
+    });
+    expect(empty.ok).toBe(true);
+  } finally {
+    delete process.env.GITHUB_TOKEN;
   }
 });
 
