@@ -5,7 +5,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request): Promise<Response> {
-  const { store, provider, tools, approvals } = await getAppContext();
+  const context = await getAppContext();
+  const { store, provider, tools, approvals } = context;
   let body: unknown;
   try {
     body = await request.json();
@@ -15,7 +16,7 @@ export async function POST(request: Request): Promise<Response> {
   if (!body || typeof body !== "object") {
     return Response.json({ error: "Expected JSON body" }, { status: 400 });
   }
-  const record = body as { message?: unknown; conversationId?: unknown };
+  const record = body as { message?: unknown; conversationId?: unknown; agentId?: unknown };
   return streamChatTurn({
     store,
     provider,
@@ -23,6 +24,11 @@ export async function POST(request: Request): Promise<Response> {
     approvals,
     message: typeof record.message === "string" ? record.message : "",
     conversationId: typeof record.conversationId === "string" ? record.conversationId : undefined,
+    agentId: typeof record.agentId === "string" ? record.agentId : undefined,
     signal: request.signal,
+    agents: context.agents,
+    memory: context.memory,
+    computer: context.computer,
+    connector: context.connector,
   });
 }
