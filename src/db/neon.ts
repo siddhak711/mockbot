@@ -2,10 +2,7 @@ import { neon, neonConfig, Pool, type FullQueryResults } from "@neondatabase/ser
 import { splitSql, type Sql } from "./sql";
 
 export type NeonSession = {
-  query<T = Record<string, unknown>>(
-    text: string,
-    params?: readonly unknown[],
-  ): Promise<{ rows: T[] }>;
+  query(text: string, params?: readonly unknown[]): Promise<{ rows: unknown[] }>;
   release(err?: Error | boolean): void;
 };
 
@@ -88,10 +85,10 @@ function sessionSql(session: NeonSession, phase: { current: TxPhase }): Sql {
           "Refusing a Neon query outside a transaction. Agent grants and routine locks must commit or roll back together.",
         );
       }
-      const result = await session.query<T>(text, params);
+      const result = await session.query(text, params);
       if (command === "BEGIN") phase.current = "open";
       if (command === "COMMIT" || command === "ROLLBACK") phase.current = "closed";
-      return { rows: result.rows ?? [] };
+      return { rows: (result.rows ?? []) as T[] };
     },
     async exec(script: string) {
       for (const statement of splitSql(script)) {
@@ -154,9 +151,9 @@ function createPool(databaseUrl: string): NeonPool {
     async connect() {
       const client = await pool.connect();
       return {
-        async query<T>(text: string, params?: readonly unknown[]) {
+        async query(text: string, params?: readonly unknown[]) {
           const result = await client.query(text, params ? [...params] : []);
-          return { rows: (result.rows ?? []) as T[] };
+          return { rows: (result.rows ?? []) as unknown[] };
         },
         release(err) {
           client.release(err);
