@@ -6,7 +6,7 @@ import { afterEach, expect, it } from "vitest";
 import { POST } from "../app/api/chat/route";
 import { GET as readStatus } from "../app/api/status/route";
 import { resetAppContext, setAppContext } from "../src/context";
-import { selectProvider } from "../src/llm";
+import { MockProvider, selectProvider } from "../src/llm";
 import { ConversationStore } from "../src/store";
 import { deltas, readSse } from "./helpers";
 
@@ -156,8 +156,31 @@ it("does not reference provider secrets from browser code", () => {
     const source = readFileSync(file, "utf8");
     expect(source, file).not.toContain("LLM_API_KEY");
     expect(source, file).not.toContain("LLM_BASE_URL");
+    expect(source, file).not.toContain("TAVILY_API_KEY");
+    expect(source, file).not.toContain("GITHUB_TOKEN");
+    expect(source, file).not.toContain("GOOGLE_CALENDAR_ACCESS_TOKEN");
     expect(source, file).not.toContain("Authorization");
   }
+});
+
+it("treats an approval timeout as a denial in the mock closing", async () => {
+  const provider = new MockProvider({ delayMs: 0, chunkSize: 400, demoTools: true });
+  const messages = [
+    { role: "user" as const, content: "Schedule a planning meeting tomorrow and invite the team" },
+    { role: "tool" as const, tool_call_id: "search", content: "google_calendar" },
+    {
+      role: "tool" as const,
+      tool_call_id: "calendar",
+      content:
+        "Approval timed out before the user responded, so the action was not run. Do not retry it unless they ask.",
+    },
+  ];
+  let text = "";
+  for await (const event of provider.stream(messages)) {
+    if (event.type === "text") text += event.text;
+  }
+  expect(text).toContain("denied");
+  expect(text).not.toContain("created a **planning meeting**");
 });
 
 function walk(dir: string): string[] {

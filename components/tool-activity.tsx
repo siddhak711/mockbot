@@ -1,16 +1,7 @@
+import type { ToolActivity } from "../src/tools/display";
 import type { ToolTrace } from "../src/types";
 
-export type ToolActivityState = "running" | "done";
-
-export type ToolActivityKind = "search" | "read" | "draft" | "generic";
-
-export type ToolActivity = {
-  id: string;
-  title: string;
-  detail?: string;
-  state: ToolActivityState;
-  kind?: ToolActivityKind;
-};
+export type { ToolActivity };
 
 export function ToolCallCard({ tool, pending }: { tool: ToolTrace; pending: boolean }) {
   const title = tool.name || "Tool call";
@@ -44,25 +35,96 @@ export function ToolCallCard({ tool, pending }: { tool: ToolTrace; pending: bool
   );
 }
 
-export function ToolActivityCards({ activities }: { activities: ToolActivity[] }) {
+export function ToolActivityCards({
+  activities,
+  decidingId,
+  onDecide,
+  onSelect,
+}: {
+  activities: ToolActivity[];
+  decidingId?: string | null;
+  onDecide?: (id: string, decision: "approve" | "deny") => void;
+  onSelect?: (id: string) => void;
+}) {
   if (activities.length === 0) return null;
 
   return (
-    <div className="cards">
-      {activities.map((activity) => (
-        <div key={activity.id} className={activity.state === "running" ? "card live" : "card"}>
-          <ToolIcon kind={activity.kind ?? "generic"} live={activity.state === "running"} />
-          <div>
-            <div className="card-title">{activity.title}</div>
-            {activity.detail ? <div className="card-sub">{activity.detail}</div> : null}
+    <div className="cards" aria-live="polite">
+      {activities.map((activity) => {
+        const pending = activity.state === "approval";
+        const sub = pending
+          ? activity.summary
+          : activity.state === "running"
+            ? activity.detail
+            : activity.preview || activity.detail;
+        const className = [
+          "card",
+          activity.state === "running" ? "live" : "",
+          pending ? "needs-approval" : "",
+          activity.state === "error" ? "failed" : "",
+          activity.state === "denied" ? "denied" : "",
+        ]
+          .filter(Boolean)
+          .join(" ");
+        return (
+          <div
+            key={activity.id}
+            className={className}
+            data-tool={activity.name}
+            data-state={activity.state}
+            onClick={() => onSelect?.(activity.id)}
+          >
+            <ToolIcon kind={activity.kind} live={activity.state === "running"} />
+            <div>
+              <button type="button" className="card-title" onClick={() => onSelect?.(activity.id)}>
+                {activity.title}
+              </button>
+              {sub ? <div className="card-sub">{sub}</div> : null}
+              {pending && onDecide ? (
+                <div className="card-actions" onClick={(event) => event.stopPropagation()}>
+                  <button
+                    type="button"
+                    className="deny"
+                    disabled={decidingId === activity.id}
+                    onClick={() => onDecide(activity.id, "deny")}
+                  >
+                    Deny
+                  </button>
+                  <button
+                    type="button"
+                    className="approve"
+                    disabled={decidingId === activity.id}
+                    onClick={() => onDecide(activity.id, "approve")}
+                  >
+                    Approve
+                  </button>
+                </div>
+              ) : null}
+            </div>
+            <span className="state">
+              <span className="sr-only">{statusLabel(activity.state)}</span>
+              <StatusIcon state={activity.state} />
+            </span>
           </div>
-          <span className="state" aria-hidden="true">
-            {activity.state === "running" ? <Spinner /> : <Check />}
-          </span>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
+}
+
+function statusLabel(state: ToolActivity["state"]): string {
+  if (state === "running") return "Running";
+  if (state === "approval") return "Needs approval";
+  if (state === "denied") return "Denied";
+  if (state === "error") return "Failed";
+  return "Done";
+}
+
+function StatusIcon({ state }: { state: ToolActivity["state"] }) {
+  if (state === "running") return <Spinner />;
+  if (state === "approval") return <Dot />;
+  if (state === "error" || state === "denied") return <Cross />;
+  return <Check />;
 }
 
 function ToolGlyph({ live }: { live: boolean }) {
@@ -83,7 +145,7 @@ function ToolGlyph({ live }: { live: boolean }) {
   );
 }
 
-function ToolIcon({ kind, live }: { kind: ToolActivityKind; live: boolean }) {
+function ToolIcon({ kind, live }: { kind: ToolActivity["kind"]; live: boolean }) {
   const stroke = live ? "#f2f2f2" : "#d6d6d6";
   if (kind === "search") {
     return (
@@ -158,8 +220,33 @@ function Check() {
       fill="none"
       stroke="currentColor"
       strokeWidth="1.75"
+      aria-hidden="true"
     >
       <path d="m5 12.5 5 5L19 7.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function Cross() {
+  return (
+    <svg
+      width="15"
+      height="15"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      aria-hidden="true"
+    >
+      <path d="M7 7l10 10M17 7 7 17" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function Dot() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+      <circle cx="8" cy="8" r="3" fill="#e6c37a" />
     </svg>
   );
 }

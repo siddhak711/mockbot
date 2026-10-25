@@ -1,10 +1,15 @@
 import { selectProvider, type LlmProvider } from "./llm";
 import { RoutineStore } from "./routines/store";
 import { ConversationStore } from "./store";
+import { ApprovalGate } from "./tools/approval";
+import { createDefaultTools } from "./tools/builtins";
+import type { ToolRegistry } from "./tools/registry";
 
 export type AppContext = {
   store: ConversationStore;
   provider: LlmProvider;
+  tools: ToolRegistry;
+  approvals: ApprovalGate;
   routines?: RoutineStore;
 };
 
@@ -15,18 +20,30 @@ type Slot = {
   opening?: Promise<AppContext>;
 };
 
-let current: AppContext | undefined;
-
 function slot(): Slot {
   const g = globalThis as typeof globalThis & { [GLOBAL_KEY]?: Slot };
   if (!g[GLOBAL_KEY]) g[GLOBAL_KEY] = {};
   return g[GLOBAL_KEY];
 }
 
-export function setAppContext(context: AppContext): void {
-  current = context;
+let current: AppContext | undefined;
+
+export function setAppContext(context: {
+  store: ConversationStore;
+  provider: LlmProvider;
+  tools?: ToolRegistry;
+  approvals?: ApprovalGate;
+  routines?: RoutineStore;
+}): void {
+  current = {
+    store: context.store,
+    provider: context.provider,
+    tools: context.tools ?? createDefaultTools({}),
+    approvals: context.approvals ?? new ApprovalGate(),
+    routines: context.routines,
+  };
   const shared = slot();
-  shared.current = context;
+  shared.current = current;
   shared.opening = undefined;
 }
 
@@ -51,6 +68,8 @@ export async function getAppContext(): Promise<AppContext> {
     shared.opening = ConversationStore.open(dataDir).then(async (store) => ({
       store,
       provider: selectProvider(process.env),
+      tools: createDefaultTools(process.env),
+      approvals: new ApprovalGate(),
       routines: await RoutineStore.attach(store),
     }));
   }
