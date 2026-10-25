@@ -303,6 +303,7 @@ it("applies migrations once and refuses embedded postgres in production", async 
       "001_conversations",
       "002_memory",
       "003_tool_trace",
+      "004_connectors",
     ]);
     expect(first.driver).toBe("pglite");
     await first.close();
@@ -312,6 +313,7 @@ it("applies migrations once and refuses embedded postgres in production", async 
       "001_conversations",
       "002_memory",
       "003_tool_trace",
+      "004_connectors",
     ]);
   } finally {
     await rm(dir, { recursive: true, force: true });

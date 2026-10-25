@@ -1,5 +1,6 @@
 import { LEAD_AGENT_ID } from "./agents/ids";
 import { applyAgentSchema } from "./agents/migration";
+import type { ConnectorRecord, ConnectorTransport } from "./connectors";
 import { migrate } from "./db/migrate";
 import { openDatabase, type ProcessEnv } from "./db/open";
 import { openPglite } from "./db/pglite";
@@ -51,6 +52,17 @@ type SummaryRow = {
   updated_at: Date | string;
 };
 
+type ConnectorRow = {
+  id: string;
+  name: string;
+  transport: ConnectorTransport;
+  target: string;
+  secret_ref: string | null;
+  enabled: boolean;
+  created_at: Date | string;
+  updated_at: Date | string;
+};
+
 function asIso(value: Date | string): string {
   const date = value instanceof Date ? value : new Date(value);
   return date.toISOString();
@@ -74,6 +86,19 @@ function mapMessage(row: MessageRow): Message {
     content: row.content,
     createdAt: asIso(row.created_at),
     trace: parseTrace(row.trace),
+  };
+}
+
+function mapConnector(row: ConnectorRow): ConnectorRecord {
+  return {
+    id: row.id,
+    name: row.name,
+    transport: row.transport,
+    target: row.target,
+    secretRef: row.secret_ref,
+    enabled: row.enabled,
+    createdAt: asIso(row.created_at),
+    updatedAt: asIso(row.updated_at),
   };
 }
 
@@ -325,5 +350,53 @@ export class ConversationStore {
          updated_at = NOW()`,
       [conversationId, summary, uptoMessageId, agentId],
     );
+  }
+
+  async listConnectors(): Promise<ConnectorRecord[]> {
+    const result = await this.db.query<ConnectorRow>(
+      `SELECT id, name, transport, target, secret_ref, enabled, created_at, updated_at
+       FROM connectors
+       ORDER BY created_at ASC, id ASC`,
+    );
+    return result.rows.map(mapConnector);
+  }
+
+  async createConnector(input: {
+    id?: string;
+    name: string;
+    transport: ConnectorTransport;
+    target: string;
+    secretRef: string | null;
+  }): Promise<ConnectorRecord> {
+    const id = input.id ?? crypto.randomUUID();
+    const result = await this.db.query<ConnectorRow>(
+      `INSERT INTO connectors (id, name, transport, target, secret_ref)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, name, transport, target, secret_ref, enabled, created_at, updated_at`,
+      [id, input.name, input.transport, input.target, input.secretRef],
+    );
+    const row = result.rows[0];
+    if (!row) throw new Error("Failed to create connector");
+    return mapConnector(row);
+  }
+
+  async setConnectorEnabled(id: string, enabled: boolean): Promise<ConnectorRecord | null> {
+    const result = await this.db.query<ConnectorRow>(
+      `UPDATE connectors
+       SET enabled = $2, updated_at = NOW()
+       WHERE id = $1
+       RETURNING id, name, transport, target, secret_ref, enabled, created_at, updated_at`,
+      [id, enabled],
+    );
+    const row = result.rows[0];
+    return row ? mapConnector(row) : null;
+  }
+
+  async deleteConnector(id: string): Promise<boolean> {
+    const result = await this.db.query<{ id: string }>(
+      `DELETE FROM connectors WHERE id = $1 RETURNING id`,
+      [id],
+    );
+    return result.rows.length > 0;
   }
 }

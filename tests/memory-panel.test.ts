@@ -5,6 +5,7 @@ import { MemoryPanel } from "../components/memory-panel";
 import {
   applyMemoryRefresh,
   MEMORY_LOAD_ERROR,
+  memoriesAfterAgentSwitch,
   memoryPanelMode,
   nextMemories,
 } from "../src/memory/panel-state";
@@ -84,33 +85,36 @@ it("ignores a memory list that finishes loading after the selected agent changes
   expect(decision).toBeNull();
 });
 
-it("clears the memory list when a load fails after the selected agent changes", () => {
-  const previous = [memory("agent_default", "city")];
-  const switched = applyMemoryRefresh({
-    requestedAgentId: "agent_default",
-    currentAgentId: "agent_research",
-    ok: false,
-    loaded: null,
-    current: previous,
-  });
-  expect(switched).toEqual({ memories: [], error: null });
+it("keeps the current agent's load error when an old agent's fetch fails", () => {
+  const cleared = memoriesAfterAgentSwitch();
+  expect(cleared).toEqual({ memories: [], error: null });
 
-  const failedForNewAgent = applyMemoryRefresh({
+  const failed = applyMemoryRefresh({
     requestedAgentId: "agent_research",
     currentAgentId: "agent_research",
     ok: false,
     loaded: null,
-    current: previous,
+    current: cleared.memories,
   });
-  expect(failedForNewAgent).toEqual({ memories: [], error: MEMORY_LOAD_ERROR });
+  expect(failed).toEqual({ memories: [], error: MEMORY_LOAD_ERROR });
+  const html = renderToStaticMarkup(
+    createElement(MemoryPanel, {
+      memories: failed?.memories ?? null,
+      error: failed?.error ?? null,
+      agentId: "agent_research",
+      onChanged: async () => {},
+    }),
+  );
+  expect(html).toContain(MEMORY_LOAD_ERROR);
+  expect(html).toContain("Retry");
 
-  const alreadyLoaded = [memory("agent_research", "topic")];
-  const kept = applyMemoryRefresh({
+  const stale = applyMemoryRefresh({
     requestedAgentId: "agent_default",
     currentAgentId: "agent_research",
     ok: false,
     loaded: null,
-    current: alreadyLoaded,
+    current: failed?.memories ?? null,
   });
-  expect(kept).toBeNull();
+  expect(stale).toBeNull();
+  expect(failed).toEqual({ memories: [], error: MEMORY_LOAD_ERROR });
 });

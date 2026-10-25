@@ -87,4 +87,19 @@ CREATE TABLE IF NOT EXISTS tool_calls (
 CREATE INDEX IF NOT EXISTS tool_calls_message_idx ON tool_calls (message_id, seq);
 `,
   },
+  {
+    id: "004_connectors",
+    sql: `
+CREATE TABLE IF NOT EXISTS connectors (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  transport TEXT NOT NULL CHECK (transport IN ('http', 'stdio')),
+  target TEXT NOT NULL,
+  secret_ref TEXT,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+`,
+  },
 ];

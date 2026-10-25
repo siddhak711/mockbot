@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { Agent } from "../src/agents/types";
 import { AgentPanel, type AgentDraft } from "./agent-panel";
 import type { Conversation } from "../src/types";
@@ -30,6 +31,7 @@ export function ConversationList({
   open,
   onNew,
   onSelect,
+  children,
   onSelectAgent,
   onCreateAgent,
 }: {
@@ -42,6 +44,7 @@ export function ConversationList({
   open: boolean;
   onNew: () => void;
   onSelect: (id: string) => void;
+  children?: ReactNode;
   onSelectAgent: (id: string) => void;
   onCreateAgent: (draft: AgentDraft) => Promise<string | null>;
 }) {
@@ -125,6 +128,7 @@ export function ConversationList({
             ))}
           </div>
         </section>
+        {children}
       </div>
       <footer className="me">
         <span className="ava" aria-hidden="true">

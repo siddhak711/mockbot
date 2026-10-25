@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { ConnectorRecord, ConnectorTransport } from "../src/connectors";
 import { Composer } from "./composer";
+import { ConnectorsPanel } from "./connectors";
 import { ConversationList } from "./conversation-list";
 import { SidePane } from "./side-pane";
 import { Transcript } from "./transcript";
@@ -9,7 +11,7 @@ import type { AgentDraft } from "./agent-panel";
 import { LEAD_AGENT_ID } from "../src/agents/ids";
 import type { Agent } from "../src/agents/types";
 import { releaseDecision, settleDecision, stopDecision } from "../src/decision-lock";
-import { applyMemoryRefresh } from "../src/memory/panel-state";
+import { applyMemoryRefresh, memoriesAfterAgentSwitch } from "../src/memory/panel-state";
 import { SseParser } from "../src/sse";
 import { applyClientEvent, emptyTrace, phaseFromEvent, streamedWeight } from "../src/trace";
 import { fetchComputerSnapshot } from "../src/sandbox/refresh";
@@ -60,6 +62,8 @@ export function Workspace() {
   const [navOpen, setNavOpen] = useState(false);
   const [mobilePane, setMobilePane] = useState<"chat" | "computer" | "memory">("chat");
   const [activities, setActivities] = useState<ToolActivity[]>([]);
+  const [connectors, setConnectors] = useState<ConnectorRecord[]>([]);
+  const [connectorError, setConnectorError] = useState<string | null>(null);
   const [selectedToolId, setSelectedToolId] = useState<string | null>(null);
   const [decidingId, setDecidingId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -77,6 +81,22 @@ export function Workspace() {
     setDecidingId(null);
   }, []);
 
+  const clearMemoriesForSwitch = useCallback(() => {
+    const cleared = memoriesAfterAgentSwitch();
+    memoriesRef.current = cleared.memories;
+    setMemoryError(cleared.error);
+    setMemories(cleared.memories);
+  }, []);
+
+  const adoptMemoryAgent = useCallback(
+    (agentId: string) => {
+      if (memoryAgentRef.current === agentId) return;
+      memoryAgentRef.current = agentId;
+      clearMemoriesForSwitch();
+    },
+    [clearMemoriesForSwitch],
+  );
+
   useEffect(() => {
     activeIdRef.current = activeId;
   }, [activeId]);
@@ -93,7 +113,7 @@ export function Workspace() {
         return;
       }
       const data = (await response.json()) as { conversation: Conversation; messages: Message[] };
-      memoryAgentRef.current = data.conversation.agentId;
+      adoptMemoryAgent(data.conversation.agentId);
       setActiveId(data.conversation.id);
       setActiveAgentId(data.conversation.agentId);
       setMessages(data.messages);
@@ -113,7 +133,7 @@ export function Workspace() {
       url.searchParams.set("c", data.conversation.id);
       window.history.replaceState(null, "", url);
     },
-    [releaseApprovalLock],
+    [adoptMemoryAgent, releaseApprovalLock],
   );
 
   const refreshList = useCallback(async () => {
@@ -130,6 +150,7 @@ export function Workspace() {
       ? ((await response.json()) as { memories: Memory[] }).memories
       : null;
     const currentAgentId = memoryAgentRef.current;
+    if (currentAgentId !== agentId) return;
     const decision = applyMemoryRefresh({
       requestedAgentId: agentId,
       currentAgentId,
@@ -137,11 +158,17 @@ export function Workspace() {
       loaded,
       current: memoriesRef.current,
     });
-    if (currentAgentId !== agentId && response.ok) return;
     if (!decision) return;
     memoriesRef.current = decision.memories;
     setMemoryError(decision.error);
     setMemories(decision.memories);
+  }, []);
+
+  const refreshConnectors = useCallback(async () => {
+    const response = await fetch("/api/connectors");
+    if (!response.ok) return;
+    const data = (await response.json()) as { connectors: ConnectorRecord[] };
+    setConnectors(data.connectors);
   }, []);
 
   const refreshComputer = useCallback(async () => {
@@ -175,6 +202,7 @@ export function Workspace() {
         fetch("/api/conversations"),
         fetch("/api/status"),
         fetch("/api/agents"),
+        refreshConnectors(),
       ]);
       if (cancelled) return;
       if (statusResponse.ok) {
@@ -207,7 +235,7 @@ export function Workspace() {
     return () => {
       cancelled = true;
     };
-  }, [selectConversation]);
+  }, [refreshConnectors, selectConversation]);
 
   function showMemory() {
     setComputerOpen(true);
@@ -238,7 +266,7 @@ export function Workspace() {
 
   function selectAgent(id: string) {
     if (streaming) return;
-    memoryAgentRef.current = id;
+    adoptMemoryAgent(id);
     setActiveAgentId(id);
     newChat();
   }
@@ -601,6 +629,54 @@ export function Workspace() {
     }
   }
 
+  async function createConnector(input: {
+    name: string;
+    transport: ConnectorTransport;
+    target: string;
+    secretRef: string;
+  }): Promise<string | null> {
+    setConnectorError(null);
+    const response = await fetch("/api/connectors", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    const body = (await response.json().catch(() => null)) as { error?: string } | null;
+    if (!response.ok) {
+      const message = body?.error ?? "Could not add the connector";
+      setConnectorError(message);
+      return message;
+    }
+    await refreshConnectors();
+    return null;
+  }
+
+  async function toggleConnector(id: string, enabled: boolean) {
+    setConnectorError(null);
+    const response = await fetch(`/api/connectors/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    });
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      setConnectorError(body?.error ?? "Could not update the connector");
+      return;
+    }
+    await refreshConnectors();
+  }
+
+  async function removeConnector(id: string) {
+    setConnectorError(null);
+    const response = await fetch(`/api/connectors/${id}`, { method: "DELETE" });
+    if (!response.ok && response.status !== 204) {
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      setConnectorError(body?.error ?? "Could not remove the connector");
+      return;
+    }
+    await refreshConnectors();
+  }
+
   function stopTurn() {
     const pending = activitiesRef.current.filter((activity) => activity.state === "approval");
     if (pending.length > 0) setActivities((current) => activitiesAfterStop(current));
@@ -623,9 +699,12 @@ export function Workspace() {
   const awaitingApproval = activities.some((activity) => activity.state === "approval");
 
   useEffect(() => {
-    memoryAgentRef.current = speakingId;
+    if (memoryAgentRef.current !== speakingId) {
+      memoryAgentRef.current = speakingId;
+      clearMemoriesForSwitch();
+    }
     void refreshMemories();
-  }, [speakingId, refreshMemories]);
+  }, [speakingId, refreshMemories, clearMemoriesForSwitch]);
 
   return (
     <div className={computerOpen ? "app with-computer" : "app"}>
@@ -645,7 +724,16 @@ export function Workspace() {
         }}
         onSelectAgent={selectAgent}
         onCreateAgent={createAgent}
-      />
+      >
+        <ConnectorsPanel
+          connectors={connectors}
+          error={connectorError}
+          busy={streaming}
+          onCreate={createConnector}
+          onToggle={toggleConnector}
+          onRemove={removeConnector}
+        />
+      </ConversationList>
       <button
         type="button"
         className={navOpen ? "scrim on" : "scrim"}

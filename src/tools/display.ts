@@ -108,7 +108,9 @@ export function toolDetail(name: string, args: Record<string, unknown> | null): 
     if (typeof args.query === "string") return args.query;
     if (typeof args.key === "string") return args.key;
   }
-  return "";
+  if (typeof args.message === "string" && args.message) return args.message;
+  const first = Object.values(args).find((value) => typeof value === "string");
+  return typeof first === "string" ? first : "";
 }
 
 export function approvalSummary(name: string, args: Record<string, unknown> | null): string {
