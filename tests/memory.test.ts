@@ -92,6 +92,63 @@ it("does not retrieve a deleted memory or another agent's memory", async () => {
   expect(other.map((memory) => memory.content)).toEqual(["Atlantis harbor"]);
 });
 
+it("forgets a memory when the delete key has extra spaces", async () => {
+  const store = await openStore();
+  await store.memories.write({
+    agentId: DEFAULT_AGENT_ID,
+    key: "favorite color",
+    content: "blue",
+    kind: "profile",
+    createdBy: "user",
+  });
+  const forget = createMemoryTools(store).find((tool) => tool.name === "memory_delete");
+  if (!forget?.prepare) throw new Error("missing memory_delete");
+  const prepared = forget.prepare({ key: "  favorite   color  " });
+  if (!("args" in prepared)) throw new Error(prepared.error);
+  expect(prepared.args.key).toBe("favorite color");
+  const result = await forget.invoke(prepared.args, {
+    memory: {
+      agentId: DEFAULT_AGENT_ID,
+      conversationId: "conversation",
+      sourceMessageId: null,
+      userMessages: [],
+      toolOutputs: [],
+    },
+  });
+  expect(result.isError).toBeUndefined();
+  expect(result.content).toContain('Forgot "favorite color"');
+  expect(await store.memories.listLive(DEFAULT_AGENT_ID)).toEqual([]);
+});
+
+it("forgets a memory when the delete key is longer than 80 characters", async () => {
+  const store = await openStore();
+  const longKey = "k".repeat(80);
+  await store.memories.write({
+    agentId: DEFAULT_AGENT_ID,
+    key: longKey,
+    content: "a long key",
+    kind: "fact",
+    createdBy: "user",
+  });
+  const forget = createMemoryTools(store).find((tool) => tool.name === "memory_delete");
+  if (!forget?.prepare) throw new Error("missing memory_delete");
+  const prepared = forget.prepare({ key: `  ${longKey}extra` });
+  if (!("args" in prepared)) throw new Error(prepared.error);
+  expect(prepared.args.key).toBe(longKey);
+  const result = await forget.invoke(prepared.args, {
+    memory: {
+      agentId: DEFAULT_AGENT_ID,
+      conversationId: "conversation",
+      sourceMessageId: null,
+      userMessages: [],
+      toolOutputs: [],
+    },
+  });
+  expect(result.isError).toBeUndefined();
+  expect(result.content).toContain(`Forgot "${longKey}"`);
+  expect(await store.memories.listLive(DEFAULT_AGENT_ID)).toEqual([]);
+});
+
 it("blocks a planted API key and does not log the secret", async () => {
   const store = await openStore();
   const secret = "sk-test-1234567890abcdefghij";

@@ -1,7 +1,7 @@
 import type { ConversationStore } from "../store";
 import { saveMemory, type SaveResult } from "../memory/save";
 import { SEARCH_TOKEN_BUDGET, SEARCH_TOP_K, trimToTokens } from "../memory/tokens";
-import { memoryLine } from "../memory/prompt";
+import { memoryLine, normalizeKey } from "../memory/prompt";
 import type { MemoryKind } from "../types";
 import type { MemoryToolDeps, ToolContext, ToolDefinition, ToolResult } from "./types";
 
@@ -122,7 +122,7 @@ function memoryDeleteTool(store: ConversationStore): ToolDefinition {
       additionalProperties: false,
     },
     prepare(args) {
-      const key = typeof args.key === "string" ? args.key.trim() : "";
+      const key = normalizeKey(typeof args.key === "string" ? args.key : "");
       if (!key) return { error: "memory_delete requires a key." };
       return { args: { key } };
     },

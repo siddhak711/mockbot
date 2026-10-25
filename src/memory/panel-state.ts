@@ -11,6 +11,24 @@ export function nextMemories(
   return { memories: loaded ?? [], error: null };
 }
 
+export function applyMemoryRefresh(input: {
+  requestedAgentId: string;
+  currentAgentId: string;
+  ok: boolean;
+  loaded: Memory[] | null;
+  current: Memory[] | null;
+}): { memories: Memory[] | null; error: string | null } | null {
+  if (input.currentAgentId !== input.requestedAgentId) {
+    if (input.ok) return null;
+    if (input.current?.some((memory) => memory.agentId === input.currentAgentId)) return null;
+    return { memories: [], error: null };
+  }
+  if (!input.ok && input.current?.some((memory) => memory.agentId !== input.currentAgentId)) {
+    return { memories: [], error: MEMORY_LOAD_ERROR };
+  }
+  return nextMemories(input.current, input.ok, input.loaded);
+}
+
 export function memoryPanelMode(
   memories: Memory[] | null,
   error: string | null,

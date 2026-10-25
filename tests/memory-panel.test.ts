@@ -2,7 +2,13 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
 import { MemoryPanel } from "../components/memory-panel";
-import { MEMORY_LOAD_ERROR, memoryPanelMode, nextMemories } from "../src/memory/panel-state";
+import {
+  applyMemoryRefresh,
+  MEMORY_LOAD_ERROR,
+  memoryPanelMode,
+  nextMemories,
+} from "../src/memory/panel-state";
+import type { Memory } from "../src/types";
 
 it("keeps a failed memory load out of the loading state and offers retry", () => {
   const initial = nextMemories(null, false, null);
@@ -45,4 +51,66 @@ it("keeps a failed memory load out of the loading state and offers retry", () =>
   expect(html).toContain(MEMORY_LOAD_ERROR);
   expect(html).toContain("Retry");
   expect(html).not.toContain("Loading memories");
+});
+
+function memory(agentId: string, key: string): Memory {
+  return {
+    id: key,
+    agentId,
+    kind: "fact",
+    key,
+    content: key,
+    sourceMessageId: null,
+    sourceSnippet: null,
+    supersedes: null,
+    validFrom: "2026-01-01T00:00:00.000Z",
+    validTo: null,
+    deletedAt: null,
+    createdBy: "user",
+    history: [],
+  };
+}
+
+it("ignores a memory list that finishes loading after the selected agent changes", () => {
+  const previous = [memory("agent_default", "city")];
+  const other = [memory("agent_research", "topic")];
+  const decision = applyMemoryRefresh({
+    requestedAgentId: "agent_default",
+    currentAgentId: "agent_research",
+    ok: true,
+    loaded: previous,
+    current: other,
+  });
+  expect(decision).toBeNull();
+});
+
+it("clears the memory list when a load fails after the selected agent changes", () => {
+  const previous = [memory("agent_default", "city")];
+  const switched = applyMemoryRefresh({
+    requestedAgentId: "agent_default",
+    currentAgentId: "agent_research",
+    ok: false,
+    loaded: null,
+    current: previous,
+  });
+  expect(switched).toEqual({ memories: [], error: null });
+
+  const failedForNewAgent = applyMemoryRefresh({
+    requestedAgentId: "agent_research",
+    currentAgentId: "agent_research",
+    ok: false,
+    loaded: null,
+    current: previous,
+  });
+  expect(failedForNewAgent).toEqual({ memories: [], error: MEMORY_LOAD_ERROR });
+
+  const alreadyLoaded = [memory("agent_research", "topic")];
+  const kept = applyMemoryRefresh({
+    requestedAgentId: "agent_default",
+    currentAgentId: "agent_research",
+    ok: false,
+    loaded: null,
+    current: alreadyLoaded,
+  });
+  expect(kept).toBeNull();
 });

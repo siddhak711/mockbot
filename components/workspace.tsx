@@ -9,7 +9,7 @@ import type { AgentDraft } from "./agent-panel";
 import { LEAD_AGENT_ID } from "../src/agents/ids";
 import type { Agent } from "../src/agents/types";
 import { releaseDecision, settleDecision, stopDecision } from "../src/decision-lock";
-import { MEMORY_LOAD_ERROR, nextMemories } from "../src/memory/panel-state";
+import { applyMemoryRefresh } from "../src/memory/panel-state";
 import { SseParser } from "../src/sse";
 import { applyClientEvent, emptyTrace, phaseFromEvent, streamedWeight } from "../src/trace";
 import { fetchComputerSnapshot } from "../src/sandbox/refresh";
@@ -66,6 +66,8 @@ export function Workspace() {
   const computerRequest = useRef(0);
   const activeIdRef = useRef<string | null>(null);
   const memoryAgentRef = useRef(LEAD_AGENT_ID);
+  const memoriesRef = useRef<Memory[] | null>(null);
+  memoriesRef.current = memories;
   const activitiesRef = useRef(activities);
   const decidingRef = useRef<string | null>(null);
   activitiesRef.current = activities;
@@ -124,12 +126,22 @@ export function Workspace() {
   const refreshMemories = useCallback(async () => {
     const agentId = memoryAgentRef.current;
     const response = await fetch(`/api/memories?agentId=${encodeURIComponent(agentId)}`);
-    if (memoryAgentRef.current !== agentId) return;
     const loaded = response.ok
       ? ((await response.json()) as { memories: Memory[] }).memories
       : null;
-    setMemoryError(response.ok ? null : MEMORY_LOAD_ERROR);
-    setMemories((current) => nextMemories(current, response.ok, loaded).memories);
+    const currentAgentId = memoryAgentRef.current;
+    const decision = applyMemoryRefresh({
+      requestedAgentId: agentId,
+      currentAgentId,
+      ok: response.ok,
+      loaded,
+      current: memoriesRef.current,
+    });
+    if (currentAgentId !== agentId && response.ok) return;
+    if (!decision) return;
+    memoriesRef.current = decision.memories;
+    setMemoryError(decision.error);
+    setMemories(decision.memories);
   }, []);
 
   const refreshComputer = useCallback(async () => {
