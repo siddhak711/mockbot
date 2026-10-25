@@ -1,5 +1,4 @@
 import { AgentInputError } from "../../../src/agents/directory";
-import type { AgentGrant } from "../../../src/agents/types";
 import { getAgents, getAppContext } from "../../../src/context";
 
 export const runtime = "nodejs";
@@ -41,17 +40,14 @@ export async function POST(request: Request): Promise<Response> {
     connectorId?: unknown;
   };
   try {
-    const agent = await directory.create({
+    const created = await directory.createWithGrants({
       name: asString(record.name),
       instructions: asString(record.instructions),
       memoryNote: asString(record.memoryNote),
+      computerId: asString(record.computerId),
+      connectorId: asString(record.connectorId),
     });
-    const grants: AgentGrant[] = [];
-    const computerId = asString(record.computerId).trim();
-    const connectorId = asString(record.connectorId).trim();
-    if (computerId) grants.push(await directory.grant(agent.id, "computer", computerId));
-    if (connectorId) grants.push(await directory.grant(agent.id, "connector", connectorId));
-    return Response.json({ agent, grants }, { status: 201 });
+    return Response.json(created, { status: 201 });
   } catch (error) {
     if (error instanceof AgentInputError) {
       return Response.json({ error: error.message }, { status: error.status });

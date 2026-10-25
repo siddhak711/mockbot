@@ -70,6 +70,48 @@ it("seeds the milestone 1 prompt and creates a second agent", async () => {
   expect((await store.getConversation(childChat.id))?.conversation.agentId).toBe(agent.agent.id);
 });
 
+it("leaves no agent behind when a grant id is invalid", async () => {
+  const store = await ConversationStore.open();
+  setAppContext({ store, provider: new MockProvider({ delayMs: 0 }) });
+
+  const rejected = await POST(
+    new Request("http://localhost/api/agents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Researcher",
+        instructions: "You study groves.",
+        computerId: "desk",
+        connectorId: "not a connector",
+      }),
+    }),
+  );
+  expect(rejected.status).toBe(400);
+  const afterFailure = (await (await GET()).json()) as { agents: Array<{ name: string }> };
+  expect(afterFailure.agents.map((agent) => agent.name)).toEqual([LEAD_AGENT_NAME]);
+
+  const retry = await POST(
+    new Request("http://localhost/api/agents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Researcher",
+        instructions: "You study groves.",
+        computerId: "desk",
+      }),
+    }),
+  );
+  expect(retry.status).toBe(201);
+  const body = (await retry.json()) as {
+    agent: { name: string };
+    grants: Array<{ kind: string; resourceId: string }>;
+  };
+  expect(body.agent.name).toBe("Researcher");
+  expect(body.grants.map((grant) => [grant.kind, grant.resourceId])).toEqual([
+    ["computer", "desk"],
+  ]);
+});
+
 it("keeps the milestone 1 system prompt on an ordinary lead turn", async () => {
   let system = "";
   const store = await ConversationStore.open();

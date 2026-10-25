@@ -59,6 +59,33 @@ function mapGrant(row: GrantRow): AgentGrant {
   };
 }
 
+function checkedResourceId(kind: GrantKind, resourceId: string): string {
+  if (kind !== "connector" && kind !== "computer") {
+    throw new AgentInputError("Grant kind must be connector or computer");
+  }
+  const id = resourceId.trim();
+  if (!RESOURCE_ID.test(id)) throw new AgentInputError("Resource id is invalid");
+  return id;
+}
+
+function validatedAgent(input: { name: string; instructions: string; memoryNote?: string }): {
+  name: string;
+  instructions: string;
+  memoryNote: string;
+} {
+  const name = input.name.trim();
+  const instructions = input.instructions.trim();
+  const memoryNote = input.memoryNote?.trim() ?? "";
+  if (!name) throw new AgentInputError("Name is required");
+  if (name.length > NAME_MAX) throw new AgentInputError("Name is too long");
+  if (!instructions) throw new AgentInputError("Instructions are required");
+  if (instructions.length > INSTRUCTIONS_MAX) {
+    throw new AgentInputError("Instructions are too long");
+  }
+  if (memoryNote.length > MEMORY_MAX) throw new AgentInputError("Memory is too long");
+  return { name, instructions, memoryNote };
+}
+
 export class AgentDirectory {
   private constructor(private readonly db: PGlite) {}
 
@@ -113,29 +140,54 @@ export class AgentDirectory {
   }
 
   async create(input: { name: string; instructions: string; memoryNote?: string }): Promise<Agent> {
-    const name = input.name.trim();
-    const instructions = input.instructions.trim();
-    const memoryNote = input.memoryNote?.trim() ?? "";
-    if (!name) throw new AgentInputError("Name is required");
-    if (name.length > NAME_MAX) throw new AgentInputError("Name is too long");
-    if (!instructions) throw new AgentInputError("Instructions are required");
-    if (instructions.length > INSTRUCTIONS_MAX) {
-      throw new AgentInputError("Instructions are too long");
+    const created = await this.createWithGrants(input);
+    return created.agent;
+  }
+
+  async createWithGrants(input: {
+    name: string;
+    instructions: string;
+    memoryNote?: string;
+    computerId?: string;
+    connectorId?: string;
+  }): Promise<{ agent: Agent; grants: AgentGrant[] }> {
+    const agentInput = validatedAgent(input);
+    const grants: Array<{ kind: GrantKind; resourceId: string }> = [];
+    const computerId = input.computerId?.trim() ?? "";
+    const connectorId = input.connectorId?.trim() ?? "";
+    if (computerId)
+      grants.push({ kind: "computer", resourceId: checkedResourceId("computer", computerId) });
+    if (connectorId) {
+      grants.push({ kind: "connector", resourceId: checkedResourceId("connector", connectorId) });
     }
-    if (memoryNote.length > MEMORY_MAX) throw new AgentInputError("Memory is too long");
-    if (await this.findByName(name)) {
+    if (await this.findByName(agentInput.name)) {
       throw new AgentInputError("An agent with that name already exists", 409);
     }
-    const id = crypto.randomUUID();
-    const rows = await this.rows<AgentRow>(
-      `INSERT INTO agents (id, name, instructions, memory_note)
-       VALUES ($1, $2, $3, $4)
-       RETURNING id, name, instructions, memory_note, created_at`,
-      [id, name, instructions, memoryNote],
-    );
-    const row = rows[0];
-    if (!row) throw new Error("Failed to create agent");
-    return mapAgent(row);
+
+    return this.db.transaction(async (tx) => {
+      const id = crypto.randomUUID();
+      const inserted = await tx.query<AgentRow>(
+        `INSERT INTO agents (id, name, instructions, memory_note)
+         VALUES ($1, $2, $3, $4)
+         RETURNING id, name, instructions, memory_note, created_at`,
+        [id, agentInput.name, agentInput.instructions, agentInput.memoryNote],
+      );
+      const row = inserted.rows[0];
+      if (!row) throw new Error("Failed to create agent");
+      const stored: AgentGrant[] = [];
+      for (const grant of grants) {
+        const saved = await tx.query<GrantRow>(
+          `INSERT INTO agent_grants (id, agent_id, resource_kind, resource_id)
+           VALUES ($1, $2, $3, $4)
+           RETURNING id, agent_id, resource_kind, resource_id`,
+          [crypto.randomUUID(), id, grant.kind, grant.resourceId],
+        );
+        const grantRow = saved.rows[0];
+        if (!grantRow) throw new Error("Failed to store grant");
+        stored.push(mapGrant(grantRow));
+      }
+      return { agent: mapAgent(row), grants: stored };
+    });
   }
 
   async listGrants(agentId: string): Promise<AgentGrant[]> {
@@ -168,11 +220,7 @@ export class AgentDirectory {
   }
 
   async grant(agentId: string, kind: GrantKind, resourceId: string): Promise<AgentGrant> {
-    const id = resourceId.trim();
-    if (kind !== "connector" && kind !== "computer") {
-      throw new AgentInputError("Grant kind must be connector or computer");
-    }
-    if (!RESOURCE_ID.test(id)) throw new AgentInputError("Resource id is invalid");
+    const id = checkedResourceId(kind, resourceId);
     const agent = await this.get(agentId);
     if (!agent) throw new AgentInputError("Agent not found", 404);
     const grantId = crypto.randomUUID();

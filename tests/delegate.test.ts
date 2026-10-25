@@ -377,6 +377,97 @@ it("runs the live mock handoff for a delegate phrase", async () => {
   expect(deltas(ordinaryEvents)).toBe(buildMockReply("Say hello"));
 });
 
+it("keeps the child result in the next lead turn", async () => {
+  let parentTurns = 0;
+  const followUps: string[] = [];
+  const store = await ConversationStore.open();
+  setAppContext({
+    store,
+    computer: {
+      async read() {
+        return "desk-file";
+      },
+    },
+    provider: new MockProvider({
+      delayMs: 0,
+      chunkSize: 80,
+      tools: (messages) => {
+        if (systemOf(messages).includes("delegation: child")) {
+          return [
+            {
+              id: "call_computer",
+              name: "use_computer",
+              arguments: JSON.stringify({ computerId: "desk", path: "notes.txt" }),
+            },
+          ];
+        }
+        parentTurns += 1;
+        if (parentTurns === 1) {
+          return [
+            {
+              id: "call_delegate",
+              name: "delegate",
+              arguments: JSON.stringify({ agent: "Researcher", task: "Read the notes" }),
+            },
+          ];
+        }
+        return null;
+      },
+      reply: (messages) => {
+        if (systemOf(messages).includes("delegation: child")) return "Notes received";
+        if (parentTurns > 1) {
+          followUps.push(messages.map((message) => message.content).join("\n"));
+          return "Still working";
+        }
+        return undefined;
+      },
+    }),
+  });
+  await createAgent(
+    new Request("http://localhost/api/agents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Researcher",
+        instructions: "You read notes.",
+        computerId: "desk",
+      }),
+    }),
+  );
+
+  const response = await POST(
+    new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Ask the researcher" }),
+    }),
+  );
+  const events = await readSse(response);
+  expect(events.some((event) => event.event === "error")).toBe(false);
+  const parent = (await store.listConversations()).find(
+    (conversation) => conversation.agentId === LEAD_AGENT_ID,
+  );
+  const saved = await store.getConversation(parent!.id);
+  const delegate = saved?.messages
+    .flatMap((message) => message.tools ?? [])
+    .find((tool) => tool.name === "delegate");
+  expect(delegate?.status).toBe("done");
+  expect(delegate?.output).toContain("desk-file");
+  expect(delegate?.output).toContain("Notes received");
+
+  const followUp = await POST(
+    new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "What did they find?", conversationId: parent!.id }),
+    }),
+  );
+  expect(deltas(await readSse(followUp))).toBe("Still working");
+  expect(followUps).toHaveLength(1);
+  expect(followUps[0]).toContain("desk-file");
+  expect(followUps[0]).toContain("Notes received");
+});
+
 it("refuses a delegation from Mockbot to itself and keeps the conversation", async () => {
   let parentTurns = 0;
   const store = await ConversationStore.open();

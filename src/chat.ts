@@ -1,4 +1,4 @@
-import { LEAD_AGENT_ID } from "./agents/ids";
+import { DELEGATE_TOOL_NAME, LEAD_AGENT_ID } from "./agents/ids";
 import { AgentDirectory } from "./agents/directory";
 import { NoteMemory, defaultComputer, defaultConnector } from "./agents/ports";
 import { buildAgentSystemPrompt } from "./agents/prompt";
@@ -371,6 +371,16 @@ export async function streamChatTurn(options: {
             signal?.removeEventListener("abort", abortRound);
           }
           if (signal?.aborted || userStopped) break;
+
+          for (const call of roundCalls) {
+            if (call.name !== DELEGATE_TOOL_NAME || call.result == null || call.output != null) {
+              continue;
+            }
+            if (!call.id) call.id = `call_${crypto.randomUUID()}`;
+            call.status = call.result.startsWith("Delegation failed") ? "error" : "done";
+            call.output = call.result;
+            await saveCall(call);
+          }
 
           const pending = roundCalls.filter((call) => call.name && call.result == null);
           const shouldRun =
