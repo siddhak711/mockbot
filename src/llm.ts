@@ -116,7 +116,9 @@ function demoClosing(userText: string, messages: LlmMessage[]): string {
   if (WRITE_DEMO.test(userText)) {
     const denied = messages.some(
       (message) =>
-        message.role === "tool" && message.content.includes("The user denied this action"),
+        message.role === "tool" &&
+        (message.content.includes("The user denied this action") ||
+          message.content.includes("Approval timed out")),
     );
     if (denied) {
       return "I looked up the calendar tool and drafted an invite for **team@example.com**. You denied it, so the event was not created.";

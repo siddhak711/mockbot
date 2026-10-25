@@ -1,4 +1,4 @@
-import { asRecord, jsonResult, present, readJson, toolSignal } from "./http";
+import { asRecord, jsonResult, present, readJson, toolFetchInit } from "./http";
 import type { FetchLike, ToolDefinition } from "./types";
 
 const EVENTS_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
@@ -164,7 +164,7 @@ export function calendarTool(
         const response = await readJson(
           fetchImpl,
           url.toString(),
-          { headers, signal: toolSignal(context.signal) },
+          toolFetchInit(context.signal, { headers }),
           token,
         );
         if (!response.ok) return { content: response.error, isError: true };
@@ -178,7 +178,7 @@ export function calendarTool(
       const response = await readJson(
         fetchImpl,
         url.toString(),
-        {
+        toolFetchInit(context.signal, {
           method: "POST",
           headers: { ...headers, "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -188,8 +188,7 @@ export function calendarTool(
             end: { dateTime: args.end },
             attendees: attendees.map((email) => ({ email })),
           }),
-          signal: toolSignal(context.signal),
-        },
+        }),
         token,
       );
       if (!response.ok) return { content: response.error, isError: true };

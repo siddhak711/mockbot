@@ -24,20 +24,30 @@ export function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
 }
 
-export function toolSignal(signal: AbortSignal | undefined, timeoutMs = 20_000): AbortSignal {
-  const timeout = AbortSignal.timeout(timeoutMs);
-  if (!signal) return timeout;
-  return AbortSignal.any([signal, timeout]);
+export type ToolRequestInit = RequestInit & {
+  parentSignal?: AbortSignal;
+  timeoutSignal?: AbortSignal;
+};
+
+export function toolFetchInit(
+  parent: AbortSignal | undefined,
+  init: RequestInit = {},
+  timeoutMs = 20_000,
+): ToolRequestInit {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const signal = parent ? AbortSignal.any([parent, timeoutSignal]) : timeoutSignal;
+  return { ...init, signal, parentSignal: parent, timeoutSignal };
 }
 
 export async function readJson(
   fetchImpl: FetchLike,
   url: string,
-  init: RequestInit,
+  init: ToolRequestInit,
   secret?: string,
 ): Promise<{ ok: true; body: unknown } | { ok: false; error: string }> {
+  const { parentSignal, timeoutSignal, ...request } = init;
   try {
-    const response = await fetchImpl(url, init);
+    const response = await fetchImpl(url, request);
     const text = await response.text();
     if (!response.ok) {
       return {
@@ -51,6 +61,9 @@ export async function readJson(
       return { ok: false, error: "The service returned a response that was not JSON." };
     }
   } catch (error) {
+    if (!parentSignal?.aborted && timeoutSignal?.aborted) {
+      return { ok: false, error: "The tool request timed out." };
+    }
     if (isAbortError(error)) throw error;
     if (error instanceof Error && error.name === "TimeoutError") {
       return { ok: false, error: "The tool request timed out." };

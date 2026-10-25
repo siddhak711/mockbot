@@ -5,6 +5,7 @@ import { Composer } from "./composer";
 import { ComputerPane } from "./computer-pane";
 import { ConversationList } from "./conversation-list";
 import { Transcript } from "./transcript";
+import { beginDecision, releaseDecision, stopDecision } from "../src/decision-lock";
 import { SseParser } from "../src/sse";
 import {
   activitiesFromMessages,
@@ -374,26 +375,34 @@ export function Workspace() {
   }
 
   async function decide(id: string, decision: "approve" | "deny") {
-    if (decidingRef.current) return;
-    decidingRef.current = id;
+    if (!beginDecision(decidingRef, id)) return;
     setDecidingId(id);
-    const response = await fetch("/api/tools/approvals", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, decision }),
-    });
-    if (!response.ok) {
-      const activity = activitiesRef.current.find((item) => item.id === id);
-      if (!activity || activity.state === "approval") {
-        setError(
-          response.status === 404
-            ? "That approval expired. Send the request again."
-            : "Could not save the decision",
-        );
+    try {
+      const response = await fetch("/api/tools/approvals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, decision }),
+      });
+      if (!response.ok) {
+        const activity = activitiesRef.current.find((item) => item.id === id);
+        if (!activity || activity.state === "approval") {
+          setError(
+            response.status === 404
+              ? "That approval expired. Send the request again."
+              : "Could not save the decision",
+          );
+        }
       }
-      decidingRef.current = null;
+    } finally {
+      releaseDecision(decidingRef, id);
       setDecidingId((current) => (current === id ? null : current));
     }
+  }
+
+  function stopTurn() {
+    abortRef.current?.abort();
+    stopDecision(decidingRef);
+    setDecidingId(null);
   }
 
   const active = conversations.find((item) => item.id === activeId) ?? null;
@@ -544,7 +553,7 @@ export function Workspace() {
             streaming={streaming}
             awaitingApproval={awaitingApproval}
             onSend={(text) => void send(text)}
-            onStop={() => abortRef.current?.abort()}
+            onStop={stopTurn}
           />
         </div>
         <div className="computer-sheet">

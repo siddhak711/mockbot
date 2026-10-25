@@ -1,4 +1,4 @@
-import { asRecord, jsonResult, present, readJson, toolSignal } from "./http";
+import { asRecord, jsonResult, present, readJson, toolFetchInit } from "./http";
 import type { FetchLike, ToolDefinition } from "./types";
 
 const ACTIONS = ["list_issues", "get_issue", "list_pulls", "get_pull", "get_file"] as const;
@@ -163,7 +163,7 @@ export function githubTool(
       const response = await readJson(
         fetchImpl,
         url,
-        { headers, signal: toolSignal(context.signal) },
+        toolFetchInit(context.signal, { headers }),
         token,
       );
       if (!response.ok) return { content: response.error, isError: true };

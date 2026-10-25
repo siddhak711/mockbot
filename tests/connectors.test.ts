@@ -1,5 +1,6 @@
 import { expect, it, vi } from "vitest";
 import { createDefaultTools } from "../src/tools/builtins";
+import { readJson, toolFetchInit } from "../src/tools/http";
 
 const SECRET = "super-secret-tool-key";
 
@@ -91,4 +92,35 @@ it("calls Tavily, GitHub, and Calendar when credentials are set and redacts them
   expect(error.isError).toBe(true);
   expect(error.content).toContain("[redacted]");
   expect(error.content).not.toContain(SECRET);
+});
+
+function abortError(): Error {
+  return Object.assign(new Error("The operation was aborted"), { name: "AbortError" });
+}
+
+it("returns a tool error when the timeout signal aborts", async () => {
+  const parent = new AbortController();
+  const timeout = new AbortController();
+  timeout.abort();
+  const fetchImpl = vi.fn<typeof fetch>(async () => {
+    throw abortError();
+  });
+  const result = await readJson(fetchImpl, "https://example.com/search", {
+    signal: AbortSignal.any([parent.signal, timeout.signal]),
+    parentSignal: parent.signal,
+    timeoutSignal: timeout.signal,
+  });
+  expect(result).toEqual({ ok: false, error: "The tool request timed out." });
+});
+
+it("rethrows a user stop instead of reporting a tool timeout", async () => {
+  const parent = new AbortController();
+  const init = toolFetchInit(parent.signal, {}, 60_000);
+  parent.abort();
+  const fetchImpl = vi.fn<typeof fetch>(async () => {
+    throw abortError();
+  });
+  await expect(readJson(fetchImpl, "https://example.com/search", init)).rejects.toMatchObject({
+    name: "AbortError",
+  });
 });

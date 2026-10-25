@@ -1,4 +1,4 @@
-import { asRecord, jsonResult, present, readJson, toolSignal } from "./http";
+import { asRecord, jsonResult, present, readJson, toolFetchInit } from "./http";
 import type { FetchLike, ToolDefinition } from "./types";
 
 const SEARCH_URL = "https://api.tavily.com/search";
@@ -120,7 +120,7 @@ export function webSearchTool(
       const response = await readJson(
         fetchImpl,
         SEARCH_URL,
-        {
+        toolFetchInit(context.signal, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${apiKey}`,
@@ -133,8 +133,7 @@ export function webSearchTool(
             include_answer: true,
             search_depth: "basic",
           }),
-          signal: toolSignal(context.signal),
-        },
+        }),
         apiKey,
       );
       if (!response.ok) return { content: response.error, isError: true };
@@ -172,7 +171,7 @@ export function webFetchTool(
       const response = await readJson(
         fetchImpl,
         EXTRACT_URL,
-        {
+        toolFetchInit(context.signal, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${apiKey}`,
@@ -180,8 +179,7 @@ export function webFetchTool(
             Accept: "application/json",
           },
           body: JSON.stringify({ urls: [url] }),
-          signal: toolSignal(context.signal),
-        },
+        }),
         apiKey,
       );
       if (!response.ok) return { content: response.error, isError: true };

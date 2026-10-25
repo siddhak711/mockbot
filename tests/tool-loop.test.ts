@@ -13,6 +13,7 @@ import {
 } from "../src/llm";
 import { SseParser } from "../src/sse";
 import { ConversationStore } from "../src/store";
+import { ApprovalGate } from "../src/tools/approval";
 import { createDefaultTools } from "../src/tools/builtins";
 import { toolSearchTool, ToolRegistry } from "../src/tools/registry";
 import type { LlmMessage, StoredToolCall } from "../src/types";
@@ -234,6 +235,33 @@ it("records a denial and still lets the conversation continue", async () => {
     }),
   );
   expect(bad.status).toBe(400);
+});
+
+it("closes a timed-out calendar invite as a denial", async () => {
+  const store = await ConversationStore.open();
+  setAppContext({
+    store,
+    provider: selectProvider({ MOCK_STREAM_DELAY_MS: "0", MOCK_CHUNK_SIZE: "80" }),
+    approvals: new ApprovalGate(30),
+  });
+  const response = await postChat(
+    new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: "Schedule a planning meeting tomorrow and invite the team",
+      }),
+    }),
+  );
+  const events = (await readSse(response)) as SseEvent[];
+  const calendarResult = toolEvents(events, "tool_result").find(
+    (event) => event.data.name === "google_calendar",
+  );
+  expect(calendarResult?.data.status).toBe("denied");
+  expect(String(calendarResult?.data.output)).toContain("Approval timed out");
+  expect(deltas(events)).toContain("denied");
+  expect(deltas(events)).not.toContain("created a **planning meeting**");
+  expect(events.at(-1)?.event).toBe("done");
 });
 
 it("shows a tool failure in the stream and keeps the conversation usable", async () => {
