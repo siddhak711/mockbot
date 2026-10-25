@@ -1,6 +1,13 @@
+import { LEAD_AGENT_ID } from "./agents/ids";
+import { AgentDirectory } from "./agents/directory";
+import { NoteMemory, defaultComputer, defaultConnector } from "./agents/ports";
+import { buildAgentSystemPrompt } from "./agents/prompt";
+import { runWithDelegate } from "./agents/stream";
+import { MapToolHost, registerDelegateTool } from "./agents/tool";
+import type { AgentMemoryPort, ComputerPort, ConnectorPort } from "./agents/types";
 import { encodeSse, ssePadding } from "./sse";
 import { titleFromMessage, type ConversationStore } from "./store";
-import { SYSTEM_PROMPT, type LlmProvider } from "./llm";
+import type { LlmProvider } from "./llm";
 import { applyStreamEvent, emptyTrace, hasVisibleStream } from "./trace";
 import type { LlmMessage, LlmStreamEvent, MessageTrace } from "./types";
 
@@ -50,7 +57,12 @@ export async function streamChatTurn(options: {
   provider: LlmProvider;
   message: string;
   conversationId?: string;
+  agentId?: string;
   signal?: AbortSignal;
+  agents?: AgentDirectory;
+  memory?: AgentMemoryPort;
+  computer?: ComputerPort;
+  connector?: ConnectorPort;
 }): Promise<Response> {
   const message = options.message.trim();
   if (!message) {
@@ -60,22 +72,68 @@ export async function streamChatTurn(options: {
     return Response.json({ error: "Message is too long" }, { status: 400 });
   }
 
+  const agents = options.agents ?? (await AgentDirectory.attach(options.store));
+  const memory = options.memory ?? new NoteMemory(agents);
+  const computer = options.computer ?? defaultComputer;
+  const connector = options.connector ?? defaultConnector;
   const conversationId = options.conversationId?.trim() || undefined;
-  const conversation = conversationId
+  let conversation = conversationId
     ? (await options.store.getConversation(conversationId))?.conversation
-    : await options.store.createConversation(titleFromMessage(message));
-  if (!conversation) return Response.json({ error: "Conversation not found" }, { status: 404 });
+    : undefined;
+  if (conversationId && !conversation) {
+    return Response.json({ error: "Conversation not found" }, { status: 404 });
+  }
+  if (!conversation) {
+    const requested = options.agentId?.trim() || LEAD_AGENT_ID;
+    const owner = await agents.get(requested);
+    if (!owner) return Response.json({ error: "Agent not found" }, { status: 404 });
+    conversation = await options.store.createConversation(titleFromMessage(message), owner.id);
+  }
 
   const user = await options.store.addMessage(conversation.id, "user", message);
   const stored = await options.store.getConversation(conversation.id);
+  const speaker = (await agents.get(conversation.agentId)) ?? (await agents.get(LEAD_AGENT_ID));
+  if (!speaker) return Response.json({ error: "Agent not found" }, { status: 404 });
+  const [memories, grants] = await Promise.all([
+    memory.list(speaker.id),
+    agents.listGrants(speaker.id),
+  ]);
   const history: LlmMessage[] = [
-    { role: "system", content: SYSTEM_PROMPT },
+    {
+      role: "system",
+      content: buildAgentSystemPrompt({ agent: speaker, memories, grants, child: false }),
+    },
     ...(stored?.messages ?? [])
       .filter((item) => item.content.length > 0)
       .map((item) => ({ role: item.role, content: item.content })),
   ];
 
   const { store, provider, signal } = options;
+  const host = new MapToolHost();
+  registerDelegateTool(host, {
+    directory: agents,
+    store,
+    provider,
+    memory,
+    computer,
+    connector,
+  });
+  const events = runWithDelegate(provider.stream(history, signal), async (call) => {
+    const tool = host.get("delegate");
+    if (!tool) return "Delegation failed: delegate tool is not registered.";
+    let args: Record<string, unknown>;
+    try {
+      const parsed: unknown = JSON.parse(call.arguments);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return "Delegation failed: arguments are not JSON.";
+      }
+      args = parsed as Record<string, unknown>;
+    } catch {
+      return "Delegation failed: arguments are not JSON.";
+    }
+    const result = await tool.invoke(args, { signal });
+    return result.content;
+  });
   const conversationSnapshot = conversation;
   let partial = "";
   let trace = emptyTrace();
@@ -138,7 +196,7 @@ export async function streamChatTurn(options: {
 
         let sawStart = false;
         let sawEnd = false;
-        for await (const event of provider.stream(history, signal)) {
+        for await (const event of events) {
           if (signal?.aborted) break;
           if (!sawStart && event.type !== "start") {
             sawStart = true;

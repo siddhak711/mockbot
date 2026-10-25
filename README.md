@@ -1,6 +1,6 @@
 # Mockbot
 
-Mockbot is a personal agent workspace. Milestone 1 is a single chat agent: start a conversation, watch the full reply stream, and come back to the same transcript. The transcript keeps the start token, reasoning, tool calls, the answer, and the finish reason.
+Mockbot is a personal agent workspace. Start a conversation, watch the full reply stream, and come back to the same transcript. The transcript keeps the start token, reasoning, tool calls, the answer, and the finish reason. More than one agent can exist. Each agent has its own instructions, memory note, and grants. The lead can hand a subtask to another agent.
 
 The later milestones are in [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -18,7 +18,15 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). With no API key, chat uses the built-in mock provider. Each mock turn streams a start token, a short reasoning trace, the answer, and an end token (`finish stop`). The live mock does not invent a tool call. Tool-call cards still render when a stream includes them. Conversations are stored in embedded Postgres (PGlite) under `.data/pglite`. A refresh restores the conversation list, titles, and every streamed phase. The token-by-token animation is live only. Stopping a turn keeps the partial reasoning and answer that have already been saved.
+Open [http://localhost:3000](http://localhost:3000). With no API key, chat uses the built-in mock provider. Each mock turn streams a start token, a short reasoning trace, the answer, and an end token (`finish stop`). The live mock does not invent a tool call except when a message asks for a handoff. Tool-call cards still render when a stream includes them. Conversations are stored in embedded Postgres (PGlite) under `.data/pglite`. A refresh restores the conversation list, titles, and every streamed phase. The token-by-token animation is live only. Stopping a turn keeps the partial reasoning and answer that have already been saved.
+
+The first agent is Mockbot, seeded with the original assistant prompt. Create another agent in the sidebar (name, instructions, an optional memory note, and optional computer or connector ids). Select an agent to start a chat as that agent. From Mockbot, send:
+
+```text
+delegate to Researcher: What is the grove code?
+```
+
+The lead transcript shows the `delegate` call and the child result. The child conversation is in the same list, labeled with the child agent. The child uses its own memory note and can read a computer only when that computer id was granted. A connector or computer it was not granted is refused, and the lead conversation stays usable.
 
 `npm run build` then `npm start` runs the production server.
 
@@ -77,6 +85,9 @@ You can put the same variables in `.env.local`. Names are listed in `.env.exampl
 - `GET /api/conversations/:id` reads one conversation and its messages.
 - `PATCH /api/conversations/:id` with `{ "title": "..." }` renames it.
 - `DELETE /api/conversations/:id` deletes it.
+- `GET /api/agents` lists agents and their grants.
+- `POST /api/agents` with `{ "name", "instructions", "memoryNote?", "computerId?", "connectorId?" }` creates an agent. Optional ids are grants for a computer or a connector.
+- `POST /api/chat` accepts an optional `agentId` when starting a conversation. A message that begins `delegate to <name>: <task>` makes the mock provider call the `delegate` tool. The tool opens a child conversation for that agent and returns the result on the parent turn.
 
 ## Checks
 

@@ -4,10 +4,12 @@ export function Composer({
   streaming,
   onSend,
   onStop,
+  placeholder = "Message Mockbot",
 }: {
   streaming: boolean;
   onSend: (text: string) => void;
   onStop: () => void;
+  placeholder?: string;
 }) {
   const [value, setValue] = useState("");
 
@@ -29,7 +31,7 @@ export function Composer({
       >
         <textarea
           aria-label="Message"
-          placeholder="Message Mockbot"
+          placeholder={placeholder}
           value={value}
           rows={2}
           disabled={streaming}
