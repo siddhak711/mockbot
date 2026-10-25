@@ -69,6 +69,15 @@ export class ToolRegistry {
     return this.#tools;
   }
 
+  /** Names that stay when a source is replaced. MCP refresh uses this so stale connector tools are not reserved. */
+  namesExcept(source: string): Set<string> {
+    const names = new Set<string>();
+    for (const tool of this.#tools) {
+      if (this.#sources.get(tool.name) !== source) names.add(tool.name);
+    }
+    return names;
+  }
+
   exposed(options?: { promoted?: Iterable<string>; limit?: number }): ToolDefinition[] {
     const requested = options?.limit ?? MAX_EXPOSED_TOOLS;
     const cap = Math.max(1, Math.min(requested, MAX_EXPOSED_TOOLS));

@@ -202,28 +202,25 @@ function lastUserText(messages: LlmMessage[]): string {
   return lastUser?.content ?? "";
 }
 
-const NAMED_CALL = /\bcall\s+([A-Za-z_][A-Za-z0-9_-]*)\b/i;
+const NAMED_CALL = /^Call\s+([A-Za-z_][A-Za-z0-9_-]*)\s+(\{[\s\S]*\})\s*$/;
 
 function namedToolRequest(
   userText: string,
   tools: readonly ToolDefinition[],
 ): { name: string; args: Record<string, unknown>; found: boolean } | null {
-  const match = NAMED_CALL.exec(userText);
+  const match = NAMED_CALL.exec(userText.trim());
   const requested = match?.[1];
-  if (!requested) return null;
-  const tool = tools.find((item) => item.name === requested);
-  const jsonStart = userText.indexOf("{");
-  let args: Record<string, unknown> = {};
-  if (jsonStart >= 0) {
-    try {
-      const value = JSON.parse(userText.slice(jsonStart)) as unknown;
-      if (value && typeof value === "object" && !Array.isArray(value)) {
-        args = value as Record<string, unknown>;
-      }
-    } catch {
-      args = {};
-    }
+  const rawArgs = match?.[2];
+  if (!requested || !rawArgs) return null;
+  let args: Record<string, unknown>;
+  try {
+    const value = JSON.parse(rawArgs) as unknown;
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    args = value as Record<string, unknown>;
+  } catch {
+    return null;
   }
+  const tool = tools.find((item) => item.name === requested);
   return { name: tool?.name ?? requested, args, found: Boolean(tool) };
 }
 

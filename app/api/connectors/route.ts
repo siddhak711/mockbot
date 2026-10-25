@@ -1,7 +1,7 @@
 import { parseConnectorInput, type ConnectorRecord } from "../../../src/connectors";
 import { getAppContext } from "../../../src/context";
 import { McpClientError } from "../../../src/mcp/client";
-import { previewMcpTools } from "../../../src/mcp/sync";
+import { assignMcpToolNames } from "../../../src/mcp/sync";
 import { resolveSecret } from "../../../src/mcp/secrets";
 
 export const runtime = "nodejs";
@@ -36,13 +36,15 @@ export async function POST(request: Request): Promise<Response> {
     updatedAt: new Date(0).toISOString(),
   };
   try {
-    const tools = await previewMcpTools(
-      draft,
-      [...existing, draft],
-      process.env,
+    const listed = await assignMcpToolNames({
       registry,
-      request.signal,
-    );
+      connectors: [...existing, draft],
+      env: process.env,
+      signal: request.signal,
+    });
+    const draftBatch = listed.batches.find((batch) => batch.connector.id === draft.id);
+    if (draftBatch?.error) throw draftBatch.error;
+    const tools = listed.names.get(draft.id) ?? [];
     const connector = await store.createConnector({ id: draft.id, ...parsed.value });
     return Response.json({ connector, tools }, { status: 201 });
   } catch (error) {

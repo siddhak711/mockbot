@@ -41,28 +41,42 @@ export async function withFreshTools<T>(run: () => Promise<T>): Promise<T> {
   }
 }
 
+type RemoteTool = { name: string; description: string; inputSchema: unknown };
+
+type ListedBatch = {
+  connector: ConnectorRecord;
+  tools: RemoteTool[];
+  error?: unknown;
+};
+
+export type AssignedToolName = { name: string; remoteName: string };
+
+export async function assignMcpToolNames(options: {
+  registry: ToolRegistry;
+  connectors: readonly ConnectorRecord[];
+  env: Record<string, string | undefined>;
+  signal?: AbortSignal;
+}): Promise<{ names: Map<string, AssignedToolName[]>; batches: ListedBatch[] }> {
+  const { registry, connectors, env, signal } = options;
+  const batches = await listEnabledTools(connectors, env, signal);
+  return {
+    names: assignConnectorToolNames(registry.namesExcept("mcp"), batches),
+    batches,
+  };
+}
+
 export async function refreshMcpTools(options: RefreshOptions): Promise<void> {
   const { registry, connectors, env, signal } = options;
   const secrets = secretsFor(connectors, env);
-  const enabled = connectors.filter((connector) => connector.enabled);
-  const listed = await Promise.all(
-    enabled.map(async (connector) => {
-      if (signal?.aborted) return [];
-      try {
-        const tools = await listMcpTools(connector, env, secrets, signal);
-        return tools.slice(0, 32).map((tool) => ({ connector, tool }));
-      } catch {
-        return [];
-      }
-    }),
-  );
+  const { names, batches } = await assignMcpToolNames({ registry, connectors, env, signal });
   registry.removeSource("mcp");
-  const used = occupiedNames(registry);
-  for (const batch of listed) {
-    for (const item of batch) {
-      const definition = toToolDefinition(item.connector, item.tool, env, secrets, used);
-      registry.register(definition, "mcp");
-      used.add(definition.name);
+  for (const batch of batches) {
+    const assigned = names.get(batch.connector.id) ?? [];
+    for (let index = 0; index < batch.tools.length; index += 1) {
+      const tool = batch.tools[index];
+      const name = assigned[index]?.name;
+      if (!tool || !name) continue;
+      registry.register(toToolDefinition(batch.connector, tool, name, env, secrets), "mcp");
     }
   }
 }
@@ -73,26 +87,70 @@ export async function previewMcpTools(
   env: Record<string, string | undefined>,
   registry: ToolRegistry,
   signal?: AbortSignal,
-): Promise<{ name: string; remoteName: string }[]> {
-  const secrets = secretsFor(connectors, env);
-  const tools = await listMcpTools(connector, env, secrets, signal);
-  const used = occupiedNames(registry);
-  return tools.slice(0, 32).map((tool) => {
-    const name = localName(connector, tool.name, used);
-    used.add(name);
-    return { name, remoteName: tool.name };
+): Promise<AssignedToolName[]> {
+  const { names, batches } = await assignMcpToolNames({
+    registry,
+    connectors,
+    env,
+    signal,
   });
+  const listed = batches.find((batch) => batch.connector.id === connector.id);
+  if (listed?.error) throw listed.error;
+  return names.get(connector.id) ?? [];
+}
+
+async function listEnabledTools(
+  connectors: readonly ConnectorRecord[],
+  env: Record<string, string | undefined>,
+  signal?: AbortSignal,
+): Promise<ListedBatch[]> {
+  const secrets = secretsFor(connectors, env);
+  const enabled = connectors.filter((connector) => connector.enabled);
+  return Promise.all(
+    enabled.map(async (connector) => {
+      if (signal?.aborted) {
+        return {
+          connector,
+          tools: [],
+          error: Object.assign(new Error("The operation was aborted"), { name: "AbortError" }),
+        };
+      }
+      try {
+        const tools = await listMcpTools(connector, env, secrets, signal);
+        return { connector, tools: tools.slice(0, 32) };
+      } catch (error) {
+        return { connector, tools: [], error };
+      }
+    }),
+  );
+}
+
+function assignConnectorToolNames(
+  reserved: Iterable<string>,
+  batches: readonly ListedBatch[],
+): Map<string, AssignedToolName[]> {
+  const used = new Set(reserved);
+  const names = new Map<string, AssignedToolName[]>();
+  for (const batch of batches) {
+    const assigned: AssignedToolName[] = [];
+    for (const tool of batch.tools) {
+      const name = localName(batch.connector, tool.name, used);
+      used.add(name);
+      assigned.push({ name, remoteName: tool.name });
+    }
+    names.set(batch.connector.id, assigned);
+  }
+  return names;
 }
 
 function toToolDefinition(
   connector: ConnectorRecord,
-  tool: { name: string; description: string; inputSchema: unknown },
+  tool: RemoteTool,
+  name: string,
   env: Record<string, string | undefined>,
   secrets: readonly string[],
-  used: Set<string>,
 ): ToolDefinition {
   const remoteName = tool.name;
-  const name = localName(connector, remoteName, used);
   const description = clip(
     redactSecrets(tool.description || `${connector.name} tool ${remoteName}`, secrets),
     1_024,
@@ -111,10 +169,6 @@ function toToolDefinition(
       };
     },
   };
-}
-
-function occupiedNames(registry: ToolRegistry): Set<string> {
-  return new Set(registry.list().map((tool) => tool.name));
 }
 
 function localName(connector: ConnectorRecord, remoteName: string, used: Set<string>): string {
