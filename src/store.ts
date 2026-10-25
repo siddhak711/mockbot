@@ -1,4 +1,5 @@
-import { DEFAULT_AGENT_ID } from "./agent";
+import { LEAD_AGENT_ID } from "./agents/ids";
+import { applyAgentSchema } from "./agents/migration";
 import { migrate } from "./db/migrate";
 import { openDatabase, type ProcessEnv } from "./db/open";
 import { openPglite } from "./db/pglite";
@@ -18,6 +19,7 @@ import type {
 type ConversationRow = {
   id: string;
   title: string;
+  agent_id: string;
   created_at: Date | string;
   updated_at: Date | string;
 };
@@ -58,6 +60,7 @@ function mapConversation(row: ConversationRow): Conversation {
   return {
     id: row.id,
     title: row.title,
+    agentId: row.agent_id,
     createdAt: asIso(row.created_at),
     updatedAt: asIso(row.updated_at),
   };
@@ -107,6 +110,11 @@ export class ConversationStore {
     this.memories = new MemoryRepository(db);
   }
 
+  /** Shared database connection. The agent directory keeps its tables here. */
+  get connection(): Sql {
+    return this.db;
+  }
+
   static async open(dataDir?: string): Promise<ConversationStore> {
     return ConversationStore.fromSql(await openPglite(dataDir));
   }
@@ -118,6 +126,7 @@ export class ConversationStore {
   private static async fromSql(db: Sql): Promise<ConversationStore> {
     try {
       await migrate(db);
+      await applyAgentSchema(db);
     } catch (error) {
       await db.close();
       throw error;
@@ -136,11 +145,11 @@ export class ConversationStore {
     return result.rows.map((row) => row.id);
   }
 
-  async createConversation(title: string, agentId = DEFAULT_AGENT_ID): Promise<Conversation> {
+  async createConversation(title: string, agentId = LEAD_AGENT_ID): Promise<Conversation> {
     const id = crypto.randomUUID();
     const result = await this.db.query<ConversationRow>(
       `INSERT INTO conversations (id, title, agent_id) VALUES ($1, $2, $3)
-       RETURNING id, title, created_at, updated_at`,
+       RETURNING id, title, agent_id, created_at, updated_at`,
       [id, title, agentId],
     );
     const row = result.rows[0];
@@ -148,26 +157,26 @@ export class ConversationStore {
     return mapConversation(row);
   }
 
-  async listConversations(agentId = DEFAULT_AGENT_ID): Promise<Conversation[]> {
+  async listConversations(): Promise<Conversation[]> {
     const result = await this.db.query<ConversationRow>(
-      `SELECT id, title, created_at, updated_at
+      `SELECT id, title, agent_id, created_at, updated_at
        FROM conversations
-       WHERE agent_id = $1
        ORDER BY updated_at DESC, id DESC`,
-      [agentId],
     );
     return result.rows.map(mapConversation);
   }
 
   async getConversation(
     id: string,
-    agentId = DEFAULT_AGENT_ID,
+    agentId?: string,
   ): Promise<{ conversation: Conversation; messages: Message[] } | null> {
     const conversations = await this.db.query<ConversationRow>(
-      `SELECT id, title, created_at, updated_at
-       FROM conversations
-       WHERE id = $1 AND agent_id = $2`,
-      [id, agentId],
+      agentId
+        ? `SELECT id, title, agent_id, created_at, updated_at
+           FROM conversations
+           WHERE id = $1 AND agent_id = $2`
+        : `SELECT id, title, agent_id, created_at, updated_at FROM conversations WHERE id = $1`,
+      agentId ? [id, agentId] : [id],
     );
     const conversation = conversations.rows[0];
     if (!conversation) return null;
@@ -195,26 +204,22 @@ export class ConversationStore {
     };
   }
 
-  async renameConversation(
-    id: string,
-    title: string,
-    agentId = DEFAULT_AGENT_ID,
-  ): Promise<Conversation | null> {
+  async renameConversation(id: string, title: string): Promise<Conversation | null> {
     const result = await this.db.query<ConversationRow>(
       `UPDATE conversations
        SET title = $2, updated_at = NOW()
-       WHERE id = $1 AND agent_id = $3
-       RETURNING id, title, created_at, updated_at`,
-      [id, title, agentId],
+       WHERE id = $1
+       RETURNING id, title, agent_id, created_at, updated_at`,
+      [id, title],
     );
     const row = result.rows[0];
     return row ? mapConversation(row) : null;
   }
 
-  async deleteConversation(id: string, agentId = DEFAULT_AGENT_ID): Promise<boolean> {
+  async deleteConversation(id: string): Promise<boolean> {
     const result = await this.db.query<{ id: string }>(
-      `DELETE FROM conversations WHERE id = $1 AND agent_id = $2 RETURNING id`,
-      [id, agentId],
+      `DELETE FROM conversations WHERE id = $1 RETURNING id`,
+      [id],
     );
     return result.rows.length > 0;
   }
@@ -224,11 +229,10 @@ export class ConversationStore {
     role: Role,
     content: string,
     trace: MessageTrace | null = null,
-    agentId = DEFAULT_AGENT_ID,
   ): Promise<Message> {
     const owned = await this.db.query<{ id: string }>(
-      `SELECT id FROM conversations WHERE id = $1 AND agent_id = $2`,
-      [conversationId, agentId],
+      `SELECT id FROM conversations WHERE id = $1`,
+      [conversationId],
     );
     if (!owned.rows[0]) throw new Error("Conversation not found");
     const id = crypto.randomUUID();
@@ -238,28 +242,20 @@ export class ConversationStore {
        RETURNING id, conversation_id, role, content, trace, created_at`,
       [id, conversationId, role, content, traceParam(trace)],
     );
-    await this.db.query(
-      `UPDATE conversations SET updated_at = NOW() WHERE id = $1 AND agent_id = $2`,
-      [conversationId, agentId],
-    );
+    await this.db.query(`UPDATE conversations SET updated_at = NOW() WHERE id = $1`, [
+      conversationId,
+    ]);
     const row = inserted.rows[0];
     if (!row) throw new Error("Failed to store message");
     return mapMessage(row);
   }
 
-  async updateMessage(
-    id: string,
-    content: string,
-    trace: MessageTrace | null,
-    agentId = DEFAULT_AGENT_ID,
-  ): Promise<void> {
-    await this.db.query(
-      `UPDATE messages
-       SET content = $2, trace = $3::jsonb
-       WHERE id = $1
-         AND conversation_id IN (SELECT id FROM conversations WHERE agent_id = $4)`,
-      [id, content, traceParam(trace), agentId],
-    );
+  async updateMessage(id: string, content: string, trace: MessageTrace | null): Promise<void> {
+    await this.db.query(`UPDATE messages SET content = $2, trace = $3::jsonb WHERE id = $1`, [
+      id,
+      content,
+      traceParam(trace),
+    ]);
   }
 
   async saveToolCall(input: {
@@ -293,7 +289,7 @@ export class ConversationStore {
 
   async getSummary(
     conversationId: string,
-    agentId = DEFAULT_AGENT_ID,
+    agentId = LEAD_AGENT_ID,
   ): Promise<ConversationSummary | null> {
     const result = await this.db.query<SummaryRow>(
       `SELECT s.conversation_id, s.summary, s.upto_msg, s.updated_at

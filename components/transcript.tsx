@@ -38,7 +38,8 @@ export function Transcript({
           <p>
             Ask Mockbot to remember a fact. It can use that fact in a later chat. Replies stream in
             full: the start token, reasoning, the answer, and the end token. Tool calls show up when
-            the model sends them.
+            the model sends them. Create another agent, then send{" "}
+            <code>delegate to Name: task</code>.
           </p>
         </div>
       </div>

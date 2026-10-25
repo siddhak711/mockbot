@@ -1,15 +1,30 @@
 import { DEFAULT_AGENT_ID } from "./agent";
 import { compactIfNeeded } from "./memory/compact";
-import { buildSystemPrompt } from "./memory/prompt";
+import { BASE_SYSTEM_PROMPT, buildSystemPrompt, SYSTEM_PROMPT } from "./memory/prompt";
 import { contextTokenLimit, SEARCH_TOP_K } from "./memory/tokens";
 import type { ConversationStore } from "./store";
 import type { MemoryToolDeps } from "./tools/types";
 import type { LlmMessage, Message } from "./types";
 
+function systemContent(
+  agentPrompt: string | undefined,
+  memoryPrompt: string,
+  hasDurable: boolean,
+): string {
+  if (!agentPrompt) return memoryPrompt;
+  if (!hasDurable) return agentPrompt;
+  if (agentPrompt === SYSTEM_PROMPT) return memoryPrompt;
+  const extra = memoryPrompt.startsWith(BASE_SYSTEM_PROMPT)
+    ? memoryPrompt.slice(BASE_SYSTEM_PROMPT.length).replace(/^\n+/, "")
+    : memoryPrompt;
+  return extra ? `${agentPrompt}\n\n${extra}` : agentPrompt;
+}
+
 export async function buildModelInput(options: {
   store: ConversationStore;
   conversationId: string;
   agentId?: string;
+  agentPrompt?: string;
   contextTokens?: number;
 }): Promise<{ messages: LlmMessage[]; deps: MemoryToolDeps } | null> {
   const agentId = options.agentId ?? DEFAULT_AGENT_ID;
@@ -33,8 +48,10 @@ export async function buildModelInput(options: {
     const covered = promptMessages.findIndex((message) => message.id === summary.uptoMessageId);
     if (covered >= 0) promptMessages = promptMessages.slice(covered + 1);
   }
+  const memoryPrompt = buildSystemPrompt({ profiles, facts, summary });
+  const hasDurable = profiles.length > 0 || facts.length > 0 || Boolean(summary?.summary);
   const messages: LlmMessage[] = [
-    { role: "system", content: buildSystemPrompt({ profiles, facts, summary }) },
+    { role: "system", content: systemContent(options.agentPrompt, memoryPrompt, hasDurable) },
   ];
   for (const message of promptMessages) {
     const rendered = renderTurnMessage(message);

@@ -1,3 +1,7 @@
+import { AgentDirectory } from "./agents/directory";
+import { withAgentMock } from "./agents/mock-script";
+import { NoteMemory, defaultComputer, defaultConnector } from "./agents/ports";
+import type { AgentMemoryPort, ComputerPort, ConnectorPort } from "./agents/types";
 import { selectProvider, type LlmProvider } from "./llm";
 import { ConversationStore } from "./store";
 import { ApprovalGate } from "./tools/approval";
@@ -9,7 +13,16 @@ export type AppContext = {
   provider: LlmProvider;
   tools: ToolRegistry;
   approvals: ApprovalGate;
+  agents?: AgentDirectory;
+  memory?: AgentMemoryPort;
+  computer?: ComputerPort;
+  connector?: ConnectorPort;
 };
+
+export async function getAgents(context: AppContext): Promise<AgentDirectory> {
+  if (!context.agents) context.agents = await AgentDirectory.attach(context.store);
+  return context.agents;
+}
 
 let current: AppContext | undefined;
 
@@ -18,6 +31,10 @@ export function setAppContext(context: {
   provider: LlmProvider;
   tools?: ToolRegistry;
   approvals?: ApprovalGate;
+  agents?: AgentDirectory;
+  memory?: AgentMemoryPort;
+  computer?: ComputerPort;
+  connector?: ConnectorPort;
 }): void {
   const tools = context.tools ?? createDefaultTools({});
   if (!context.tools) registerMemoryTools(tools, context.store);
@@ -26,6 +43,10 @@ export function setAppContext(context: {
     provider: context.provider,
     tools,
     approvals: context.approvals ?? new ApprovalGate(),
+    agents: context.agents,
+    memory: context.memory,
+    computer: context.computer,
+    connector: context.connector,
   };
 }
 
@@ -40,10 +61,15 @@ export async function getAppContext(): Promise<AppContext> {
     const store = await ConversationStore.connect(process.env);
     const tools = createDefaultTools(process.env);
     registerMemoryTools(tools, store);
+    const agents = await AgentDirectory.attach(store);
     current = {
       store,
-      provider: selectProvider(process.env),
+      provider: withAgentMock(selectProvider(process.env)),
       tools,
+      agents,
+      memory: new NoteMemory(agents),
+      computer: defaultComputer,
+      connector: defaultConnector,
       approvals: new ApprovalGate(),
     };
   }

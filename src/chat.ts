@@ -1,3 +1,10 @@
+import { DELEGATE_TOOL_NAME, LEAD_AGENT_ID } from "./agents/ids";
+import { AgentDirectory } from "./agents/directory";
+import { NoteMemory, defaultComputer, defaultConnector } from "./agents/ports";
+import { buildAgentSystemPrompt } from "./agents/prompt";
+import { runWithDelegate } from "./agents/stream";
+import { toolsForSpeaker } from "./agents/tool";
+import type { AgentMemoryPort, ComputerPort, ConnectorPort } from "./agents/types";
 import { findSecrets } from "./memory/scrub";
 import { encodeSse, ssePadding } from "./sse";
 import { titleFromMessage, type ConversationStore } from "./store";
@@ -104,7 +111,12 @@ export async function streamChatTurn(options: {
   approvals: ApprovalGate;
   message: string;
   conversationId?: string;
+  agentId?: string;
   signal?: AbortSignal;
+  agents?: AgentDirectory;
+  memory?: AgentMemoryPort;
+  computer?: ComputerPort;
+  connector?: ConnectorPort;
 }): Promise<Response> {
   const message = options.message.trim();
   if (!message) {
@@ -114,11 +126,23 @@ export async function streamChatTurn(options: {
     return Response.json({ error: "Message is too long" }, { status: 400 });
   }
 
+  const agents = options.agents ?? (await AgentDirectory.attach(options.store));
+  const memory = options.memory ?? new NoteMemory(agents);
+  const computer = options.computer ?? defaultComputer;
+  const connector = options.connector ?? defaultConnector;
   const conversationId = options.conversationId?.trim() || undefined;
-  const conversation = conversationId
+  let conversation = conversationId
     ? (await options.store.getConversation(conversationId))?.conversation
-    : await options.store.createConversation(titleFromMessage(message));
-  if (!conversation) return Response.json({ error: "Conversation not found" }, { status: 404 });
+    : undefined;
+  if (conversationId && !conversation) {
+    return Response.json({ error: "Conversation not found" }, { status: 404 });
+  }
+  if (!conversation) {
+    const requested = options.agentId?.trim() || LEAD_AGENT_ID;
+    const owner = await agents.get(requested);
+    if (!owner) return Response.json({ error: "Agent not found" }, { status: 404 });
+    conversation = await options.store.createConversation(titleFromMessage(message), owner.id);
+  }
   if (options.approvals.hasPending(conversation.id)) {
     return Response.json(
       { error: "An approval is still pending for this conversation." },
@@ -127,15 +151,33 @@ export async function streamChatTurn(options: {
   }
 
   const user = await options.store.addMessage(conversation.id, "user", message);
+  const speaker = (await agents.get(conversation.agentId)) ?? (await agents.get(LEAD_AGENT_ID));
+  if (!speaker) return Response.json({ error: "Agent not found" }, { status: 404 });
+  const [memories, grants] = await Promise.all([
+    memory.list(speaker.id),
+    agents.listGrants(speaker.id),
+  ]);
   const prepared = await buildModelInput({
     store: options.store,
     conversationId: conversation.id,
+    agentId: conversation.agentId,
+    agentPrompt: buildAgentSystemPrompt({ agent: speaker, memories, grants, child: false }),
   });
   if (!prepared) return Response.json({ error: "Conversation not found" }, { status: 404 });
   const history = prepared.messages;
   const memoryDeps = prepared.deps;
 
-  const { store, provider, tools, approvals, signal } = options;
+  const { store, provider, approvals, signal } = options;
+  const tools = toolsForSpeaker(options.tools, speaker.id, {
+    directory: agents,
+    store,
+    provider,
+    memory,
+    computer,
+    connector,
+    parentAgentId: speaker.id,
+  });
+  const delegateTool = speaker.id === LEAD_AGENT_ID ? tools.get("delegate") : undefined;
   const conversationSnapshot = conversation;
   const promoted = new Set<string>();
   const toolContext: ToolContext = {
@@ -262,8 +304,26 @@ export async function streamChatTurn(options: {
           if (signal?.aborted) abortRound();
           else signal?.addEventListener("abort", abortRound, { once: true });
 
+          const modelEvents = provider.stream(history, providerSignal);
+          const events = delegateTool
+            ? runWithDelegate(modelEvents, async (call) => {
+                let args: Record<string, unknown>;
+                try {
+                  const parsed: unknown = JSON.parse(call.arguments);
+                  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+                    return "Delegation failed: arguments are not JSON.";
+                  }
+                  args = parsed as Record<string, unknown>;
+                } catch {
+                  return "Delegation failed: arguments are not JSON.";
+                }
+                const result = await delegateTool.invoke(args, { signal });
+                return result.content;
+              })
+            : modelEvents;
+
           try {
-            for await (const event of provider.stream(history, providerSignal)) {
+            for await (const event of events) {
               if (signal?.aborted || userStopped) break;
               if (!sawStart && event.type !== "start") {
                 sawStart = true;
@@ -295,6 +355,16 @@ export async function streamChatTurn(options: {
             signal?.removeEventListener("abort", abortRound);
           }
           if (signal?.aborted || userStopped) break;
+
+          for (const call of roundCalls) {
+            if (call.name !== DELEGATE_TOOL_NAME || call.result == null || call.output != null) {
+              continue;
+            }
+            if (!call.id) call.id = `call_${crypto.randomUUID()}`;
+            call.status = call.result.startsWith("Delegation failed") ? "error" : "done";
+            call.output = call.result;
+            await saveCall(call);
+          }
 
           const pending = roundCalls.filter((call) => call.name && call.result == null);
           const shouldRun =

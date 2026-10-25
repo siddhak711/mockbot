@@ -3,6 +3,7 @@ export type Role = "user" | "assistant";
 export type Conversation = {
   id: string;
   title: string;
+  agentId: string;
   createdAt: string;
   updatedAt: string;
 };

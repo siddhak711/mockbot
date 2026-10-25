@@ -9,6 +9,7 @@ export interface Sql {
     params?: readonly unknown[],
   ): Promise<SqlRows<T>>;
   exec(script: string): Promise<void>;
+  transaction<T>(fn: (tx: Sql) => Promise<T>): Promise<T>;
   close(): Promise<void>;
 }
 

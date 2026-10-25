@@ -6,7 +6,7 @@ export function openNeon(databaseUrl: string): Sql {
     throw new Error("DATABASE_URL must be a postgres connection string.");
   }
   const sql = neon<false, true>(databaseUrl, { fullResults: true });
-  return {
+  const db: Sql = {
     driver: "neon",
     async query<T>(text: string, params: readonly unknown[] = []) {
       const result = (await sql.query(text, [...params])) as FullQueryResults<false>;
@@ -17,6 +17,11 @@ export function openNeon(databaseUrl: string): Sql {
         await sql.query(statement);
       }
     },
+    // The HTTP driver cannot hold an interactive transaction across requests.
+    transaction(fn) {
+      return fn(db);
+    },
     async close() {},
   };
+  return db;
 }
