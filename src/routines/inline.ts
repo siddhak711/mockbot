@@ -34,6 +34,12 @@ export async function startInlineWorker(
     workerId,
     pollMs,
     signal: new AbortController().signal,
+    onTick: (result) => {
+      if (result.claimed === 0) return;
+      console.log(
+        `Routine worker claimed ${result.claimed}, succeeded ${result.succeeded}, failed ${result.failed}`,
+      );
+    },
     onError: (error) => {
       const message = error instanceof Error ? error.message : "Routine worker tick failed";
       console.error(`Routine worker: ${message}`);
