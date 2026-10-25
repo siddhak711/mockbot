@@ -26,7 +26,7 @@ export async function POST(request: Request): Promise<Response> {
   const resolved = resolveSecret(parsed.value.secretRef, process.env);
   if (!resolved.ok) return Response.json({ error: resolved.error }, { status: 400 });
 
-  const { store } = await getAppContext();
+  const { store, tools: registry } = await getAppContext();
   const existing = await store.listConnectors();
   const draft: ConnectorRecord = {
     id: crypto.randomUUID(),
@@ -36,7 +36,13 @@ export async function POST(request: Request): Promise<Response> {
     updatedAt: new Date(0).toISOString(),
   };
   try {
-    const tools = await previewMcpTools(draft, [...existing, draft], process.env, request.signal);
+    const tools = await previewMcpTools(
+      draft,
+      [...existing, draft],
+      process.env,
+      registry,
+      request.signal,
+    );
     const connector = await store.createConnector({ id: draft.id, ...parsed.value });
     return Response.json({ connector, tools }, { status: 201 });
   } catch (error) {

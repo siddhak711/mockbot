@@ -57,7 +57,7 @@ export async function refreshMcpTools(options: RefreshOptions): Promise<void> {
     }),
   );
   registry.removeSource("mcp");
-  const used = new Set(registry.list().map((tool) => tool.name));
+  const used = occupiedNames(registry);
   for (const batch of listed) {
     for (const item of batch) {
       const definition = toToolDefinition(item.connector, item.tool, env, secrets, used);
@@ -71,11 +71,12 @@ export async function previewMcpTools(
   connector: ConnectorRecord,
   connectors: readonly ConnectorRecord[],
   env: Record<string, string | undefined>,
+  registry: ToolRegistry,
   signal?: AbortSignal,
 ): Promise<{ name: string; remoteName: string }[]> {
   const secrets = secretsFor(connectors, env);
   const tools = await listMcpTools(connector, env, secrets, signal);
-  const used = new Set<string>();
+  const used = occupiedNames(registry);
   return tools.slice(0, 32).map((tool) => {
     const name = localName(connector, tool.name, used);
     used.add(name);
@@ -110,6 +111,10 @@ function toToolDefinition(
       };
     },
   };
+}
+
+function occupiedNames(registry: ToolRegistry): Set<string> {
+  return new Set(registry.list().map((tool) => tool.name));
 }
 
 function localName(connector: ConnectorRecord, remoteName: string, used: Set<string>): string {

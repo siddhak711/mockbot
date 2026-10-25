@@ -12,8 +12,11 @@ import { GET as readConversation } from "../app/api/conversations/[id]/route";
 import { parseConnectorInput } from "../src/connectors";
 import { resetAppContext, setAppContext } from "../src/context";
 import { MockProvider, streamOptions, type LlmProvider } from "../src/llm";
+import { previewMcpTools, refreshMcpTools } from "../src/mcp/sync";
 import { ConversationStore } from "../src/store";
 import { createDefaultTools } from "../src/tools/builtins";
+import { ToolRegistry } from "../src/tools/registry";
+import type { ToolDefinition } from "../src/tools/types";
 import type { LlmMessage, LlmStreamEvent } from "../src/types";
 import { readSse } from "./helpers";
 import { startMockMcpServer } from "../scripts/mock-mcp-server.mjs";
@@ -457,6 +460,41 @@ it("does not invent a tool call for an ordinary mock message", async () => {
     await addConnector({ name: "Demo", transport: "http", target: server.url });
     const events = await readSse(await chat("Say hello"));
     expect(events.some((event) => event.event === "tool_start")).toBe(false);
+  } finally {
+    await server.close();
+  }
+});
+
+it("previews a colliding tool name with the suffix the next refresh registers", async () => {
+  const server = await startMockMcpServer();
+  try {
+    const registry = new ToolRegistry();
+    const blocker: ToolDefinition = {
+      name: "demo_echo",
+      description: "builtin echo",
+      exposure: "default",
+      approval: "never",
+      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      async invoke() {
+        return { content: "builtin" };
+      },
+    };
+    registry.register(blocker);
+    const connector = {
+      id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      name: "Demo",
+      transport: "http" as const,
+      target: server.url,
+      secretRef: null,
+      enabled: true,
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    };
+    const preview = await previewMcpTools(connector, [connector], {}, registry);
+    expect(preview.find((tool) => tool.remoteName === "echo")?.name).toBe("demo_echo_aaaaaaaa");
+    await refreshMcpTools({ registry, connectors: [connector], env: {} });
+    expect(registry.get("demo_echo")?.description).toBe("builtin echo");
+    expect(registry.get("demo_echo_aaaaaaaa")).toBeDefined();
   } finally {
     await server.close();
   }
