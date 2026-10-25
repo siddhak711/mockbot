@@ -1,49 +1,47 @@
 import { expect, it } from "vitest";
 import {
-  beginDecision,
   releaseDecision,
+  settleDecision,
   stopDecision,
   type DecisionLock,
 } from "../src/decision-lock";
 
-async function decide(lock: DecisionLock, id: string, task: () => Promise<void>): Promise<void> {
-  if (!beginDecision(lock, id)) return;
-  try {
-    await task();
-  } finally {
-    releaseDecision(lock, id);
-  }
-}
-
-it("clears the approval lock after a successful decision", async () => {
+it("keeps Approve and Deny locked after a successful decision", async () => {
   const lock: DecisionLock = { current: null };
-  await decide(lock, "call-1", async () => {
-    expect(lock.current).toBe("call-1");
-    expect(beginDecision(lock, "call-2")).toBe(false);
-  });
+  expect(await settleDecision(lock, "call-1", async () => true)).toBe("held");
+  expect(lock.current).toBe("call-1");
+  expect(await settleDecision(lock, "call-1", async () => true)).toBe("busy");
+  expect(lock.current).toBe("call-1");
+
+  releaseDecision(lock, "call-1");
   expect(lock.current).toBeNull();
-  expect(beginDecision(lock, "call-2")).toBe(true);
+  expect(await settleDecision(lock, "call-2", async () => true)).toBe("held");
+});
+
+it("clears the approval lock when the decision request fails", async () => {
+  const lock: DecisionLock = { current: null };
+  expect(await settleDecision(lock, "call-1", async () => false)).toBe("released");
+  expect(lock.current).toBeNull();
+  expect(await settleDecision(lock, "call-2", async () => true)).toBe("held");
 });
 
 it("clears the approval lock when the decision request throws", async () => {
   const lock: DecisionLock = { current: null };
   await expect(
-    decide(lock, "call-1", async () => {
+    settleDecision(lock, "call-1", async () => {
       throw new Error("network down");
     }),
   ).rejects.toThrow("network down");
   expect(lock.current).toBeNull();
-  expect(beginDecision(lock, "call-2")).toBe(true);
+  expect(await settleDecision(lock, "call-2", async () => true)).toBe("held");
 });
 
-it("clears the approval lock on stop so a later decision can start", () => {
+it("clears a held approval lock on stop", async () => {
   const lock: DecisionLock = { current: null };
-  expect(beginDecision(lock, "call-1")).toBe(true);
+  expect(await settleDecision(lock, "call-1", async () => true)).toBe("held");
   stopDecision(lock);
   expect(lock.current).toBeNull();
-  expect(beginDecision(lock, "call-2")).toBe(true);
+  expect(await settleDecision(lock, "call-2", async () => true)).toBe("held");
   releaseDecision(lock, "call-1");
   expect(lock.current).toBe("call-2");
-  releaseDecision(lock, "call-2");
-  expect(lock.current).toBeNull();
 });

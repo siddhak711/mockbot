@@ -5,7 +5,7 @@ import { Composer } from "./composer";
 import { ComputerPane } from "./computer-pane";
 import { ConversationList } from "./conversation-list";
 import { Transcript } from "./transcript";
-import { beginDecision, releaseDecision, stopDecision } from "../src/decision-lock";
+import { releaseDecision, settleDecision, stopDecision } from "../src/decision-lock";
 import { SseParser } from "../src/sse";
 import {
   activitiesFromMessages,
@@ -343,7 +343,7 @@ export function Workspace() {
               output,
               preview: output ? previewText(output) : "",
             });
-            decidingRef.current = null;
+            releaseDecision(decidingRef, id);
             setDecidingId((current) => (current === id ? null : current));
           } else if (event.event === "error") {
             setError(String(payload.message ?? "The model request failed"));
@@ -375,15 +375,15 @@ export function Workspace() {
   }
 
   async function decide(id: string, decision: "approve" | "deny") {
-    if (!beginDecision(decidingRef, id)) return;
-    setDecidingId(id);
     try {
-      const response = await fetch("/api/tools/approvals", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, decision }),
-      });
-      if (!response.ok) {
+      const outcome = await settleDecision(decidingRef, id, async () => {
+        setDecidingId(id);
+        const response = await fetch("/api/tools/approvals", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id, decision }),
+        });
+        if (response.ok) return true;
         const activity = activitiesRef.current.find((item) => item.id === id);
         if (!activity || activity.state === "approval") {
           setError(
@@ -392,9 +392,12 @@ export function Workspace() {
               : "Could not save the decision",
           );
         }
+        return false;
+      });
+      if (outcome === "released") {
+        setDecidingId((current) => (current === id ? null : current));
       }
-    } finally {
-      releaseDecision(decidingRef, id);
+    } catch {
       setDecidingId((current) => (current === id ? null : current));
     }
   }

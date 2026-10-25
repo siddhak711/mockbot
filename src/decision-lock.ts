@@ -13,3 +13,22 @@ export function releaseDecision(lock: DecisionLock, id: string): void {
 export function stopDecision(lock: DecisionLock): void {
   lock.current = null;
 }
+
+export async function settleDecision(
+  lock: DecisionLock,
+  id: string,
+  request: () => Promise<boolean>,
+): Promise<"busy" | "held" | "released"> {
+  if (!beginDecision(lock, id)) return "busy";
+  try {
+    const accepted = await request();
+    if (!accepted) {
+      releaseDecision(lock, id);
+      return "released";
+    }
+    return "held";
+  } catch (error) {
+    releaseDecision(lock, id);
+    throw error;
+  }
+}
