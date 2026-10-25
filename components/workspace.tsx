@@ -13,6 +13,8 @@ import type { Agent } from "../src/agents/types";
 import { releaseDecision, settleDecision, stopDecision } from "../src/decision-lock";
 import { SseParser } from "../src/sse";
 import { applyClientEvent, emptyTrace, phaseFromEvent, streamedWeight } from "../src/trace";
+import { fetchComputerSnapshot } from "../src/sandbox/refresh";
+import type { ComputerSnapshot } from "../src/sandbox/types";
 import {
   activitiesAfterReconnect,
   activitiesAfterStop,
@@ -51,6 +53,8 @@ export function Workspace() {
   const [editing, setEditing] = useState(false);
   const [draftTitle, setDraftTitle] = useState("");
   const [computerOpen, setComputerOpen] = useState(true);
+  const [computer, setComputer] = useState<ComputerSnapshot | null>(null);
+  const [computerReady, setComputerReady] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [mobilePane, setMobilePane] = useState<"chat" | "computer">("chat");
   const [activities, setActivities] = useState<ToolActivity[]>([]);
@@ -59,6 +63,7 @@ export function Workspace() {
   const [selectedToolId, setSelectedToolId] = useState<string | null>(null);
   const [decidingId, setDecidingId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const computerRequest = useRef(0);
   const activeIdRef = useRef<string | null>(null);
   const activitiesRef = useRef(activities);
   const decidingRef = useRef<string | null>(null);
@@ -121,6 +126,23 @@ export function Workspace() {
     setConnectors(data.connectors);
   }, []);
 
+  const refreshComputer = useCallback(async () => {
+    const request = ++computerRequest.current;
+    try {
+      const snapshot = await fetchComputerSnapshot(
+        (input) => fetch(input),
+        request,
+        () => computerRequest.current,
+      );
+      if (!snapshot || request !== computerRequest.current) return;
+      setComputer(snapshot);
+    } catch {
+      // Keep the last snapshot. The pane stays usable if a refresh fails.
+    } finally {
+      if (request === computerRequest.current) setComputerReady(true);
+    }
+  }, []);
+
   const refreshAgents = useCallback(async () => {
     const response = await fetch("/api/agents");
     if (!response.ok) return;
@@ -164,6 +186,10 @@ export function Workspace() {
       cancelled = true;
     };
   }, [refreshConnectors, selectConversation]);
+
+  useEffect(() => {
+    void refreshComputer();
+  }, [refreshComputer]);
 
   function newChat() {
     if (streaming) return;
@@ -470,6 +496,7 @@ export function Workspace() {
               output,
               preview: output ? previewText(output) : "",
             });
+            void refreshComputer();
             releaseDecision(decidingRef, id);
             setDecidingId((current) => (current === id ? null : current));
           } else if (event.event === "error") {
@@ -499,6 +526,7 @@ export function Workspace() {
       setStreaming(false);
       setLivePhase(null);
       abortRef.current = null;
+      void refreshComputer();
     }
   }
 
@@ -603,6 +631,7 @@ export function Workspace() {
   }
 
   const active = conversations.find((item) => item.id === activeId) ?? null;
+  const computerStatus = computerReady ? (computer ? "ready" : "error") : "loading";
   const speakingId = active?.agentId ?? activeAgentId;
   const speaking = agents.find((agent) => agent.id === speakingId) ?? null;
   const awaitingApproval = activities.some((activity) => activity.state === "approval");
@@ -776,6 +805,8 @@ export function Workspace() {
             activities={activities}
             selectedId={selectedToolId}
             onSelect={setSelectedToolId}
+            snapshot={computer}
+            status={computerStatus}
           />
         </div>
       </main>
@@ -784,6 +815,8 @@ export function Workspace() {
           activities={activities}
           selectedId={selectedToolId}
           onSelect={setSelectedToolId}
+          snapshot={computer}
+          status={computerStatus}
           onHide={() => setComputerOpen(false)}
         />
       ) : null}
