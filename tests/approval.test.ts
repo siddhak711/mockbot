@@ -76,4 +76,10 @@ it("resolves an approval once and times out or stops when nobody decides", async
   const waiting = stopped.wait("call_3", controller.signal);
   controller.abort();
   await expect(waiting).resolves.toEqual({ decision: "deny", reason: "stopped" });
+
+  const explicit = new ApprovalGate(5_000);
+  const pendingStop = explicit.wait("call_4");
+  expect(explicit.stop("call_4")).toBe(true);
+  await expect(pendingStop).resolves.toEqual({ decision: "deny", reason: "stopped" });
+  expect(explicit.stop("call_4")).toBe(false);
 });

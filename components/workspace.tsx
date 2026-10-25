@@ -334,6 +334,15 @@ export function Workspace() {
               }),
             );
             setSelectedToolId(id);
+          } else if (event.event === "tool_status") {
+            const id = String(payload.id ?? "");
+            const status = String(payload.status ?? "") as ToolCallStatus;
+            if (!id || !status) continue;
+            patchActivity(id, { state: status });
+            if (status !== "approval") {
+              releaseDecision(decidingRef, id);
+              setDecidingId((current) => (current === id ? null : current));
+            }
           } else if (event.event === "tool_result") {
             const id = String(payload.id ?? "");
             const status = String(payload.status ?? "done") as ToolCallStatus;
@@ -403,6 +412,14 @@ export function Workspace() {
   }
 
   function stopTurn() {
+    for (const activity of activitiesRef.current) {
+      if (activity.state !== "approval") continue;
+      void fetch("/api/tools/approvals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: activity.id, decision: "stop" }),
+      });
+    }
     abortRef.current?.abort();
     stopDecision(decidingRef);
     setDecidingId(null);

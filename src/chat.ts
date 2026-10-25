@@ -105,6 +105,7 @@ export async function streamChatTurn(options: {
   let assistantId: string | null = null;
   let saved = "";
   let persistQueue = Promise.resolve();
+  let userStopped = false;
   const liveCalls: LiveCall[] = [];
 
   const persist = (text: string) => {
@@ -177,7 +178,7 @@ export async function streamChatTurn(options: {
         });
 
         for (let round = 0; round < MAX_ROUNDS; round += 1) {
-          if (signal?.aborted) break;
+          if (signal?.aborted || userStopped) break;
           const exposed = tools.exposed({ promoted });
           const turnCalls: LiveCall[] = [];
           let roundText = "";
@@ -235,16 +236,16 @@ export async function streamChatTurn(options: {
           });
 
           for (const call of turnCalls) {
-            if (signal?.aborted) break;
+            if (signal?.aborted || userStopped) break;
             const output = await executeCall(call);
             if (output === null) break;
             history.push({ role: "tool", tool_call_id: call.id, content: output });
           }
-          if (signal?.aborted) break;
+          if (signal?.aborted || userStopped) break;
         }
 
         await persist(partial);
-        if (signal?.aborted) {
+        if (signal?.aborted || userStopped) {
           await stopOpenCalls();
         } else {
           enqueue("done", {
@@ -296,8 +297,9 @@ export async function streamChatTurn(options: {
             summary: described.summary,
             assistantMessageId: assistantId,
           });
-          const outcome = await approvals.wait(call.id, signal);
-          if (signal?.aborted || outcome.reason === "stopped") {
+          const outcome = await approvals.wait(call.id);
+          if (outcome.reason === "stopped") {
+            userStopped = true;
             call.status = "error";
             call.output = "Stopped before the tool ran.";
             await saveCall(call);
@@ -312,8 +314,17 @@ export async function streamChatTurn(options: {
           }
           call.status = "running";
           await saveCall(call);
+          enqueue("tool_status", {
+            id: call.id,
+            name: call.name,
+            status: "running",
+            assistantMessageId: assistantId,
+          });
         }
-        const result = await runTool(tool, prepared.args, toolContext);
+        const result = await runTool(tool, prepared.args, {
+          ...toolContext,
+          signal: signal?.aborted ? undefined : toolContext.signal,
+        });
         return finish(call, result.isError ? "error" : "done", result.content);
       }
 

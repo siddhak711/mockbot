@@ -17,11 +17,14 @@ export async function POST(request: Request): Promise<Response> {
   const id = typeof record.id === "string" ? record.id.trim() : "";
   const decision = record.decision;
   if (!id) return Response.json({ error: "Approval id is required" }, { status: 400 });
-  if (decision !== "approve" && decision !== "deny") {
-    return Response.json({ error: 'Decision must be "approve" or "deny"' }, { status: 400 });
+  if (decision !== "approve" && decision !== "deny" && decision !== "stop") {
+    return Response.json(
+      { error: 'Decision must be "approve", "deny", or "stop"' },
+      { status: 400 },
+    );
   }
   const { approvals } = await getAppContext();
-  const accepted = approvals.decide(id, decision);
+  const accepted = decision === "stop" ? approvals.stop(id) : approvals.decide(id, decision);
   if (!accepted)
     return Response.json({ error: "That approval is no longer pending" }, { status: 404 });
   return Response.json({ id, decision });

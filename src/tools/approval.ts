@@ -65,4 +65,11 @@ export class ApprovalGate {
     waiter.resolve({ decision, reason: "user" });
     return true;
   }
+
+  stop(id: string): boolean {
+    const waiter = this.#waiters.get(id);
+    if (!waiter) return false;
+    waiter.resolve({ decision: "deny", reason: "stopped" });
+    return true;
+  }
 }

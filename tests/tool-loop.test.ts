@@ -175,9 +175,14 @@ it("pauses a write tool on an approval card and continues after the decision", a
 
   const rest = await readRest(pending.reader, pending.parser, pending.decoder);
   const events = [...pending.events, ...rest];
+  const running = events.find(
+    (event) => event.event === "tool_status" && event.data.id === approval?.data.id,
+  );
   const calendarResult = toolEvents(events, "tool_result").find(
     (event) => event.data.name === "google_calendar",
   );
+  expect(running?.data.status).toBe("running");
+  expect(events.indexOf(running!)).toBeLessThan(events.indexOf(calendarResult!));
   expect(calendarResult?.data.status).toBe("done");
   expect(String(calendarResult?.data.output)).toContain("evt_mock");
   expect(deltas(events)).toContain("planning meeting");
@@ -235,6 +240,100 @@ it("records a denial and still lets the conversation continue", async () => {
     }),
   );
   expect(bad.status).toBe(400);
+});
+
+it("keeps a pending approval when the chat client disconnects", async () => {
+  const store = await ConversationStore.open();
+  setAppContext({
+    store,
+    provider: selectProvider({ MOCK_STREAM_DELAY_MS: "0", MOCK_CHUNK_SIZE: "40" }),
+  });
+  const controller = new AbortController();
+  const response = await postChat(
+    new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({ message: "Schedule a planning meeting tomorrow and invite the team" }),
+    }),
+  );
+  const pending = await readUntil(response, "approval_required");
+  const id = String(pending.events.find((event) => event.event === "approval_required")?.data.id);
+  controller.abort();
+  await pending.reader.cancel().catch(() => undefined);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  const conversationId = (await store.listConversations())[0]!.id;
+  const before = await store.getConversation(conversationId);
+  const waiting = before?.messages
+    .find((message) => message.role === "assistant")
+    ?.tools?.find((tool) => tool.name === "google_calendar");
+  expect(waiting?.status).toBe("approval");
+
+  const decision = await postApproval(
+    new Request("http://localhost/api/tools/approvals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, decision: "approve" }),
+    }),
+  );
+  expect(decision.status).toBe(200);
+
+  let status = waiting?.status;
+  for (let attempt = 0; attempt < 40 && status !== "done"; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const loaded = await store.getConversation(conversationId);
+    status = loaded?.messages
+      .find((message) => message.role === "assistant")
+      ?.tools?.find((tool) => tool.id === id)?.status;
+  }
+  expect(status).toBe("done");
+});
+
+it("ends a pending approval on an explicit stop", async () => {
+  const store = await ConversationStore.open();
+  setAppContext({
+    store,
+    provider: selectProvider({ MOCK_STREAM_DELAY_MS: "0", MOCK_CHUNK_SIZE: "40" }),
+  });
+  const response = await postChat(
+    new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Please invite the team" }),
+    }),
+  );
+  const pending = await readUntil(response, "approval_required");
+  const id = String(pending.events.find((event) => event.event === "approval_required")?.data.id);
+  const decision = await postApproval(
+    new Request("http://localhost/api/tools/approvals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, decision: "stop" }),
+    }),
+  );
+  expect(decision.status).toBe(200);
+  const rest = await readRest(pending.reader, pending.parser, pending.decoder);
+  const events = [...pending.events, ...rest];
+  const calendarResult = toolEvents(events, "tool_result").find(
+    (event) => event.data.name === "google_calendar",
+  );
+  expect(calendarResult).toBeUndefined();
+  expect(deltas(events)).not.toContain("created a **planning meeting**");
+  const loaded = await store.getConversation((await store.listConversations())[0]!.id);
+  const calendar = loaded?.messages
+    .find((message) => message.role === "assistant")
+    ?.tools?.find((tool) => tool.id === id);
+  expect(calendar?.status).toBe("error");
+  expect(calendar?.output).toContain("Stopped before the tool ran.");
+  const again = await postApproval(
+    new Request("http://localhost/api/tools/approvals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, decision: "approve" }),
+    }),
+  );
+  expect(again.status).toBe(404);
 });
 
 it("closes a timed-out calendar invite as a denial", async () => {
