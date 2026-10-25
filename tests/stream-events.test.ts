@@ -16,6 +16,7 @@ import {
 } from "../src/llm";
 import { SseParser } from "../src/sse";
 import { ConversationStore } from "../src/store";
+import { createDefaultTools } from "../src/tools/builtins";
 import { emptyTrace } from "../src/trace";
 import type { LlmMessage, LlmStreamEvent } from "../src/types";
 import { deltas, readSse } from "./helpers";
@@ -343,4 +344,22 @@ it("does not send an empty partial assistant message back to the model", async (
   expect(outbound).toContain("Continue");
   expect(outbound).not.toContain("");
   expect(outbound).not.toContain("half");
+});
+
+it("does not call a tool when the message only mentions calling one", async () => {
+  const provider = new MockProvider({ delayMs: 0, chunkSize: 200 });
+  const tools = createDefaultTools({}).list();
+  const events: LlmStreamEvent[] = [];
+  for await (const event of provider.stream(
+    [{ role: "user", content: "can you call web_search later" }],
+    { tools },
+  )) {
+    events.push(event);
+  }
+  expect(events.some((event) => event.type === "tool_call")).toBe(false);
+  const text = events
+    .filter((event) => event.type === "text")
+    .map((event) => (event.type === "text" ? event.text : ""))
+    .join("");
+  expect(text).toBe(buildMockReply("can you call web_search later"));
 });

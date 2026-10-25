@@ -202,6 +202,28 @@ function lastUserText(messages: LlmMessage[]): string {
   return lastUser?.content ?? "";
 }
 
+const NAMED_CALL = /^Call\s+([A-Za-z_][A-Za-z0-9_-]*)\s+(\{[\s\S]*\})\s*$/;
+
+function namedToolRequest(
+  userText: string,
+  tools: readonly ToolDefinition[],
+): { name: string; args: Record<string, unknown>; found: boolean } | null {
+  const match = NAMED_CALL.exec(userText.trim());
+  const requested = match?.[1];
+  const rawArgs = match?.[2];
+  if (!requested || !rawArgs) return null;
+  let args: Record<string, unknown>;
+  try {
+    const value = JSON.parse(rawArgs) as unknown;
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    args = value as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const tool = tools.find((item) => item.name === requested);
+  return { name: tool?.name ?? requested, args, found: Boolean(tool) };
+}
+
 export class MockProvider implements LlmProvider {
   readonly id = "mock" as const;
   readonly model = null;
@@ -229,7 +251,7 @@ export class MockProvider implements LlmProvider {
     messages: LlmMessage[],
     input?: StreamOptions | AbortSignal,
   ): AsyncIterable<LlmStreamEvent> {
-    const { signal } = streamOptions(input);
+    const { signal, tools = [] } = streamOptions(input);
     const userText = lastUserText(messages);
     if (this.options.demoTools && !this.options.reply && !this.options.tools) {
       const next = demoPlan(userText)[toolResultsThisTurn(messages)];
@@ -239,6 +261,27 @@ export class MockProvider implements LlmProvider {
       }
       yield* this.#chunkText(demoClosing(userText, messages), signal);
       return;
+    }
+
+    if (!this.options.reply && !this.options.scriptToolCall && !this.options.tools) {
+      const requested = namedToolRequest(userText, tools);
+      if (requested && toolResultsThisTurn(messages) === 0) {
+        if (!requested.found) {
+          yield* this.#chunkText(
+            `I can't call ${requested.name}. It is not in this turn's tool list.`,
+            signal,
+          );
+          return;
+        }
+        yield* this.#emitCall({ name: requested.name, args: requested.args }, signal);
+        return;
+      }
+      if (requested && requested.found) {
+        const result =
+          [...messages].reverse().find((message) => message.role === "tool")?.content ?? "";
+        yield* this.#chunkText(`I called ${requested.name}.\n\n${result}`, signal);
+        return;
+      }
     }
 
     const scriptedTools = this.options.tools?.(messages) ?? null;

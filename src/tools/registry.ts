@@ -32,12 +32,33 @@ function scoreTool(tool: ToolDefinition, query: string, terms: string[]): number
 
 export class ToolRegistry {
   #tools: ToolDefinition[] = [];
+  #sources = new Map<string, string>();
 
-  register(tool: ToolDefinition): void {
+  register(tool: ToolDefinition, source = "builtin"): void {
     if (this.#tools.some((item) => item.name === tool.name)) {
       throw new Error(`Tool ${tool.name} is already registered`);
     }
     this.#tools.push(tool);
+    this.#sources.set(tool.name, source);
+  }
+
+  removeSource(source: string): void {
+    this.#tools = this.#tools.filter((tool) => this.#sources.get(tool.name) !== source);
+    for (const [name, itemSource] of this.#sources) {
+      if (itemSource === source) this.#sources.delete(name);
+    }
+  }
+
+  clone(): ToolRegistry {
+    const copy = new ToolRegistry();
+    for (const tool of this.#tools) {
+      if (tool.name === "tool_search") continue;
+      copy.register(tool, this.#sources.get(tool.name) ?? "builtin");
+    }
+    if (this.#tools.some((tool) => tool.name === "tool_search")) {
+      copy.register(toolSearchTool(copy), this.#sources.get("tool_search") ?? "builtin");
+    }
+    return copy;
   }
 
   get(name: string): ToolDefinition | undefined {
@@ -46,6 +67,15 @@ export class ToolRegistry {
 
   list(): readonly ToolDefinition[] {
     return this.#tools;
+  }
+
+  /** Names that stay when a source is replaced. MCP refresh uses this so stale connector tools are not reserved. */
+  namesExcept(source: string): Set<string> {
+    const names = new Set<string>();
+    for (const tool of this.#tools) {
+      if (this.#sources.get(tool.name) !== source) names.add(tool.name);
+    }
+    return names;
   }
 
   exposed(options?: { promoted?: Iterable<string>; limit?: number }): ToolDefinition[] {
