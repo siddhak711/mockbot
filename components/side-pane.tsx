@@ -11,6 +11,7 @@ export function SidePane({
   onHide,
   memories,
   memoryError,
+  agentId,
   onMemoriesChanged,
   activities = [],
   selectedId,
@@ -21,6 +22,7 @@ export function SidePane({
   onHide?: () => void;
   memories: Memory[] | null;
   memoryError: string | null;
+  agentId: string;
   onMemoriesChanged: () => Promise<void>;
   activities?: ToolActivity[];
   selectedId?: string | null;
@@ -56,7 +58,12 @@ export function SidePane({
         ) : null}
       </header>
       {tab === "memory" ? (
-        <MemoryPanel memories={memories} error={memoryError} onChanged={onMemoriesChanged} />
+        <MemoryPanel
+          memories={memories}
+          error={memoryError}
+          agentId={agentId}
+          onChanged={onMemoriesChanged}
+        />
       ) : (
         <ComputerPane
           embedded

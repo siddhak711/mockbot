@@ -7,10 +7,12 @@ import type { Memory, MemoryKind, MemoryVersion } from "../src/types";
 export function MemoryPanel({
   memories,
   error,
+  agentId,
   onChanged,
 }: {
   memories: Memory[] | null;
   error: string | null;
+  agentId: string;
   onChanged: () => Promise<void>;
 }) {
   const mode = memoryPanelMode(memories, error);
@@ -37,7 +39,7 @@ export function MemoryPanel({
       ) : (
         <div className="memory-scroll">
           {(memories ?? []).map((memory) => (
-            <MemoryCard key={memory.id} memory={memory} onChanged={onChanged} />
+            <MemoryCard key={memory.id} memory={memory} agentId={agentId} onChanged={onChanged} />
           ))}
         </div>
       )}
@@ -45,7 +47,19 @@ export function MemoryPanel({
   );
 }
 
-function MemoryCard({ memory, onChanged }: { memory: Memory; onChanged: () => Promise<void> }) {
+function memoryPath(id: string, agentId: string): string {
+  return `/api/memories/${id}?agentId=${encodeURIComponent(agentId)}`;
+}
+
+function MemoryCard({
+  memory,
+  agentId,
+  onChanged,
+}: {
+  memory: Memory;
+  agentId: string;
+  onChanged: () => Promise<void>;
+}) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(memory.content);
   const [kind, setKind] = useState<MemoryKind>(memory.kind);
@@ -57,7 +71,7 @@ function MemoryCard({ memory, onChanged }: { memory: Memory; onChanged: () => Pr
     if (!content || busy) return;
     setBusy(true);
     setError(null);
-    const response = await fetch(`/api/memories/${memory.id}`, {
+    const response = await fetch(memoryPath(memory.id, agentId), {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content, kind }),
@@ -77,7 +91,7 @@ function MemoryCard({ memory, onChanged }: { memory: Memory; onChanged: () => Pr
     if (busy) return;
     setBusy(true);
     setError(null);
-    const response = await fetch(`/api/memories/${memory.id}`, { method: "DELETE" });
+    const response = await fetch(memoryPath(memory.id, agentId), { method: "DELETE" });
     if (!response.ok) {
       setError("Could not delete memory");
       setBusy(false);

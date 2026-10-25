@@ -6,18 +6,15 @@ import type { ConversationStore } from "./store";
 import type { MemoryToolDeps } from "./tools/types";
 import type { LlmMessage, Message } from "./types";
 
-function systemContent(
-  agentPrompt: string | undefined,
-  memoryPrompt: string,
-  hasDurable: boolean,
-): string {
-  if (!agentPrompt) return memoryPrompt;
-  if (!hasDurable) return agentPrompt;
-  if (agentPrompt === SYSTEM_PROMPT) return memoryPrompt;
-  const extra = memoryPrompt.startsWith(BASE_SYSTEM_PROMPT)
-    ? memoryPrompt.slice(BASE_SYSTEM_PROMPT.length).replace(/^\n+/, "")
-    : memoryPrompt;
-  return extra ? `${agentPrompt}\n\n${extra}` : agentPrompt;
+function systemContent(agentPrompt: string | undefined, memoryPrompt: string): string {
+  if (!agentPrompt || agentPrompt === SYSTEM_PROMPT || agentPrompt === BASE_SYSTEM_PROMPT) {
+    return memoryPrompt;
+  }
+  if (agentPrompt.startsWith(`${SYSTEM_PROMPT}\n`)) {
+    const agentExtra = agentPrompt.slice(SYSTEM_PROMPT.length).replace(/^\n+/, "");
+    return `${memoryPrompt}\n\n${agentExtra}`;
+  }
+  return `${agentPrompt}\n\n${memoryPrompt}`;
 }
 
 export async function buildModelInput(options: {
@@ -49,9 +46,8 @@ export async function buildModelInput(options: {
     if (covered >= 0) promptMessages = promptMessages.slice(covered + 1);
   }
   const memoryPrompt = buildSystemPrompt({ profiles, facts, summary });
-  const hasDurable = profiles.length > 0 || facts.length > 0 || Boolean(summary?.summary);
   const messages: LlmMessage[] = [
-    { role: "system", content: systemContent(options.agentPrompt, memoryPrompt, hasDurable) },
+    { role: "system", content: systemContent(options.agentPrompt, memoryPrompt) },
   ];
   for (const message of promptMessages) {
     const rendered = renderTurnMessage(message);

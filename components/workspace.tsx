@@ -60,6 +60,7 @@ export function Workspace() {
   const [decidingId, setDecidingId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const activeIdRef = useRef<string | null>(null);
+  const memoryAgentRef = useRef(LEAD_AGENT_ID);
   const activitiesRef = useRef(activities);
   const decidingRef = useRef<string | null>(null);
   activitiesRef.current = activities;
@@ -85,6 +86,7 @@ export function Workspace() {
         return;
       }
       const data = (await response.json()) as { conversation: Conversation; messages: Message[] };
+      memoryAgentRef.current = data.conversation.agentId;
       setActiveId(data.conversation.id);
       setActiveAgentId(data.conversation.agentId);
       setMessages(data.messages);
@@ -115,7 +117,9 @@ export function Workspace() {
   }, []);
 
   const refreshMemories = useCallback(async () => {
-    const response = await fetch("/api/memories");
+    const agentId = memoryAgentRef.current;
+    const response = await fetch(`/api/memories?agentId=${encodeURIComponent(agentId)}`);
+    if (memoryAgentRef.current !== agentId) return;
     const loaded = response.ok
       ? ((await response.json()) as { memories: Memory[] }).memories
       : null;
@@ -133,10 +137,9 @@ export function Workspace() {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const [listResponse, statusResponse, memoryResponse, agentResponse] = await Promise.all([
+      const [listResponse, statusResponse, agentResponse] = await Promise.all([
         fetch("/api/conversations"),
         fetch("/api/status"),
-        fetch("/api/memories"),
         fetch("/api/agents"),
       ]);
       if (cancelled) return;
@@ -152,16 +155,6 @@ export function Workspace() {
             : "Mock provider";
         const databaseName = status.database === "neon" ? "Neon" : "Local";
         setProviderLabel(`${providerName} · ${databaseName}`);
-      }
-      if (memoryResponse.ok) {
-        const data = (await memoryResponse.json()) as { memories: Memory[] };
-        const next = nextMemories(null, true, data.memories);
-        setMemories(next.memories);
-        setMemoryError(next.error);
-      } else {
-        const next = nextMemories(null, false, null);
-        setMemories(next.memories);
-        setMemoryError(next.error ?? MEMORY_LOAD_ERROR);
       }
       if (agentResponse.ok) {
         const agentData = (await agentResponse.json()) as { agents: Agent[] };
@@ -207,6 +200,7 @@ export function Workspace() {
 
   function selectAgent(id: string) {
     if (streaming) return;
+    memoryAgentRef.current = id;
     setActiveAgentId(id);
     newChat();
   }
@@ -587,6 +581,11 @@ export function Workspace() {
   const speaking = agents.find((agent) => agent.id === speakingId) ?? null;
   const awaitingApproval = activities.some((activity) => activity.state === "approval");
 
+  useEffect(() => {
+    memoryAgentRef.current = speakingId;
+    void refreshMemories();
+  }, [speakingId, refreshMemories]);
+
   return (
     <div className={computerOpen ? "app with-computer" : "app"}>
       <ConversationList
@@ -766,6 +765,7 @@ export function Workspace() {
             }}
             memories={memories}
             memoryError={memoryError}
+            agentId={speakingId}
             onMemoriesChanged={refreshMemories}
             activities={activities}
             selectedId={selectedToolId}
@@ -780,6 +780,7 @@ export function Workspace() {
           onHide={() => setComputerOpen(false)}
           memories={memories}
           memoryError={memoryError}
+          agentId={speakingId}
           onMemoriesChanged={refreshMemories}
           activities={activities}
           selectedId={selectedToolId}

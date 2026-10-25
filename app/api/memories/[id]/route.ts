@@ -1,5 +1,5 @@
-import { DEFAULT_AGENT_ID } from "../../../../src/agent";
 import { getAppContext } from "../../../../src/context";
+import { memoryAgentFromRequest } from "../../../../src/memory/request-agent";
 import { isLiveMemory } from "../../../../src/memory/repository";
 import { saveMemory } from "../../../../src/memory/save";
 import type { MemoryKind } from "../../../../src/types";
@@ -25,14 +25,16 @@ export async function PATCH(request: Request, context: RouteContext): Promise<Re
     return Response.json({ error: "Memory text is too long" }, { status: 400 });
   }
   const kind = record.kind === "profile" || record.kind === "fact" ? record.kind : null;
+  const selected = await memoryAgentFromRequest(request);
+  if (!selected.ok) return selected.response;
   const { store } = await getAppContext();
-  const existing = await store.memories.getById(DEFAULT_AGENT_ID, id);
+  const existing = await store.memories.getById(selected.agentId, id);
   if (!existing) return Response.json({ error: "Memory not found" }, { status: 404 });
   if (!isLiveMemory(existing)) {
     return Response.json({ error: "Only the current memory can be edited" }, { status: 409 });
   }
   const saved = await saveMemory(store.memories, {
-    agentId: DEFAULT_AGENT_ID,
+    agentId: selected.agentId,
     key: existing.key,
     content,
     kind: (kind ?? existing.kind) as MemoryKind,
@@ -49,15 +51,17 @@ export async function PATCH(request: Request, context: RouteContext): Promise<Re
   return Response.json({ memory: saved.memory });
 }
 
-export async function DELETE(_request: Request, context: RouteContext): Promise<Response> {
+export async function DELETE(request: Request, context: RouteContext): Promise<Response> {
   const { id } = await context.params;
+  const selected = await memoryAgentFromRequest(request);
+  if (!selected.ok) return selected.response;
   const { store } = await getAppContext();
-  const existing = await store.memories.getById(DEFAULT_AGENT_ID, id);
+  const existing = await store.memories.getById(selected.agentId, id);
   if (!existing) return Response.json({ error: "Memory not found" }, { status: 404 });
   if (!isLiveMemory(existing)) {
     return Response.json({ error: "Only the current memory can be deleted" }, { status: 409 });
   }
-  const deleted = await store.memories.softDeleteById(DEFAULT_AGENT_ID, id);
+  const deleted = await store.memories.softDeleteById(selected.agentId, id);
   if (!deleted) return Response.json({ error: "Memory not found" }, { status: 404 });
   return new Response(null, { status: 204 });
 }

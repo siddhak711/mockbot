@@ -1,4 +1,5 @@
 import { afterEach, expect, it } from "vitest";
+import { POST as createAgent } from "../app/api/agents/route";
 import { GET } from "../app/api/memories/route";
 import { DELETE, PATCH } from "../app/api/memories/[id]/route";
 import { DEFAULT_AGENT_ID } from "../src/agent";
@@ -83,4 +84,58 @@ it("lists, edits, and deletes memories for this agent only", async () => {
   const afterDelete = (await (await GET()).json()) as { memories: Memory[] };
   expect(afterDelete.memories).toEqual([]);
   expect(await store.memories.search({ agentId: DEFAULT_AGENT_ID, query: "Porto" })).toEqual([]);
+});
+
+it("lists and deletes a second agent's memory through the API", async () => {
+  const store = await ConversationStore.open();
+  setAppContext({ store, provider: new MockProvider({ delayMs: 0 }) });
+  const created = await createAgent(
+    new Request("http://localhost/api/agents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Researcher",
+        instructions: "You study groves.",
+      }),
+    }),
+  );
+  expect(created.status).toBe(201);
+  const agentId = ((await created.json()) as { agent: { id: string } }).agent.id;
+  await store.memories.write({
+    agentId: DEFAULT_AGENT_ID,
+    key: "city",
+    content: "Lisbon",
+    kind: "profile",
+    createdBy: "user",
+  });
+  const child = await store.memories.write({
+    agentId,
+    key: "grove",
+    content: "the grove code is 42",
+    kind: "fact",
+    createdBy: "user",
+  });
+
+  const missing = await GET(new Request("http://localhost/api/memories?agentId=missing-agent"));
+  expect(missing.status).toBe(404);
+
+  const listed = await GET(new Request(`http://localhost/api/memories?agentId=${agentId}`));
+  expect(listed.status).toBe(200);
+  const body = (await listed.json()) as { memories: Memory[] };
+  expect(body.memories.map((memory) => memory.content)).toEqual(["the grove code is 42"]);
+
+  const removed = await DELETE(
+    new Request(`http://localhost/api/memories/${child.memory.id}?agentId=${agentId}`),
+    params(child.memory.id),
+  );
+  expect(removed.status).toBe(204);
+  const after = (await (
+    await GET(new Request(`http://localhost/api/memories?agentId=${agentId}`))
+  ).json()) as { memories: Memory[] };
+  expect(after.memories).toEqual([]);
+
+  const lead = (await (
+    await GET(new Request(`http://localhost/api/memories?agentId=${DEFAULT_AGENT_ID}`))
+  ).json()) as { memories: Memory[] };
+  expect(lead.memories.map((memory) => memory.content)).toEqual(["Lisbon"]);
 });

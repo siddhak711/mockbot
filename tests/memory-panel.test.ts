@@ -38,6 +38,7 @@ it("keeps a failed memory load out of the loading state and offers retry", () =>
     createElement(MemoryPanel, {
       memories: null,
       error: MEMORY_LOAD_ERROR,
+      agentId: "agent_default",
       onChanged: async () => {},
     }),
   );
