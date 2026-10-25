@@ -7,10 +7,15 @@ import { ComputerPane } from "./computer-pane";
 import { ConnectorsPanel } from "./connectors";
 import { ConversationList } from "./conversation-list";
 import { Transcript } from "./transcript";
+import type { AgentDraft } from "./agent-panel";
+import { LEAD_AGENT_ID } from "../src/agents/ids";
+import type { Agent } from "../src/agents/types";
 import { releaseDecision, settleDecision, stopDecision } from "../src/decision-lock";
 import { SseParser } from "../src/sse";
 import { applyClientEvent, emptyTrace, phaseFromEvent, streamedWeight } from "../src/trace";
 import {
+  activitiesAfterReconnect,
+  activitiesAfterStop,
   activitiesFromMessages,
   describeTool,
   previewText,
@@ -35,6 +40,8 @@ function preferRicherAssistant(local: Message[], remote: Message[]): Message[] {
 
 export function Workspace() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [activeAgentId, setActiveAgentId] = useState(LEAD_AGENT_ID);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState(false);
@@ -57,37 +64,48 @@ export function Workspace() {
   const decidingRef = useRef<string | null>(null);
   activitiesRef.current = activities;
 
+  const releaseApprovalLock = useCallback(() => {
+    stopDecision(decidingRef);
+    setDecidingId(null);
+  }, []);
+
   useEffect(() => {
     activeIdRef.current = activeId;
   }, [activeId]);
 
-  const selectConversation = useCallback(async (id: string) => {
-    const response = await fetch(`/api/conversations/${id}`);
-    if (!response.ok) {
-      setActiveId(null);
-      setMessages([]);
-      setActivities([]);
-      setSelectedToolId(null);
-      return;
-    }
-    const data = (await response.json()) as { conversation: Conversation; messages: Message[] };
-    setActiveId(data.conversation.id);
-    setMessages(data.messages);
-    const nextActivities = activitiesFromMessages(data.messages);
-    setActivities(nextActivities);
-    setSelectedToolId((current) =>
-      current && nextActivities.some((item) => item.id === current)
-        ? current
-        : (nextActivities[nextActivities.length - 1]?.id ?? null),
-    );
-    setEditing(false);
-    setConversations((prev) =>
-      prev.map((item) => (item.id === data.conversation.id ? data.conversation : item)),
-    );
-    const url = new URL(window.location.href);
-    url.searchParams.set("c", data.conversation.id);
-    window.history.replaceState(null, "", url);
-  }, []);
+  const selectConversation = useCallback(
+    async (id: string) => {
+      const response = await fetch(`/api/conversations/${id}`);
+      if (!response.ok) {
+        releaseApprovalLock();
+        setActiveId(null);
+        setMessages([]);
+        setActivities([]);
+        setSelectedToolId(null);
+        return;
+      }
+      const data = (await response.json()) as { conversation: Conversation; messages: Message[] };
+      setActiveId(data.conversation.id);
+      setActiveAgentId(data.conversation.agentId);
+      setMessages(data.messages);
+      releaseApprovalLock();
+      const nextActivities = activitiesFromMessages(data.messages);
+      setActivities(nextActivities);
+      setSelectedToolId((current) =>
+        current && nextActivities.some((item) => item.id === current)
+          ? current
+          : (nextActivities[nextActivities.length - 1]?.id ?? null),
+      );
+      setEditing(false);
+      setConversations((prev) =>
+        prev.map((item) => (item.id === data.conversation.id ? data.conversation : item)),
+      );
+      const url = new URL(window.location.href);
+      url.searchParams.set("c", data.conversation.id);
+      window.history.replaceState(null, "", url);
+    },
+    [releaseApprovalLock],
+  );
 
   const refreshList = useCallback(async () => {
     const response = await fetch("/api/conversations");
@@ -103,12 +121,20 @@ export function Workspace() {
     setConnectors(data.connectors);
   }, []);
 
+  const refreshAgents = useCallback(async () => {
+    const response = await fetch("/api/agents");
+    if (!response.ok) return;
+    const data = (await response.json()) as { agents: Agent[] };
+    setAgents(data.agents);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const [listResponse, statusResponse] = await Promise.all([
+      const [listResponse, statusResponse, agentResponse] = await Promise.all([
         fetch("/api/conversations"),
         fetch("/api/status"),
+        fetch("/api/agents"),
         refreshConnectors(),
       ]);
       if (cancelled) return;
@@ -119,6 +145,10 @@ export function Workspace() {
             ? `OpenAI-compatible${status.model ? ` · ${status.model}` : ""}`
             : "Mock provider",
         );
+      }
+      if (agentResponse.ok) {
+        const agentData = (await agentResponse.json()) as { agents: Agent[] };
+        if (!cancelled) setAgents(agentData.agents);
       }
       if (!listResponse.ok) return;
       const data = (await listResponse.json()) as { conversations: Conversation[] };
@@ -148,6 +178,26 @@ export function Workspace() {
     const url = new URL(window.location.href);
     url.searchParams.delete("c");
     window.history.replaceState(null, "", url);
+  }
+
+  function selectAgent(id: string) {
+    if (streaming) return;
+    setActiveAgentId(id);
+    newChat();
+  }
+
+  async function createAgent(draft: AgentDraft): Promise<string | null> {
+    const response = await fetch("/api/agents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(draft),
+    });
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      return body?.error ?? "Could not create agent";
+    }
+    await refreshAgents();
+    return null;
   }
 
   async function rename(id: string, title: string) {
@@ -186,16 +236,16 @@ export function Workspace() {
   }
 
   async function reloadKeepingLonger(id: string) {
+    releaseApprovalLock();
     const response = await fetch(`/api/conversations/${id}`);
     if (!response.ok) return;
     const data = (await response.json()) as { conversation: Conversation; messages: Message[] };
     setActiveId(data.conversation.id);
+    setActiveAgentId(data.conversation.agentId);
     setMessages((local) => preferRicherAssistant(local, data.messages));
-    setActivities((local) => {
-      const remote = activitiesFromMessages(data.messages);
-      if (remote.length === 0 && local.length > 0) return local;
-      return remote;
-    });
+    setActivities((local) =>
+      activitiesAfterReconnect(local, activitiesFromMessages(data.messages)),
+    );
     setConversations((prev) =>
       prev.map((item) => (item.id === data.conversation.id ? data.conversation : item)),
     );
@@ -206,7 +256,8 @@ export function Workspace() {
 
   async function send(text: string) {
     const trimmed = text.trim();
-    if (!trimmed || streaming) return;
+    const approvalPending = activitiesRef.current.some((item) => item.state === "approval");
+    if (!trimmed || streaming || approvalPending) return;
     setError(null);
     setEditing(false);
     const controller = new AbortController();
@@ -303,6 +354,7 @@ export function Workspace() {
         body: JSON.stringify({
           message: trimmed,
           conversationId: conversationId ?? undefined,
+          agentId: conversationId ? undefined : activeAgentId,
         }),
         signal: controller.signal,
       });
@@ -331,7 +383,10 @@ export function Workspace() {
             setConversations((prev) => {
               const others = prev.filter((item) => item.id !== id);
               const now = new Date().toISOString();
-              return [{ id, title, createdAt: now, updatedAt: now }, ...others];
+              return [
+                { id, title, agentId: activeAgentId, createdAt: now, updatedAt: now },
+                ...others,
+              ];
             });
             setMessages((prev) =>
               prev.map((item) =>
@@ -456,7 +511,16 @@ export function Workspace() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ id, decision }),
         });
-        if (response.ok) return true;
+        if (response.ok) {
+          setActivities((prev) =>
+            prev.map((item) =>
+              item.id === id
+                ? { ...item, state: decision === "approve" ? "running" : "denied" }
+                : item,
+            ),
+          );
+          return true;
+        }
         const activity = activitiesRef.current.find((item) => item.id === id);
         if (!activity || activity.state === "approval") {
           setError(
@@ -524,20 +588,23 @@ export function Workspace() {
   }
 
   function stopTurn() {
-    for (const activity of activitiesRef.current) {
-      if (activity.state !== "approval") continue;
+    const pending = activitiesRef.current.filter((activity) => activity.state === "approval");
+    if (pending.length > 0) setActivities((current) => activitiesAfterStop(current));
+    abortRef.current?.abort();
+    stopDecision(decidingRef);
+    setDecidingId(null);
+    for (const activity of pending) {
       void fetch("/api/tools/approvals", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: activity.id, decision: "stop" }),
       });
     }
-    abortRef.current?.abort();
-    stopDecision(decidingRef);
-    setDecidingId(null);
   }
 
   const active = conversations.find((item) => item.id === activeId) ?? null;
+  const speakingId = active?.agentId ?? activeAgentId;
+  const speaking = agents.find((agent) => agent.id === speakingId) ?? null;
   const awaitingApproval = activities.some((activity) => activity.state === "approval");
 
   return (
@@ -545,6 +612,8 @@ export function Workspace() {
       <ConversationList
         conversations={conversations}
         activeId={activeId}
+        agents={agents}
+        activeAgentId={speakingId}
         providerLabel={providerLabel}
         busy={streaming}
         open={navOpen}
@@ -554,6 +623,8 @@ export function Workspace() {
           setMobilePane("chat");
           if (!streaming) void selectConversation(id);
         }}
+        onSelectAgent={selectAgent}
+        onCreateAgent={createAgent}
       >
         <ConnectorsPanel
           connectors={connectors}
@@ -639,6 +710,7 @@ export function Workspace() {
           ) : (
             <>
               <h1>{active?.title ?? "New chat"}</h1>
+              {speaking ? <span className="agent-chip">{speaking.name}</span> : null}
               <div className="header-actions">
                 {active ? (
                   <>
@@ -694,6 +766,7 @@ export function Workspace() {
           <Composer
             streaming={streaming}
             awaitingApproval={awaitingApproval}
+            placeholder={speaking ? `Message ${speaking.name}` : "Message Mockbot"}
             onSend={(text) => void send(text)}
             onStop={stopTurn}
           />

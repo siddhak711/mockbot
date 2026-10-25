@@ -24,6 +24,7 @@ export function requiresApproval(tool: ToolDefinition, args: Record<string, unkn
 
 type Waiter = {
   resolve: (outcome: ApprovalOutcome) => void;
+  conversationId: string | null;
 };
 
 export class ApprovalGate {
@@ -31,7 +32,7 @@ export class ApprovalGate {
 
   constructor(private readonly timeoutMs = 5 * 60 * 1000) {}
 
-  wait(id: string, signal?: AbortSignal): Promise<ApprovalOutcome> {
+  wait(id: string, signal?: AbortSignal, conversationId?: string): Promise<ApprovalOutcome> {
     if (this.#waiters.has(id)) {
       return Promise.reject(new Error(`Approval ${id} is already pending`));
     }
@@ -55,8 +56,15 @@ export class ApprovalGate {
         return;
       }
       signal?.addEventListener("abort", onAbort, { once: true });
-      this.#waiters.set(id, { resolve: finish });
+      this.#waiters.set(id, { resolve: finish, conversationId: conversationId ?? null });
     });
+  }
+
+  hasPending(conversationId: string): boolean {
+    for (const waiter of this.#waiters.values()) {
+      if (waiter.conversationId === conversationId) return true;
+    }
+    return false;
   }
 
   decide(id: string, decision: ApprovalDecision): boolean {

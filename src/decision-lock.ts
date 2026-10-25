@@ -21,12 +21,9 @@ export async function settleDecision(
 ): Promise<"busy" | "held" | "released"> {
   if (!beginDecision(lock, id)) return "busy";
   try {
-    const accepted = await request();
-    if (!accepted) {
-      releaseDecision(lock, id);
-      return "released";
-    }
-    return "held";
+    await request();
+    releaseDecision(lock, id);
+    return "released";
   } catch (error) {
     releaseDecision(lock, id);
     throw error;

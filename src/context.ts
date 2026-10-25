@@ -1,4 +1,9 @@
+import { AgentDirectory } from "./agents/directory";
+import { withAgentMock } from "./agents/mock-script";
+import { NoteMemory, defaultComputer, defaultConnector } from "./agents/ports";
+import type { AgentMemoryPort, ComputerPort, ConnectorPort } from "./agents/types";
 import { selectProvider, type LlmProvider } from "./llm";
+import { RoutineStore } from "./routines/store";
 import { ConversationStore } from "./store";
 import { ApprovalGate } from "./tools/approval";
 import { createDefaultTools } from "./tools/builtins";
@@ -9,7 +14,30 @@ export type AppContext = {
   provider: LlmProvider;
   tools: ToolRegistry;
   approvals: ApprovalGate;
+  routines?: RoutineStore;
+  agents?: AgentDirectory;
+  memory?: AgentMemoryPort;
+  computer?: ComputerPort;
+  connector?: ConnectorPort;
 };
+
+const GLOBAL_KEY = "__mockbotAppContext";
+
+type Slot = {
+  current?: AppContext;
+  opening?: Promise<AppContext>;
+};
+
+function slot(): Slot {
+  const g = globalThis as typeof globalThis & { [GLOBAL_KEY]?: Slot };
+  if (!g[GLOBAL_KEY]) g[GLOBAL_KEY] = {};
+  return g[GLOBAL_KEY];
+}
+
+export async function getAgents(context: AppContext): Promise<AgentDirectory> {
+  if (!context.agents) context.agents = await AgentDirectory.attach(context.store);
+  return context.agents;
+}
 
 let current: AppContext | undefined;
 
@@ -18,30 +46,69 @@ export function setAppContext(context: {
   provider: LlmProvider;
   tools?: ToolRegistry;
   approvals?: ApprovalGate;
+  routines?: RoutineStore;
+  agents?: AgentDirectory;
+  memory?: AgentMemoryPort;
+  computer?: ComputerPort;
+  connector?: ConnectorPort;
 }): void {
   current = {
     store: context.store,
     provider: context.provider,
     tools: context.tools ?? createDefaultTools({}),
     approvals: context.approvals ?? new ApprovalGate(),
+    routines: context.routines,
+    agents: context.agents,
+    memory: context.memory,
+    computer: context.computer,
+    connector: context.connector,
   };
+  const shared = slot();
+  shared.current = current;
+  shared.opening = undefined;
 }
 
 export async function resetAppContext(): Promise<void> {
-  const existing = current;
+  const shared = slot();
+  const existing = current ?? shared.current;
   current = undefined;
+  shared.current = undefined;
+  shared.opening = undefined;
   if (existing) await existing.store.close();
 }
 
 export async function getAppContext(): Promise<AppContext> {
-  if (!current) {
-    const dataDir = process.env.DATA_DIR?.trim() || ".data/pglite";
-    current = {
-      store: await ConversationStore.open(dataDir),
-      provider: selectProvider(process.env),
-      tools: createDefaultTools(process.env),
-      approvals: new ApprovalGate(),
-    };
+  if (current) return current;
+  const shared = slot();
+  if (shared.current) {
+    current = shared.current;
+    return current;
   }
-  return current;
+  if (!shared.opening) {
+    const dataDir = process.env.DATA_DIR?.trim() || ".data/pglite";
+    shared.opening = ConversationStore.open(dataDir).then(async (store) => {
+      const agents = await AgentDirectory.attach(store);
+      return {
+        store,
+        provider: withAgentMock(selectProvider(process.env)),
+        agents,
+        memory: new NoteMemory(agents),
+        computer: defaultComputer,
+        connector: defaultConnector,
+        tools: createDefaultTools(process.env),
+        approvals: new ApprovalGate(),
+        routines: await RoutineStore.attach(store),
+      };
+    });
+  }
+  try {
+    const opened = await shared.opening;
+    shared.current = opened;
+    shared.opening = undefined;
+    current = opened;
+    return opened;
+  } catch (error) {
+    shared.opening = undefined;
+    throw error;
+  }
 }

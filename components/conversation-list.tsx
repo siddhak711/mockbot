@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+import type { Agent } from "../src/agents/types";
+import { AgentPanel, type AgentDraft } from "./agent-panel";
 import type { Conversation } from "../src/types";
 
 function dayKey(iso: string): string {
@@ -22,23 +24,32 @@ function groupsFor(conversations: Conversation[]): { label: string; items: Conve
 export function ConversationList({
   conversations,
   activeId,
+  agents,
+  activeAgentId,
   providerLabel,
   busy,
   open,
   onNew,
   onSelect,
   children,
+  onSelectAgent,
+  onCreateAgent,
 }: {
   conversations: Conversation[];
   activeId: string | null;
+  agents: Agent[];
+  activeAgentId: string;
   providerLabel: string;
   busy: boolean;
   open: boolean;
   onNew: () => void;
   onSelect: (id: string) => void;
   children?: ReactNode;
+  onSelectAgent: (id: string) => void;
+  onCreateAgent: (draft: AgentDraft) => Promise<string | null>;
 }) {
   const groups = groupsFor(conversations);
+  const names = new Map(agents.map((agent) => [agent.id, agent.name]));
 
   return (
     <aside className={open ? "sidebar open" : "sidebar"}>
@@ -67,8 +78,29 @@ export function ConversationList({
         </svg>
         New chat
       </button>
+      <a className="new" href="/routines">
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.75"
+          aria-hidden="true"
+        >
+          <circle cx="12" cy="12" r="8" />
+          <path d="M12 8v5l3 2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        Routines
+      </a>
       <div className="sidebar-sections">
-        {/* An agents list mounts above conversations in a later milestone. */}
+        <AgentPanel
+          agents={agents}
+          activeAgentId={activeAgentId}
+          busy={busy}
+          onSelect={onSelectAgent}
+          onCreate={onCreateAgent}
+        />
         <section className="conversation-section" aria-label="Conversations">
           <div className="label">Conversations</div>
           <div className="conversation-scroll">
@@ -86,7 +118,9 @@ export function ConversationList({
                       onClick={() => onSelect(conversation.id)}
                       disabled={busy}
                     >
-                      {conversation.title}
+                      {names.get(conversation.agentId)
+                        ? `${names.get(conversation.agentId)} · ${conversation.title}`
+                        : conversation.title}
                     </button>
                   ))}
                 </div>

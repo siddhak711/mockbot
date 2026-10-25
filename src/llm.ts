@@ -233,9 +233,16 @@ export class MockProvider implements LlmProvider {
 
   constructor(
     private readonly options: {
-      reply?: (messages: LlmMessage[]) => string;
+      reply?: (messages: LlmMessage[]) => string | undefined;
       delayMs?: number;
       chunkSize?: number;
+      /**
+       * Test-only. Return tool calls to emit, or null to use the normal mock stream.
+       * The live mock leaves this unset and does not invent a tool call.
+       */
+      tools?: (
+        messages: LlmMessage[],
+      ) => Array<{ id?: string; name: string; arguments: string }> | null;
       /** Test-only. The live mock provider leaves this unset and does not invent a tool call. */
       scriptToolCall?: boolean;
       /** Test-only. Runs the scripted registry demo. The live mock leaves this unset. */
@@ -249,7 +256,7 @@ export class MockProvider implements LlmProvider {
   ): AsyncIterable<LlmStreamEvent> {
     const { signal, tools = [] } = streamOptions(input);
     const userText = lastUserText(messages);
-    if (this.options.demoTools && !this.options.reply) {
+    if (this.options.demoTools && !this.options.reply && !this.options.tools) {
       const next = demoPlan(userText)[toolResultsThisTurn(messages)];
       if (next) {
         yield* this.#emitCall(next, signal);
@@ -259,7 +266,7 @@ export class MockProvider implements LlmProvider {
       return;
     }
 
-    if (!this.options.reply && !this.options.scriptToolCall) {
+    if (!this.options.reply && !this.options.scriptToolCall && !this.options.tools) {
       const requested = namedToolRequest(userText, tools);
       if (requested && toolResultsThisTurn(messages) === 0) {
         if (!requested.found) {
@@ -280,12 +287,47 @@ export class MockProvider implements LlmProvider {
       }
     }
 
-    const text = this.options.reply?.(messages) ?? buildMockReply(userText);
+    const scriptedTools = this.options.tools?.(messages) ?? null;
+    const customReply = this.options.reply?.(messages);
+    const text = customReply ?? buildMockReply(userText);
     const size = Math.max(1, this.options.chunkSize ?? 24);
     const delay = this.options.delayMs ?? 0;
 
     if (signal?.aborted) return;
     yield { type: "start", role: "assistant" };
+
+    if (scriptedTools) {
+      for (let index = 0; index < scriptedTools.length; index += 1) {
+        const tool = scriptedTools[index];
+        if (!tool) continue;
+        await sleep(delay, signal);
+        if (signal?.aborted) return;
+        yield {
+          type: "tool_call",
+          index,
+          id: tool.id ?? `call_${index}`,
+          name: tool.name,
+          arguments: tool.arguments,
+        };
+      }
+      if (customReply !== undefined) {
+        let started = false;
+        for (const piece of chunkText(customReply, size)) {
+          if (started) await sleep(delay, signal);
+          started = true;
+          if (signal?.aborted) return;
+          yield { type: "text", text: piece };
+        }
+        if (signal?.aborted) return;
+        await sleep(delay, signal);
+        if (signal?.aborted) return;
+        yield { type: "end", finishReason: "stop" };
+        return;
+      }
+      if (signal?.aborted) return;
+      yield { type: "end", finishReason: "tool_calls" };
+      return;
+    }
 
     if (!this.options.reply) {
       for (const piece of chunkText(buildMockReasoning(userText), size)) {
