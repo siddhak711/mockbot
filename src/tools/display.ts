@@ -72,6 +72,11 @@ export function toolTitle(name: string, args: Record<string, unknown> | null): s
   if (name === "memory_write") return "Saving a memory";
   if (name === "memory_update") return "Updating a memory";
   if (name === "memory_delete") return "Forgetting a memory";
+  if (name === "write")
+    return typeof args?.path === "string" ? `Write ${args.path}` : "Write a file";
+  if (name === "read") return typeof args?.path === "string" ? `Read ${args.path}` : "Read a file";
+  if (name === "list") return "List sandbox files";
+  if (name === "exec") return typeof args?.command === "string" ? args.command : "Run a command";
   return name.replaceAll("_", " ");
 }
 
@@ -86,6 +91,10 @@ export function toolDetail(name: string, args: Record<string, unknown> | null): 
     if (typeof args.path === "string" && args.path) return `${repo}/${args.path}`;
     if (typeof args.number === "number") return `${repo}#${args.number}`;
     return repo;
+  }
+  if (name === "exec") return typeof args.command === "string" ? args.command : "";
+  if (name === "write" || name === "read" || name === "list") {
+    return typeof args.path === "string" ? args.path : "";
   }
   if (name === "google_calendar") {
     if (args.action === "create") {

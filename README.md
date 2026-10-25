@@ -78,7 +78,7 @@ You can put the same variables in `.env.local`. Names are listed in `.env.exampl
 
 ## Tools
 
-The server keeps a tool registry. Each tool has a name, a JSON schema, and an invoke function, in the same shape as an MCP tool. A turn exposes at most 15 tools to the model. `tool_search` is always one of them and finds the rest by name or description. With no keys configured, the tools return mock data and do not touch the network. The live mock provider answers without inventing a tool call. A model that requests tools still runs them through the registry. Tests can opt the mock provider into a multi-step demo that searches the catalog and then calls another tool.
+The server keeps a tool registry. Each tool has a name, a JSON schema, and an invoke function, in the same shape as an MCP tool. A turn exposes at most 15 tools to the model. `tool_search` is always one of them and finds the rest by name or description. With no keys configured, the tools return mock data and do not touch the network. The live mock provider answers an ordinary message without inventing a tool call. A message that asks for the sandbox computer asks the registry to run the computer tools. Any other model that requests tools still runs them through the registry. Tests can opt the mock provider into a multi-step demo that searches the catalog and then calls another tool.
 
 Reads run immediately. A tool whose name or action sends, posts, deletes, or pays waits for approval. Creating a calendar event that includes attendees is an invite, so it waits too. The transcript shows an approval card; `POST /api/tools/approvals` with `{ "id", "decision": "approve" | "deny" }` resolves it. Deny, or a stop, skips the action and the model can finish the reply.
 
@@ -101,6 +101,28 @@ GITHUB_TOKEN=github_pat_...
 ### Google Calendar
 
 `google_calendar` can list events or create one. Inviting attendees asks for approval before the event is created. Calendar OAuth is not part of this version. Until that exists, the tool returns mock data and does not call Google. If you already have an access token, `GOOGLE_CALENDAR_ACCESS_TOKEN` uses the Calendar API directly. That variable is optional and is not an OAuth setup.
+
+## Sandbox
+
+Each agent has one computer. The current build has a single implicit agent, so every conversation shares that computer. The browser only talks to Mockbot. `DAYTONA_API_KEY` stays on the server.
+
+`list`, `read`, `write`, and `exec` are registered with the tool registry. With no key, the computer is an in-process mock. It can list, read, write, and run a small set of commands (`echo`, `cat`, `ls`, `pwd`, `sleep`, `printenv`). It does not read the host filesystem and it does not start a host shell. Ask the mock model to create a file and print it:
+
+> Create a file named hello.txt that says hello from the sandbox, read it back, and run a command that prints it.
+
+The Computer pane shows the command, the output, the exit code, and changed files. A command that runs longer than `SANDBOX_COMMAND_TIMEOUT_MS` (default 10 seconds) is killed and stored as a failed run.
+
+Daytona is used when a key is set. The same tools run inside a Daytona sandbox, one sandbox per agent. The sandbox id is reused on the next command. Host environment variables are not copied into it.
+
+```bash
+DAYTONA_API_KEY=dtn_...
+DAYTONA_API_URL=https://app.daytona.io/api
+DAYTONA_TARGET=us
+SANDBOX_COMMAND_TIMEOUT_MS=10000
+npm run dev
+```
+
+`DAYTONA_API_URL` defaults to the SDK's Daytona cloud URL. `DAYTONA_TARGET` is the region, when you set one. Computer records and the mock workspace are stored in embedded Postgres under `.data/sandbox`.
 
 ## Routines
 
@@ -159,6 +181,8 @@ The same form is on the Routines page.
 - `GET /api/memories` lists this agent's memories, including history.
 - `PATCH /api/memories/:id` with `{ "content": "...", "kind": "profile" }` records a correction.
 - `DELETE /api/memories/:id` soft-deletes a memory.
+- `GET /api/computer` returns the agent's computer, workspace files, and recent runs (command, output, exit code, changed files).
+- `POST /api/computer` with `{ "tool": "list" | "read" | "write" | "exec", ... }` runs one computer tool. `write` takes `path` and `content`. `exec` takes `command`. The response is the tool result and the stored run. The Daytona key is not included.
 - `GET /api/agents` lists agents and their grants.
 - `POST /api/agents` with `{ "name", "instructions", "memoryNote?", "computerId?", "connectorId?" }` creates an agent. Optional ids are grants for a computer or a connector.
 - `POST /api/chat` accepts an optional `agentId` when starting a conversation. On a Mockbot conversation, a message that begins `delegate to <name>: <task>` makes the mock provider call the `delegate` tool. The tool opens a child conversation for that agent and returns the result on the parent turn. Delegating to Mockbot is refused. Other agents do not get the delegate tool.

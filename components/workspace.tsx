@@ -12,6 +12,8 @@ import { releaseDecision, settleDecision, stopDecision } from "../src/decision-l
 import { MEMORY_LOAD_ERROR, nextMemories } from "../src/memory/panel-state";
 import { SseParser } from "../src/sse";
 import { applyClientEvent, emptyTrace, phaseFromEvent, streamedWeight } from "../src/trace";
+import { fetchComputerSnapshot } from "../src/sandbox/refresh";
+import type { ComputerSnapshot } from "../src/sandbox/types";
 import {
   activitiesAfterReconnect,
   activitiesAfterStop,
@@ -53,12 +55,15 @@ export function Workspace() {
   const [sideTab, setSideTab] = useState<"computer" | "memory">("computer");
   const [memories, setMemories] = useState<Memory[] | null>(null);
   const [memoryError, setMemoryError] = useState<string | null>(null);
+  const [computer, setComputer] = useState<ComputerSnapshot | null>(null);
+  const [computerReady, setComputerReady] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [mobilePane, setMobilePane] = useState<"chat" | "computer" | "memory">("chat");
   const [activities, setActivities] = useState<ToolActivity[]>([]);
   const [selectedToolId, setSelectedToolId] = useState<string | null>(null);
   const [decidingId, setDecidingId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const computerRequest = useRef(0);
   const activeIdRef = useRef<string | null>(null);
   const memoryAgentRef = useRef(LEAD_AGENT_ID);
   const activitiesRef = useRef(activities);
@@ -127,6 +132,23 @@ export function Workspace() {
     setMemories((current) => nextMemories(current, response.ok, loaded).memories);
   }, []);
 
+  const refreshComputer = useCallback(async () => {
+    const request = ++computerRequest.current;
+    try {
+      const snapshot = await fetchComputerSnapshot(
+        (input) => fetch(input),
+        request,
+        () => computerRequest.current,
+      );
+      if (!snapshot || request !== computerRequest.current) return;
+      setComputer(snapshot);
+    } catch {
+      // Keep the last snapshot. The pane stays usable if a refresh fails.
+    } finally {
+      if (request === computerRequest.current) setComputerReady(true);
+    }
+  }, []);
+
   const refreshAgents = useCallback(async () => {
     const response = await fetch("/api/agents");
     if (!response.ok) return;
@@ -182,6 +204,10 @@ export function Workspace() {
     setNavOpen(false);
     void refreshMemories();
   }
+
+  useEffect(() => {
+    void refreshComputer();
+  }, [refreshComputer]);
 
   function newChat() {
     if (streaming) return;
@@ -491,6 +517,7 @@ export function Workspace() {
               preview: output ? previewText(output) : "",
               ...(title ? { title } : {}),
             });
+            void refreshComputer();
             releaseDecision(decidingRef, id);
             setDecidingId((current) => (current === id ? null : current));
           } else if (event.event === "error") {
@@ -521,6 +548,7 @@ export function Workspace() {
       setStreaming(false);
       setLivePhase(null);
       abortRef.current = null;
+      void refreshComputer();
     }
   }
 
@@ -577,6 +605,7 @@ export function Workspace() {
   }
 
   const active = conversations.find((item) => item.id === activeId) ?? null;
+  const computerStatus = computerReady ? (computer ? "ready" : "error") : "loading";
   const speakingId = active?.agentId ?? activeAgentId;
   const speaking = agents.find((agent) => agent.id === speakingId) ?? null;
   const awaitingApproval = activities.some((activity) => activity.state === "approval");
@@ -770,6 +799,8 @@ export function Workspace() {
             activities={activities}
             selectedId={selectedToolId}
             onSelect={setSelectedToolId}
+            snapshot={computer}
+            status={computerStatus}
           />
         </div>
       </main>
@@ -785,6 +816,8 @@ export function Workspace() {
           activities={activities}
           selectedId={selectedToolId}
           onSelect={setSelectedToolId}
+          snapshot={computer}
+          status={computerStatus}
         />
       ) : null}
     </div>

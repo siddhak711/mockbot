@@ -2,6 +2,7 @@
 
 import { ComputerPane } from "./computer-pane";
 import { MemoryPanel } from "./memory-panel";
+import type { ComputerSnapshot } from "../src/sandbox/types";
 import type { ToolActivity } from "../src/tools/display";
 import type { Memory } from "../src/types";
 
@@ -16,6 +17,8 @@ export function SidePane({
   activities = [],
   selectedId,
   onSelect,
+  snapshot = null,
+  status = "ready",
 }: {
   tab: "computer" | "memory";
   onTab: (tab: "computer" | "memory") => void;
@@ -27,6 +30,8 @@ export function SidePane({
   activities?: ToolActivity[];
   selectedId?: string | null;
   onSelect?: (id: string) => void;
+  snapshot?: ComputerSnapshot | null;
+  status?: "loading" | "ready" | "error";
 }) {
   return (
     <aside className="computer" aria-label={tab === "memory" ? "Memory" : "Computer"}>
@@ -70,6 +75,8 @@ export function SidePane({
           activities={activities}
           selectedId={selectedId}
           onSelect={onSelect}
+          snapshot={snapshot}
+          status={status}
         />
       )}
     </aside>
