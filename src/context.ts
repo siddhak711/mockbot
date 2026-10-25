@@ -1,3 +1,7 @@
+import { AgentDirectory } from "./agents/directory";
+import { withAgentMock } from "./agents/mock-script";
+import { NoteMemory, defaultComputer, defaultConnector } from "./agents/ports";
+import type { AgentMemoryPort, ComputerPort, ConnectorPort } from "./agents/types";
 import { selectProvider, type LlmProvider } from "./llm";
 import { openComputer } from "./sandbox/open";
 import type { ComputerSupervisor } from "./sandbox/supervisor";
@@ -14,7 +18,16 @@ export type AppContext = {
   tools: ToolRegistry;
   approvals: ApprovalGate;
   sandbox?: ComputerSupervisor;
+  agents?: AgentDirectory;
+  memory?: AgentMemoryPort;
+  computer?: ComputerPort;
+  connector?: ConnectorPort;
 };
+
+export async function getAgents(context: AppContext): Promise<AgentDirectory> {
+  if (!context.agents) context.agents = await AgentDirectory.attach(context.store);
+  return context.agents;
+}
 
 let current: AppContext | undefined;
 
@@ -30,6 +43,10 @@ export function setAppContext(context: {
   tools?: ToolRegistry;
   approvals?: ApprovalGate;
   sandbox?: ComputerSupervisor;
+  agents?: AgentDirectory;
+  memory?: AgentMemoryPort;
+  computer?: ComputerPort;
+  connector?: ConnectorPort;
 }): void {
   const tools = context.tools ?? createDefaultTools({});
   if (context.sandbox) registerComputerTools(tools, context.sandbox);
@@ -39,6 +56,10 @@ export function setAppContext(context: {
     tools,
     approvals: context.approvals ?? new ApprovalGate(),
     sandbox: context.sandbox,
+    agents: context.agents,
+    memory: context.memory,
+    computer: context.computer,
+    connector: context.connector,
   };
 }
 
@@ -61,22 +82,29 @@ export async function getAppContext(): Promise<AppContext> {
   if (!current) {
     const dataDir = process.env.DATA_DIR?.trim() || ".data/pglite";
     const store = await ConversationStore.open(dataDir);
+    let sandbox: ComputerSupervisor | undefined;
     try {
-      const sandbox = await openComputer({ env: process.env });
+      sandbox = await openComputer({ env: process.env });
       const tools = createDefaultTools(process.env);
       registerComputerTools(tools, sandbox);
-      const inner = selectProvider(process.env);
+      const agents = await AgentDirectory.attach(store);
+      const inner = withAgentMock(selectProvider(process.env));
       current = {
         store,
         sandbox,
         tools,
         approvals: new ApprovalGate(),
+        agents,
+        memory: new NoteMemory(agents),
+        computer: defaultComputer,
+        connector: defaultConnector,
         provider: new SandboxTurnProvider({
           inner,
           delayMs: inner.id === "mock" ? streamDelay(process.env) : 0,
         }),
       };
     } catch (error) {
+      await sandbox?.close();
       await store.close();
       throw error;
     }
