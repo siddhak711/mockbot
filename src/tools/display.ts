@@ -134,3 +134,11 @@ export function activitiesFromMessages(
 ): ToolActivity[] {
   return messages.flatMap((message) => (message.tools ?? []).map((tool) => toToolActivity(tool)));
 }
+
+export function activitiesAfterReconnect(
+  local: ToolActivity[],
+  remote: ToolActivity[],
+): ToolActivity[] {
+  if (remote.length === 0) return local;
+  return remote;
+}

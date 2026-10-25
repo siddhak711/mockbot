@@ -52,12 +52,14 @@ export class ToolRegistry {
     const requested = options?.limit ?? MAX_EXPOSED_TOOLS;
     const cap = Math.max(1, Math.min(requested, MAX_EXPOSED_TOOLS));
     const promoted = new Set(options?.promoted ?? []);
-    const pinned = this.#tools.filter((tool) => exposureOf(tool) === "pinned");
-    const discovered = this.#tools.filter(
-      (tool) => promoted.has(tool.name) && exposureOf(tool) === "hidden",
+    const promotedTools = this.#tools.filter((tool) => promoted.has(tool.name));
+    const pinned = this.#tools.filter(
+      (tool) => exposureOf(tool) === "pinned" && !promoted.has(tool.name),
     );
-    const defaults = this.#tools.filter((tool) => exposureOf(tool) === "default");
-    return unique([...pinned, ...discovered, ...defaults]).slice(0, cap);
+    const defaults = this.#tools.filter(
+      (tool) => exposureOf(tool) === "default" && !promoted.has(tool.name),
+    );
+    return unique([...promotedTools, ...pinned, ...defaults]).slice(0, cap);
   }
 
   search(query: string, limit = 5): ToolDefinition[] {

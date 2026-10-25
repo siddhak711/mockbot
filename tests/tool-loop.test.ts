@@ -216,6 +216,46 @@ it("pauses a write tool on an approval card and continues after the decision", a
   expect(tools.map((tool) => tool.status)).toEqual(["done", "done"]);
 });
 
+it("rejects a new turn while an approval is pending", async () => {
+  const store = await ConversationStore.open();
+  setAppContext({
+    store,
+    provider: demoProvider(20),
+  });
+  const response = await postChat(
+    new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Please invite the team" }),
+    }),
+  );
+  const pending = await readUntil(response, "approval_required");
+  const conversationId = String(
+    pending.events.find((event) => event.event === "meta")?.data.conversationId,
+  );
+  const id = String(pending.events.find((event) => event.event === "approval_required")?.data.id);
+  const second = await postChat(
+    new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Another turn", conversationId }),
+    }),
+  );
+  expect(second.status).toBe(409);
+  const loaded = await store.getConversation(conversationId);
+  expect(loaded?.messages.map((message) => message.content)).not.toContain("Another turn");
+
+  const decision = await postApproval(
+    new Request("http://localhost/api/tools/approvals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, decision: "stop" }),
+    }),
+  );
+  expect(decision.status).toBe(200);
+  await readRest(pending.reader, pending.parser, pending.decoder);
+});
+
 it("records a denial and still lets the conversation continue", async () => {
   const store = await ConversationStore.open();
   setAppContext({

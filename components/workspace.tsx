@@ -9,6 +9,7 @@ import { releaseDecision, settleDecision, stopDecision } from "../src/decision-l
 import { SseParser } from "../src/sse";
 import { applyClientEvent, emptyTrace, phaseFromEvent, streamedWeight } from "../src/trace";
 import {
+  activitiesAfterReconnect,
   activitiesFromMessages,
   describeTool,
   previewText,
@@ -53,37 +54,47 @@ export function Workspace() {
   const decidingRef = useRef<string | null>(null);
   activitiesRef.current = activities;
 
+  const releaseApprovalLock = useCallback(() => {
+    stopDecision(decidingRef);
+    setDecidingId(null);
+  }, []);
+
   useEffect(() => {
     activeIdRef.current = activeId;
   }, [activeId]);
 
-  const selectConversation = useCallback(async (id: string) => {
-    const response = await fetch(`/api/conversations/${id}`);
-    if (!response.ok) {
-      setActiveId(null);
-      setMessages([]);
-      setActivities([]);
-      setSelectedToolId(null);
-      return;
-    }
-    const data = (await response.json()) as { conversation: Conversation; messages: Message[] };
-    setActiveId(data.conversation.id);
-    setMessages(data.messages);
-    const nextActivities = activitiesFromMessages(data.messages);
-    setActivities(nextActivities);
-    setSelectedToolId((current) =>
-      current && nextActivities.some((item) => item.id === current)
-        ? current
-        : (nextActivities[nextActivities.length - 1]?.id ?? null),
-    );
-    setEditing(false);
-    setConversations((prev) =>
-      prev.map((item) => (item.id === data.conversation.id ? data.conversation : item)),
-    );
-    const url = new URL(window.location.href);
-    url.searchParams.set("c", data.conversation.id);
-    window.history.replaceState(null, "", url);
-  }, []);
+  const selectConversation = useCallback(
+    async (id: string) => {
+      const response = await fetch(`/api/conversations/${id}`);
+      if (!response.ok) {
+        releaseApprovalLock();
+        setActiveId(null);
+        setMessages([]);
+        setActivities([]);
+        setSelectedToolId(null);
+        return;
+      }
+      const data = (await response.json()) as { conversation: Conversation; messages: Message[] };
+      setActiveId(data.conversation.id);
+      setMessages(data.messages);
+      releaseApprovalLock();
+      const nextActivities = activitiesFromMessages(data.messages);
+      setActivities(nextActivities);
+      setSelectedToolId((current) =>
+        current && nextActivities.some((item) => item.id === current)
+          ? current
+          : (nextActivities[nextActivities.length - 1]?.id ?? null),
+      );
+      setEditing(false);
+      setConversations((prev) =>
+        prev.map((item) => (item.id === data.conversation.id ? data.conversation : item)),
+      );
+      const url = new URL(window.location.href);
+      url.searchParams.set("c", data.conversation.id);
+      window.history.replaceState(null, "", url);
+    },
+    [releaseApprovalLock],
+  );
 
   const refreshList = useCallback(async () => {
     const response = await fetch("/api/conversations");
@@ -174,16 +185,15 @@ export function Workspace() {
   }
 
   async function reloadKeepingLonger(id: string) {
+    releaseApprovalLock();
     const response = await fetch(`/api/conversations/${id}`);
     if (!response.ok) return;
     const data = (await response.json()) as { conversation: Conversation; messages: Message[] };
     setActiveId(data.conversation.id);
     setMessages((local) => preferRicherAssistant(local, data.messages));
-    setActivities((local) => {
-      const remote = activitiesFromMessages(data.messages);
-      if (remote.length === 0 && local.length > 0) return local;
-      return remote;
-    });
+    setActivities((local) =>
+      activitiesAfterReconnect(local, activitiesFromMessages(data.messages)),
+    );
     setConversations((prev) =>
       prev.map((item) => (item.id === data.conversation.id ? data.conversation : item)),
     );
@@ -194,7 +204,8 @@ export function Workspace() {
 
   async function send(text: string) {
     const trimmed = text.trim();
-    if (!trimmed || streaming) return;
+    const approvalPending = activitiesRef.current.some((item) => item.state === "approval");
+    if (!trimmed || streaming || approvalPending) return;
     setError(null);
     setEditing(false);
     const controller = new AbortController();
@@ -444,7 +455,16 @@ export function Workspace() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ id, decision }),
         });
-        if (response.ok) return true;
+        if (response.ok) {
+          setActivities((prev) =>
+            prev.map((item) =>
+              item.id === id
+                ? { ...item, state: decision === "approve" ? "running" : "denied" }
+                : item,
+            ),
+          );
+          return true;
+        }
         const activity = activitiesRef.current.find((item) => item.id === id);
         if (!activity || activity.state === "approval") {
           setError(

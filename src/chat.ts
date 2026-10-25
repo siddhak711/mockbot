@@ -140,6 +140,12 @@ export async function streamChatTurn(options: {
     ? (await options.store.getConversation(conversationId))?.conversation
     : await options.store.createConversation(titleFromMessage(message));
   if (!conversation) return Response.json({ error: "Conversation not found" }, { status: 404 });
+  if (options.approvals.hasPending(conversation.id)) {
+    return Response.json(
+      { error: "An approval is still pending for this conversation." },
+      { status: 409 },
+    );
+  }
 
   const user = await options.store.addMessage(conversation.id, "user", message);
   const stored = await options.store.getConversation(conversation.id);
@@ -390,7 +396,7 @@ export async function streamChatTurn(options: {
             summary: described.summary,
             assistantMessageId: assistantId,
           });
-          const outcome = await approvals.wait(call.id);
+          const outcome = await approvals.wait(call.id, undefined, conversationSnapshot.id);
           if (outcome.reason === "stopped") {
             userStopped = true;
             call.status = "error";

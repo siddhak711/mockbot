@@ -53,6 +53,24 @@ it("caps the tools exposed to the model and lets tool_search promote the rest", 
   expect(second.map((tool) => tool.name)).not.toContain("tool_13");
 });
 
+it("moves every promoted tool ahead of the cap, including defaults", () => {
+  const registry = new ToolRegistry();
+  registry.register(toolSearchTool(registry));
+  for (let index = 0; index < 20; index += 1) {
+    registry.register(stub(`tool_${String(index).padStart(2, "0")}`, "default", `Helper ${index}`));
+  }
+
+  const before = registry.exposed().map((tool) => tool.name);
+  expect(before).toContain("tool_search");
+  expect(before).not.toContain("tool_14");
+
+  const after = registry.exposed({ promoted: ["tool_14"] }).map((tool) => tool.name);
+  expect(after).toHaveLength(MAX_EXPOSED_TOOLS);
+  expect(after[0]).toBe("tool_14");
+  expect(after).toContain("tool_search");
+  expect(after).not.toContain("tool_13");
+});
+
 it("assembles streamed tool-call arguments without repeating earlier chunks", () => {
   const assembler = new ToolCallAssembler();
   expect(
