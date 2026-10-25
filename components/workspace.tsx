@@ -7,6 +7,7 @@ import { ConversationList } from "./conversation-list";
 import { Transcript } from "./transcript";
 import { SseParser } from "../src/sse";
 import { applyClientEvent, emptyTrace, phaseFromEvent, streamedWeight } from "../src/trace";
+import type { ComputerSnapshot } from "../src/sandbox/types";
 import type { Conversation, LivePhase, Message } from "../src/types";
 
 function isAbort(error: unknown): boolean {
@@ -35,6 +36,8 @@ export function Workspace() {
   const [editing, setEditing] = useState(false);
   const [draftTitle, setDraftTitle] = useState("");
   const [computerOpen, setComputerOpen] = useState(true);
+  const [computer, setComputer] = useState<ComputerSnapshot | null>(null);
+  const [computerReady, setComputerReady] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [mobilePane, setMobilePane] = useState<"chat" | "computer">("chat");
   const abortRef = useRef<AbortController | null>(null);
@@ -70,6 +73,18 @@ export function Workspace() {
     setConversations(data.conversations);
   }, []);
 
+  const refreshComputer = useCallback(async () => {
+    try {
+      const response = await fetch("/api/computer");
+      if (!response.ok) return;
+      setComputer((await response.json()) as ComputerSnapshot);
+    } catch {
+      // Keep the last snapshot. The pane stays usable if a refresh fails.
+    } finally {
+      setComputerReady(true);
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -100,6 +115,10 @@ export function Workspace() {
       cancelled = true;
     };
   }, [selectConversation]);
+
+  useEffect(() => {
+    void refreshComputer();
+  }, [refreshComputer]);
 
   function newChat() {
     if (streaming) return;
@@ -268,6 +287,7 @@ export function Workspace() {
               next[index] = applyClientEvent(current, event.event, payload);
               return next;
             });
+            if (event.event === "tool_result") void refreshComputer();
           } else if (event.event === "error") {
             setError(String(payload.message ?? "The model request failed"));
           }
@@ -295,10 +315,12 @@ export function Workspace() {
       setStreaming(false);
       setLivePhase(null);
       abortRef.current = null;
+      void refreshComputer();
     }
   }
 
   const active = conversations.find((item) => item.id === activeId) ?? null;
+  const computerStatus = computerReady ? (computer ? "ready" : "error") : "loading";
 
   return (
     <div className={computerOpen ? "app with-computer" : "app"}>
@@ -441,10 +463,16 @@ export function Workspace() {
           />
         </div>
         <div className="computer-sheet">
-          <ComputerPane />
+          <ComputerPane snapshot={computer} status={computerStatus} />
         </div>
       </main>
-      {computerOpen ? <ComputerPane onHide={() => setComputerOpen(false)} /> : null}
+      {computerOpen ? (
+        <ComputerPane
+          snapshot={computer}
+          status={computerStatus}
+          onHide={() => setComputerOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }

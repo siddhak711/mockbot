@@ -58,6 +58,30 @@ npm run dev
 
 You can put the same variables in `.env.local`. Names are listed in `.env.example`.
 
+## Sandbox
+
+Each agent has one computer. Milestone 1 has a single implicit agent, so every conversation shares that computer. The browser only talks to Mockbot. `DAYTONA_API_KEY` stays on the server.
+
+With no key, the computer is an in-process mock. It can list, read, write, and run a small set of commands (`echo`, `cat`, `ls`, `pwd`, `sleep`, `printenv`). It does not read the host filesystem and it does not start a host shell. Ask the mock model to create a file and print it:
+
+> Create a file named hello.txt that says hello from the sandbox, read it back, and run a command that prints it.
+
+The Computer pane shows the command, the output, the exit code, and changed files. A command that runs longer than `SANDBOX_COMMAND_TIMEOUT_MS` (default 10 seconds) is killed and stored as a failed run.
+
+Daytona is used when a key is set. The same tools run inside a Daytona sandbox, one sandbox per agent. The sandbox id is reused on the next command. Host environment variables are not copied into it.
+
+```bash
+DAYTONA_API_KEY=dtn_...
+DAYTONA_API_URL=https://app.daytona.io/api
+DAYTONA_TARGET=us
+SANDBOX_COMMAND_TIMEOUT_MS=10000
+npm run dev
+```
+
+`DAYTONA_API_URL` defaults to the SDK's Daytona cloud URL. `DAYTONA_TARGET` is the region, when you set one. Computer records and the mock workspace are stored in embedded Postgres under `.data/sandbox`.
+
+A live model does not call these tools until the tool registry from milestone 2 is registered. The definitions in `src/sandbox/tools.ts` match that registry.
+
 ## API
 
 - `POST /api/chat` with `{ "message": "...", "conversationId": "optional" }` streams server-sent events:
@@ -77,6 +101,8 @@ You can put the same variables in `.env.local`. Names are listed in `.env.exampl
 - `GET /api/conversations/:id` reads one conversation and its messages.
 - `PATCH /api/conversations/:id` with `{ "title": "..." }` renames it.
 - `DELETE /api/conversations/:id` deletes it.
+- `GET /api/computer` returns the agent's computer, workspace files, and recent runs (command, output, exit code, changed files).
+- `POST /api/computer` with `{ "tool": "list" | "read" | "write" | "exec", ... }` runs one computer tool. `write` takes `path` and `content`. `exec` takes `command`. The response is the tool result and the stored run. The Daytona key is not included.
 
 ## Checks
 
