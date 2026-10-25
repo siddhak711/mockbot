@@ -14,7 +14,8 @@
     "typecheck": "next typegen && tsc --noEmit",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "routines": "tsx src/routines/main.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -35,6 +36,7 @@
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "tsx": "^4.23.15"
   }
 }
