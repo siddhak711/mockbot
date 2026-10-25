@@ -47,6 +47,7 @@ export function daytonaCreateParams(agentId: string): {
 export class DaytonaRuntime implements SandboxRuntime {
   readonly kind = "daytona" as const;
   readonly #handles = new Map<string, RemoteSandbox>();
+  readonly #opening = new Map<string, Promise<RemoteSandbox | null>>();
 
   constructor(
     private readonly fleet: RemoteSandboxFleet,
@@ -83,10 +84,19 @@ export class DaytonaRuntime implements SandboxRuntime {
     }
   }
 
-  async exec(agentId: string, command: string, timeoutMs: number): Promise<ExecOutcome> {
+  async prepare(agentId: string): Promise<void> {
     try {
-      const handle = await this.#require(agentId);
-      const timeoutSec = Math.max(1, Math.ceil(timeoutMs / 1000));
+      await this.#require(agentId);
+    } catch (error) {
+      throw redactError(error, this.secret);
+    }
+  }
+
+  async exec(agentId: string, command: string, timeoutMs: number): Promise<ExecOutcome> {
+    const handle = this.#handles.get(agentId);
+    if (!handle) throw new Error("Sandbox is unavailable");
+    const timeoutSec = Math.max(1, Math.ceil(timeoutMs / 1000));
+    try {
       return await handle.exec(command, "workspace", timeoutSec);
     } catch (error) {
       throw redactError(error, this.secret);
@@ -102,6 +112,22 @@ export class DaytonaRuntime implements SandboxRuntime {
   async #handle(agentId: string, create: boolean): Promise<RemoteSandbox | null> {
     const cached = this.#handles.get(agentId);
     if (cached) return cached;
+    const opening = this.#opening.get(agentId);
+    if (opening) {
+      const handle = await opening;
+      if (handle || !create) return handle;
+      return this.#handle(agentId, true);
+    }
+    const pending = this.#open(agentId, create);
+    this.#opening.set(agentId, pending);
+    try {
+      return await pending;
+    } finally {
+      if (this.#opening.get(agentId) === pending) this.#opening.delete(agentId);
+    }
+  }
+
+  async #open(agentId: string, create: boolean): Promise<RemoteSandbox | null> {
     const computer = await this.store.ensureComputer(agentId, "daytona");
     let handle: RemoteSandbox | null = null;
     if (computer.sandboxId) handle = await this.fleet.reconnect(computer.sandboxId);

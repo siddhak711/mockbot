@@ -149,6 +149,7 @@ export class ComputerSupervisor {
     }
     let outcome: ExecOutcome;
     try {
+      await this.runtime.prepare(agentId);
       outcome = await deadline(this.runtime.exec(agentId, command, this.timeoutMs), this.timeoutMs);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Sandbox command failed";

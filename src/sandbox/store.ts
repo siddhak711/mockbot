@@ -133,14 +133,13 @@ export class SandboxStore {
     agentId: string,
     provider: SandboxProviderKind,
   ): Promise<ComputerInfo & { sandboxId: string | null }> {
+    await this.db.query(
+      `INSERT INTO computers (agent_id, id, provider) VALUES ($1, $2, $3)
+       ON CONFLICT (agent_id) DO NOTHING`,
+      [agentId, crypto.randomUUID(), provider],
+    );
     const existing = await this.getComputer(agentId);
-    if (!existing) {
-      await this.db.query(`INSERT INTO computers (agent_id, id, provider) VALUES ($1, $2, $3)`, [
-        agentId,
-        crypto.randomUUID(),
-        provider,
-      ]);
-    } else if (existing.provider !== provider) {
+    if (existing && existing.provider !== provider) {
       await this.db.query(
         `UPDATE computers SET provider = $2, sandbox_id = NULL WHERE agent_id = $1`,
         [agentId, provider],
@@ -149,6 +148,14 @@ export class SandboxStore {
     const computer = await this.getComputer(agentId);
     if (!computer) throw new Error("Failed to store the computer");
     return computer;
+  }
+
+  async countComputers(agentId: string): Promise<number> {
+    const result = await this.db.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM computers WHERE agent_id = $1`,
+      [agentId],
+    );
+    return Number(result.rows[0]?.count ?? 0);
   }
 
   async getComputer(

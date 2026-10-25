@@ -37,6 +37,8 @@ export class MockSandboxRuntime implements SandboxRuntime {
     return { ok: true as const };
   }
 
+  async prepare(): Promise<void> {}
+
   async exec(agentId: string, command: string, timeoutMs: number): Promise<ExecOutcome> {
     const tokens = tokenize(command);
     if ("error" in tokens) {

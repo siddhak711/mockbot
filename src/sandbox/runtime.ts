@@ -25,5 +25,6 @@ export type SandboxRuntime = {
     path: string,
     content: string,
   ): Promise<{ ok: true } | { ok: false; error: string }>;
+  prepare(agentId: string): Promise<void>;
   exec(agentId: string, command: string, timeoutMs: number): Promise<ExecOutcome>;
 };

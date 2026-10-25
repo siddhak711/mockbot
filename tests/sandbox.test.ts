@@ -217,6 +217,50 @@ describe("sandbox", { concurrent: false }, () => {
     await supervisor.close();
   });
 
+  it("does not count sandbox startup against the command timeout", async () => {
+    const fleet = new FakeFleet();
+    fleet.bootMs = 80;
+    const store = await SandboxStore.open("memory://");
+    const runtime = new DaytonaRuntime(fleet, store, "secret");
+    const supervisor = new ComputerSupervisor(store, runtime, 30);
+    const started = Date.now();
+    const result = await supervisor.invoke("agent", "exec", { command: "echo hi" });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(70);
+    expect(result.run.timedOut).toBe(false);
+    expect(result.run.exitCode).toBe(0);
+    expect(result.run.stdout).toBe("hi\n");
+    expect(result.result.isError).toBeUndefined();
+    expect(fleet.creates).toHaveLength(1);
+    await supervisor.close();
+  });
+
+  it("creates one sandbox and one computer row when the first calls overlap", async () => {
+    const store = await SandboxStore.open("memory://");
+    const [first, second] = await Promise.all([
+      store.ensureComputer("agent-lock", "daytona"),
+      store.ensureComputer("agent-lock", "daytona"),
+    ]);
+    expect(first.id).toBe(second.id);
+    expect(await store.countComputers("agent-lock")).toBe(1);
+
+    const fleet = new FakeFleet();
+    fleet.bootMs = 40;
+    const runtime = new DaytonaRuntime(fleet, store, "secret");
+    const supervisor = new ComputerSupervisor(store, runtime, 1_000);
+    const [left, right] = await Promise.all([
+      supervisor.invoke("agent-lock", "exec", { command: "echo one" }),
+      supervisor.invoke("agent-lock", "exec", { command: "echo two" }),
+    ]);
+    expect(fleet.creates).toHaveLength(1);
+    expect(left.run.timedOut).toBe(false);
+    expect(right.run.timedOut).toBe(false);
+    expect(left.run.exitCode).toBe(0);
+    expect(right.run.exitCode).toBe(0);
+    expect(await store.countComputers("agent-lock")).toBe(1);
+    expect((await store.getComputer("agent-lock"))?.sandboxId).toBe(fleet.creates[0]?.id);
+    await supervisor.close();
+  });
+
   it("streams the sandbox tools through chat and the computer API", async () => {
     const supervisor = await openComputer({ env: {}, dataDir: "memory://" });
     const store = await ConversationStore.open();
@@ -347,6 +391,10 @@ describe("sandbox", { concurrent: false }, () => {
       return Promise.resolve({ ok: true });
     }
 
+    prepare(): Promise<void> {
+      return Promise.resolve();
+    }
+
     exec(): Promise<ExecOutcome> {
       return new Promise(() => {});
     }
@@ -355,9 +403,11 @@ describe("sandbox", { concurrent: false }, () => {
   class FakeFleet implements RemoteSandboxFleet {
     readonly creates: Array<{ id: string; agentId: string; envVars?: unknown }> = [];
     readonly execs: Array<{ command: string; cwd: string; timeoutSec: number }> = [];
+    bootMs = 0;
     readonly #sandboxes = new Map<string, Map<string, string>>();
 
     async create(agentId: string): Promise<RemoteSandbox> {
+      if (this.bootMs > 0) await new Promise((resolve) => setTimeout(resolve, this.bootMs));
       const id = `sbx-${this.creates.length + 1}`;
       this.creates.push({ id, agentId });
       this.#sandboxes.set(id, new Map());
@@ -399,6 +449,9 @@ describe("sandbox", { concurrent: false }, () => {
         },
         async exec(command: string, cwd: string, timeoutSec: number) {
           execs.push({ command, cwd, timeoutSec });
+          if (command.startsWith("echo ")) {
+            return { stdout: `${command.slice(5)}\n`, stderr: "", exitCode: 0, timedOut: false };
+          }
           const match = command.match(/^cat\s+(\S+)$/);
           if (!match) return { stdout: "", stderr: "unsupported", exitCode: 1, timedOut: false };
           const content = files.get(`${cwd}/${match[1]}`);
