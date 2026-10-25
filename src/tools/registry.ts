@@ -32,12 +32,21 @@ function scoreTool(tool: ToolDefinition, query: string, terms: string[]): number
 
 export class ToolRegistry {
   #tools: ToolDefinition[] = [];
+  #sources = new Map<string, string>();
 
-  register(tool: ToolDefinition): void {
+  register(tool: ToolDefinition, source = "builtin"): void {
     if (this.#tools.some((item) => item.name === tool.name)) {
       throw new Error(`Tool ${tool.name} is already registered`);
     }
     this.#tools.push(tool);
+    this.#sources.set(tool.name, source);
+  }
+
+  removeSource(source: string): void {
+    this.#tools = this.#tools.filter((tool) => this.#sources.get(tool.name) !== source);
+    for (const [name, itemSource] of this.#sources) {
+      if (itemSource === source) this.#sources.delete(name);
+    }
   }
 
   get(name: string): ToolDefinition | undefined {

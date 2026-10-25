@@ -1,5 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
+import type { ConnectorRecord, ConnectorTransport } from "./connectors";
+import { applyMigrations } from "./db/migrate";
 import { parseTrace } from "./trace";
 import type {
   Conversation,
@@ -9,44 +11,6 @@ import type {
   StoredToolCall,
   ToolCallStatus,
 } from "./types";
-
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS conversations (
-  id TEXT PRIMARY KEY,
-  title TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS messages (
-  seq BIGSERIAL PRIMARY KEY,
-  id TEXT NOT NULL UNIQUE,
-  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-  role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
-  content TEXT NOT NULL,
-  trace JSONB,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-ALTER TABLE messages ADD COLUMN IF NOT EXISTS trace JSONB;
-
-CREATE INDEX IF NOT EXISTS messages_conversation_idx ON messages (conversation_id, seq);
-
-CREATE TABLE IF NOT EXISTS tool_calls (
-  seq BIGSERIAL PRIMARY KEY,
-  id TEXT NOT NULL UNIQUE,
-  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-  message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
-  name TEXT NOT NULL,
-  arguments TEXT NOT NULL DEFAULT '',
-  status TEXT NOT NULL CHECK (status IN ('running', 'approval', 'done', 'denied', 'error')),
-  output TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS tool_calls_message_idx ON tool_calls (message_id, seq);
-`;
 
 type ConversationRow = {
   id: string;
@@ -75,6 +39,17 @@ type ToolCallRow = {
   created_at: Date | string;
 };
 
+type ConnectorRow = {
+  id: string;
+  name: string;
+  transport: ConnectorTransport;
+  target: string;
+  secret_ref: string | null;
+  enabled: boolean;
+  created_at: Date | string;
+  updated_at: Date | string;
+};
+
 function asIso(value: Date | string): string {
   const date = value instanceof Date ? value : new Date(value);
   return date.toISOString();
@@ -97,6 +72,19 @@ function mapMessage(row: MessageRow): Message {
     content: row.content,
     createdAt: asIso(row.created_at),
     trace: parseTrace(row.trace),
+  };
+}
+
+function mapConnector(row: ConnectorRow): ConnectorRecord {
+  return {
+    id: row.id,
+    name: row.name,
+    transport: row.transport,
+    target: row.target,
+    secretRef: row.secret_ref,
+    enabled: row.enabled,
+    createdAt: asIso(row.created_at),
+    updatedAt: asIso(row.updated_at),
   };
 }
 
@@ -132,7 +120,7 @@ export class ConversationStore {
     if (persistent) await mkdir(dataDir, { recursive: true });
     const db = new PGlite(persistent ? dataDir : "memory://");
     await db.waitReady;
-    await db.exec(SCHEMA);
+    await applyMigrations(db);
     return new ConversationStore(db);
   }
 
@@ -274,5 +262,53 @@ export class ConversationStore {
         input.output,
       ],
     );
+  }
+
+  async listConnectors(): Promise<ConnectorRecord[]> {
+    const result = await this.db.query<ConnectorRow>(
+      `SELECT id, name, transport, target, secret_ref, enabled, created_at, updated_at
+       FROM connectors
+       ORDER BY created_at ASC, id ASC`,
+    );
+    return result.rows.map(mapConnector);
+  }
+
+  async createConnector(input: {
+    id?: string;
+    name: string;
+    transport: ConnectorTransport;
+    target: string;
+    secretRef: string | null;
+  }): Promise<ConnectorRecord> {
+    const id = input.id ?? crypto.randomUUID();
+    const result = await this.db.query<ConnectorRow>(
+      `INSERT INTO connectors (id, name, transport, target, secret_ref)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, name, transport, target, secret_ref, enabled, created_at, updated_at`,
+      [id, input.name, input.transport, input.target, input.secretRef],
+    );
+    const row = result.rows[0];
+    if (!row) throw new Error("Failed to create connector");
+    return mapConnector(row);
+  }
+
+  async setConnectorEnabled(id: string, enabled: boolean): Promise<ConnectorRecord | null> {
+    const result = await this.db.query<ConnectorRow>(
+      `UPDATE connectors
+       SET enabled = $2, updated_at = NOW()
+       WHERE id = $1
+       RETURNING id, name, transport, target, secret_ref, enabled, created_at, updated_at`,
+      [id, enabled],
+    );
+    const row = result.rows[0];
+    return row ? mapConnector(row) : null;
+  }
+
+  async deleteConnector(id: string): Promise<boolean> {
+    const result = await this.db.query<{ id: string }>(
+      `DELETE FROM connectors WHERE id = $1 RETURNING id`,
+      [id],
+    );
+    return result.rows.length > 0;
   }
 }

@@ -1,8 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { ConnectorRecord, ConnectorTransport } from "../src/connectors";
 import { Composer } from "./composer";
 import { ComputerPane } from "./computer-pane";
+import { ConnectorsPanel } from "./connectors";
 import { ConversationList } from "./conversation-list";
 import { Transcript } from "./transcript";
 import { releaseDecision, settleDecision, stopDecision } from "../src/decision-lock";
@@ -45,6 +47,8 @@ export function Workspace() {
   const [navOpen, setNavOpen] = useState(false);
   const [mobilePane, setMobilePane] = useState<"chat" | "computer">("chat");
   const [activities, setActivities] = useState<ToolActivity[]>([]);
+  const [connectors, setConnectors] = useState<ConnectorRecord[]>([]);
+  const [connectorError, setConnectorError] = useState<string | null>(null);
   const [selectedToolId, setSelectedToolId] = useState<string | null>(null);
   const [decidingId, setDecidingId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -92,12 +96,20 @@ export function Workspace() {
     setConversations(data.conversations);
   }, []);
 
+  const refreshConnectors = useCallback(async () => {
+    const response = await fetch("/api/connectors");
+    if (!response.ok) return;
+    const data = (await response.json()) as { connectors: ConnectorRecord[] };
+    setConnectors(data.connectors);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       const [listResponse, statusResponse] = await Promise.all([
         fetch("/api/conversations"),
         fetch("/api/status"),
+        refreshConnectors(),
       ]);
       if (cancelled) return;
       if (statusResponse.ok) {
@@ -121,7 +133,7 @@ export function Workspace() {
     return () => {
       cancelled = true;
     };
-  }, [selectConversation]);
+  }, [refreshConnectors, selectConversation]);
 
   function newChat() {
     if (streaming) return;
@@ -463,6 +475,54 @@ export function Workspace() {
     }
   }
 
+  async function createConnector(input: {
+    name: string;
+    transport: ConnectorTransport;
+    target: string;
+    secretRef: string;
+  }): Promise<string | null> {
+    setConnectorError(null);
+    const response = await fetch("/api/connectors", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    const body = (await response.json().catch(() => null)) as { error?: string } | null;
+    if (!response.ok) {
+      const message = body?.error ?? "Could not add the connector";
+      setConnectorError(message);
+      return message;
+    }
+    await refreshConnectors();
+    return null;
+  }
+
+  async function toggleConnector(id: string, enabled: boolean) {
+    setConnectorError(null);
+    const response = await fetch(`/api/connectors/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    });
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      setConnectorError(body?.error ?? "Could not update the connector");
+      return;
+    }
+    await refreshConnectors();
+  }
+
+  async function removeConnector(id: string) {
+    setConnectorError(null);
+    const response = await fetch(`/api/connectors/${id}`, { method: "DELETE" });
+    if (!response.ok && response.status !== 204) {
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      setConnectorError(body?.error ?? "Could not remove the connector");
+      return;
+    }
+    await refreshConnectors();
+  }
+
   function stopTurn() {
     for (const activity of activitiesRef.current) {
       if (activity.state !== "approval") continue;
@@ -494,7 +554,16 @@ export function Workspace() {
           setMobilePane("chat");
           if (!streaming) void selectConversation(id);
         }}
-      />
+      >
+        <ConnectorsPanel
+          connectors={connectors}
+          error={connectorError}
+          busy={streaming}
+          onCreate={createConnector}
+          onToggle={toggleConnector}
+          onRemove={removeConnector}
+        />
+      </ConversationList>
       <button
         type="button"
         className={navOpen ? "scrim on" : "scrim"}

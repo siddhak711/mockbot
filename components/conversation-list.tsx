@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { Conversation } from "../src/types";
 
 function dayKey(iso: string): string {
@@ -26,6 +27,7 @@ export function ConversationList({
   open,
   onNew,
   onSelect,
+  children,
 }: {
   conversations: Conversation[];
   activeId: string | null;
@@ -34,6 +36,7 @@ export function ConversationList({
   open: boolean;
   onNew: () => void;
   onSelect: (id: string) => void;
+  children?: ReactNode;
 }) {
   const groups = groupsFor(conversations);
 
@@ -91,6 +94,7 @@ export function ConversationList({
             ))}
           </div>
         </section>
+        {children}
       </div>
       <footer className="me">
         <span className="ava" aria-hidden="true">

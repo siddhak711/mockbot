@@ -1,5 +1,6 @@
 import { streamChatTurn } from "../../../src/chat";
 import { getAppContext } from "../../../src/context";
+import { refreshMcpTools, withFreshTools } from "../../../src/mcp/sync";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,13 +17,22 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: "Expected JSON body" }, { status: 400 });
   }
   const record = body as { message?: unknown; conversationId?: unknown };
-  return streamChatTurn({
-    store,
-    provider,
-    tools,
-    approvals,
-    message: typeof record.message === "string" ? record.message : "",
-    conversationId: typeof record.conversationId === "string" ? record.conversationId : undefined,
-    signal: request.signal,
+  return withFreshTools(async () => {
+    const connectors = await store.listConnectors();
+    await refreshMcpTools({
+      registry: tools,
+      connectors,
+      env: process.env,
+      signal: request.signal,
+    });
+    return streamChatTurn({
+      store,
+      provider,
+      tools,
+      approvals,
+      message: typeof record.message === "string" ? record.message : "",
+      conversationId: typeof record.conversationId === "string" ? record.conversationId : undefined,
+      signal: request.signal,
+    });
   });
 }
