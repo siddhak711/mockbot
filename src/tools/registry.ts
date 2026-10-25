@@ -49,6 +49,18 @@ export class ToolRegistry {
     }
   }
 
+  clone(): ToolRegistry {
+    const copy = new ToolRegistry();
+    for (const tool of this.#tools) {
+      if (tool.name === "tool_search") continue;
+      copy.register(tool, this.#sources.get(tool.name) ?? "builtin");
+    }
+    if (this.#tools.some((tool) => tool.name === "tool_search")) {
+      copy.register(toolSearchTool(copy), this.#sources.get("tool_search") ?? "builtin");
+    }
+    return copy;
+  }
+
   get(name: string): ToolDefinition | undefined {
     return this.#tools.find((tool) => tool.name === name);
   }

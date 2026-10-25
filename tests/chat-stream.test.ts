@@ -1,9 +1,13 @@
 import { afterEach, expect, it } from "vitest";
 import { POST } from "../app/api/chat/route";
-import { buildMockReply, MockProvider, selectProvider } from "../src/llm";
+import { POST as postApproval } from "../app/api/tools/approvals/route";
+import { buildMockReply, MockProvider, selectProvider, type LlmProvider } from "../src/llm";
 import { resetAppContext, setAppContext } from "../src/context";
 import { withFreshTools } from "../src/mcp/sync";
+import { SseParser } from "../src/sse";
 import { ConversationStore } from "../src/store";
+import { createDefaultTools } from "../src/tools/builtins";
+import type { LlmMessage, LlmStreamEvent } from "../src/types";
 import { deltas, readSse } from "./helpers";
 
 afterEach(async () => {
@@ -123,12 +127,12 @@ it("does not keep the turn lock after an unread event stream finishes", async ()
   await first.body?.cancel();
 });
 
-it("holds the turn lock until the event stream finishes producing", async () => {
+it("releases the refresh lock before the event stream finishes", async () => {
   let releaseProducer: () => void = () => undefined;
   const producerDone = new Promise<void>((resolve) => {
     releaseProducer = resolve;
   });
-  const first = withFreshTools(async () => {
+  const response = await withFreshTools(async () => {
     const stream = new ReadableStream({
       async start(controller) {
         await producerDone;
@@ -139,17 +143,60 @@ it("holds the turn lock until the event stream finishes producing", async () => 
     return new Response(stream, { headers: { "content-type": "text/event-stream" } });
   });
 
-  let secondStarted = false;
-  const second = withFreshTools(async () => {
-    secondStarted = true;
-    return Response.json({ ok: true });
-  });
-  await new Promise((resolve) => setTimeout(resolve, 30));
-  expect(secondStarted).toBe(false);
+  const next = await withFreshTools(async () => Response.json({ ok: true }));
+  expect(next.status).toBe(200);
   releaseProducer();
-  expect((await second).status).toBe(200);
-  expect(secondStarted).toBe(true);
-  await first.then((response) => response.body?.cancel());
+  await response.body?.cancel();
+});
+
+it("finishes a second conversation while the first waits on approval", async () => {
+  const tools = createDefaultTools({});
+  tools.register({
+    name: "send_note",
+    description: "Send a note. Requires approval.",
+    approval: "always",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    async invoke() {
+      return { content: "sent" };
+    },
+  });
+  const store = await ConversationStore.open();
+  setAppContext({ store, provider: new ApprovalProvider(), tools });
+
+  const waiting = await POST(
+    new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Wait for approval" }),
+    }),
+  );
+  const pending = await readUntil(waiting, "approval_required");
+  expect(pending.events.some((event) => event.data.name === "send_note")).toBe(true);
+
+  const other = await POST(
+    new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Say hello" }),
+    }),
+  );
+  const finished = await readSse(other);
+  expect(deltas(finished)).toBe("Other conversation finished.");
+  expect(finished.at(-1)?.event).toBe("done");
+
+  const approvalId = String(
+    pending.events.find((event) => event.event === "approval_required")?.data.id,
+  );
+  const decision = await postApproval(
+    new Request("http://localhost/api/tools/approvals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: approvalId, decision: "approve" }),
+    }),
+  );
+  expect(decision.status).toBe(200);
+  const rest = await readRest(pending.reader, pending.parser, pending.decoder);
+  expect(rest.some((event) => event.event === "done")).toBe(true);
 });
 
 it("releases the turn lock when preparing a turn throws", async () => {
@@ -161,3 +208,71 @@ it("releases the turn lock when preparing a turn throws", async () => {
   const response = await withFreshTools(async () => Response.json({ ok: true }));
   expect(response.status).toBe(200);
 });
+
+class ApprovalProvider implements LlmProvider {
+  readonly id = "mock" as const;
+  readonly model = null;
+
+  async *stream(messages: LlmMessage[]): AsyncIterable<LlmStreamEvent> {
+    if (messages.some((message) => message.role === "tool")) {
+      yield { type: "text", text: "Approved." };
+      yield { type: "end", finishReason: "stop" };
+      return;
+    }
+    const user = [...messages].reverse().find((message) => message.role === "user");
+    const text = typeof user?.content === "string" ? user.content : "";
+    if (text.startsWith("Wait")) {
+      yield {
+        type: "tool_call",
+        index: 0,
+        id: "call_send",
+        name: "send_note",
+        arguments: "{}",
+      };
+      yield { type: "end", finishReason: "tool_calls" };
+      return;
+    }
+    yield { type: "text", text: "Other conversation finished." };
+    yield { type: "end", finishReason: "stop" };
+  }
+}
+
+async function readUntil(response: Response, eventName: string) {
+  if (!response.body) throw new Error("Expected a response body");
+  const parser = new SseParser();
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const events: Array<{ event: string; data: Record<string, unknown> }> = [];
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    for (const message of parser.push(decoder.decode(value, { stream: true }))) {
+      const event = {
+        event: message.event,
+        data: JSON.parse(message.data) as Record<string, unknown>,
+      };
+      events.push(event);
+      if (event.event === eventName) return { events, reader, parser, decoder };
+    }
+  }
+  throw new Error(`Stream ended before ${eventName}`);
+}
+
+async function readRest(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  parser: SseParser,
+  decoder: TextDecoder,
+) {
+  const events: Array<{ event: string; data: Record<string, unknown> }> = [];
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    for (const message of parser.push(decoder.decode(value, { stream: true }))) {
+      events.push({
+        event: message.event,
+        data: JSON.parse(message.data) as Record<string, unknown>,
+      });
+    }
+  }
+  return events;
+}

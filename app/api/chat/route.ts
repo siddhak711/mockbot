@@ -28,7 +28,7 @@ export async function POST(request: Request): Promise<Response> {
     return streamChatTurn({
       store,
       provider,
-      tools,
+      tools: tools.clone(),
       approvals,
       message: typeof record.message === "string" ? record.message : "",
       conversationId: typeof record.conversationId === "string" ? record.conversationId : undefined,

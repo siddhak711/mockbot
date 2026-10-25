@@ -189,6 +189,7 @@ it("applies migrations when the process cwd has no SQL files", async () => {
 it("rejects secret references that do not start with MCP_", async () => {
   process.env.LLM_API_KEY = LLM_KEY;
   process.env.GITHUB_TOKEN = "github-token-should-stay-out";
+  process.env.TAVILY_API_KEY = "tavily-key-should-stay-out";
   const store = await ConversationStore.open();
   setAppContext({
     store,
@@ -196,7 +197,7 @@ it("rejects secret references that do not start with MCP_", async () => {
     tools: createDefaultTools({}),
   });
   try {
-    for (const secretRef of ["LLM_API_KEY", "GITHUB_TOKEN", "PATH"]) {
+    for (const secretRef of ["LLM_API_KEY", "GITHUB_TOKEN", "TAVILY_API_KEY", "PATH"]) {
       const response = await createConnector(
         new Request("http://localhost/api/connectors", {
           method: "POST",
@@ -214,6 +215,7 @@ it("rejects secret references that do not start with MCP_", async () => {
       expect(body).toContain("MCP_");
       expect(body).not.toContain(LLM_KEY);
       expect(body).not.toContain("github-token-should-stay-out");
+      expect(body).not.toContain("tavily-key-should-stay-out");
     }
     expect(await store.listConnectors()).toEqual([]);
     const allowed = parseConnectorInput({
@@ -233,6 +235,7 @@ it("rejects secret references that do not start with MCP_", async () => {
     expect(empty.ok).toBe(true);
   } finally {
     delete process.env.GITHUB_TOKEN;
+    delete process.env.TAVILY_API_KEY;
   }
 });
 

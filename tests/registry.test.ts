@@ -20,6 +20,17 @@ function stub(
   };
 }
 
+it("keeps a cloned registry after the shared registry drops a source", () => {
+  const registry = new ToolRegistry();
+  registry.register(toolSearchTool(registry));
+  registry.register(stub("demo_echo", "default", "Echo from the connector"), "mcp");
+  const turn = registry.clone();
+  registry.removeSource("mcp");
+  expect(registry.get("demo_echo")).toBeUndefined();
+  expect(turn.get("demo_echo")?.name).toBe("demo_echo");
+  expect(turn.search("echo").map((tool) => tool.name)).toEqual(["demo_echo"]);
+});
+
 it("caps the tools exposed to the model and lets tool_search promote the rest", async () => {
   const registry = new ToolRegistry();
   registry.register(toolSearchTool(registry));

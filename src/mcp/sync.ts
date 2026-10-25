@@ -17,7 +17,7 @@ type RefreshOptions = {
 
 let queue: Promise<void> = Promise.resolve();
 
-export async function withFreshTools(run: () => Promise<Response>): Promise<Response> {
+export async function withFreshTools<T>(run: () => Promise<T>): Promise<T> {
   let released = false;
   let resolveHold: () => void = () => undefined;
   const hold = new Promise<void>((resolve) => {
@@ -28,53 +28,17 @@ export async function withFreshTools(run: () => Promise<Response>): Promise<Resp
     };
   });
   const previous = queue;
-  // A failed turn must not reject the queue, or every later turn waits forever.
+  // A failed refresh must not reject the queue, or every later turn waits forever.
   queue = previous.then(
     () => hold,
     () => hold,
   );
+  await previous.catch(() => undefined);
   try {
-    await previous.catch(() => undefined);
-    const response = await run();
-    const type = response.headers.get("content-type") ?? "";
-    if (!response.body || !type.includes("text/event-stream")) {
-      resolveHold();
-      return response;
-    }
-    return holdResponse(response, resolveHold);
-  } catch (error) {
+    return await run();
+  } finally {
     resolveHold();
-    throw error;
   }
-}
-
-function holdResponse(response: Response, release: () => void): Response {
-  if (!response.body) {
-    release();
-    return response;
-  }
-  const reader = response.body.getReader();
-  const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      try {
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          controller.enqueue(value);
-        }
-        controller.close();
-      } catch (error) {
-        controller.error(error);
-      } finally {
-        release();
-      }
-    },
-    cancel(reason) {
-      release();
-      return reader.cancel(reason);
-    },
-  });
-  return new Response(stream, { status: response.status, headers: response.headers });
 }
 
 export async function refreshMcpTools(options: RefreshOptions): Promise<void> {
