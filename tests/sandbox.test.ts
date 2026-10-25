@@ -225,7 +225,6 @@ describe("sandbox", { concurrent: false }, () => {
       sandbox: supervisor,
       provider: new SandboxTurnProvider({
         inner: new MockProvider({ delayMs: 0, chunkSize: 64 }),
-        supervisor,
         delayMs: 0,
       }),
     });
@@ -246,10 +245,12 @@ describe("sandbox", { concurrent: false }, () => {
     const execResult = events.find(
       (event) => event.event === "tool_result" && (event.data as { name?: string }).name === "exec",
     );
-    expect(String((execResult?.data as { content?: string }).content)).toContain("exit_code: 0");
-    expect(String((execResult?.data as { content?: string }).content)).toContain(
-      "hello from the sandbox",
+    const execText = String(
+      (execResult?.data as { content?: string; output?: string }).output ??
+        (execResult?.data as { content?: string }).content,
     );
+    expect(execText).toContain("exit_code: 0");
+    expect(execText).toContain("hello from the sandbox");
 
     const computer = await GET(new Request("http://localhost/api/computer"));
     expect(computer.status).toBe(200);
@@ -282,7 +283,6 @@ describe("sandbox", { concurrent: false }, () => {
     const store = await ConversationStore.open();
     const provider = new SandboxTurnProvider({
       inner: new MockProvider({ delayMs: 0, chunkSize: 80, reply: () => "Still a mock reply" }),
-      supervisor,
       delayMs: 0,
     });
     setAppContext({ store, sandbox: supervisor, provider });

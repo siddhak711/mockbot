@@ -1,10 +1,10 @@
+import type { ToolContext } from "../tools/types";
 import { DEFAULT_AGENT_ID } from "./limits";
 import type { ComputerSupervisor } from "./supervisor";
 import type { ComputerToolName, ComputerToolResult } from "./types";
 
 /**
- * Same shape as ToolDefinition in src/tools/registry.ts.
- * After that registry lands, register each tool with `registry.register(tool)`.
+ * Same shape as ToolDefinition. registerComputerTools adds each one to the registry.
  */
 export type ComputerTool = {
   name: ComputerToolName;
@@ -18,10 +18,7 @@ export type ComputerTool = {
   exposure: "default";
   approval: "never";
   prepare: (args: Record<string, unknown>) => { args: Record<string, unknown> } | { error: string };
-  invoke: (
-    args: Record<string, unknown>,
-    context: { signal?: AbortSignal },
-  ) => Promise<ComputerToolResult>;
+  invoke: (args: Record<string, unknown>, context: ToolContext) => Promise<ComputerToolResult>;
 };
 
 export function createComputerTools(

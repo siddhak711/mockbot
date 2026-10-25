@@ -2,27 +2,37 @@
 
 import { useEffect, useState } from "react";
 import type { ComputerSnapshot, SandboxRun } from "../src/sandbox/types";
+import { formatToolPayload, type ToolActivity } from "../src/tools/display";
 
 export function ComputerPane({
+  activities = [],
+  selectedId,
+  onSelect,
   snapshot = null,
-  status = "loading",
+  status = "ready",
   onHide,
 }: {
+  activities?: ToolActivity[];
+  selectedId?: string | null;
+  onSelect?: (id: string) => void;
   snapshot?: ComputerSnapshot | null;
   status?: "loading" | "ready" | "error";
   onHide?: () => void;
 }) {
   const runs = snapshot?.runs ?? [];
   const latestId = runs[0]?.id ?? null;
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
 
   useEffect(() => {
-    setSelectedId(latestId);
+    setSelectedRunId(latestId);
   }, [latestId]);
 
-  const selected = runs.find((run) => run.id === selectedId) ?? runs[0] ?? null;
+  const selectedRun = runs.find((run) => run.id === selectedRunId) ?? runs[0] ?? null;
+  const selectedActivity =
+    activities.find((activity) => activity.id === selectedId) ?? activities[activities.length - 1];
   const provider =
     snapshot?.provider === "daytona" ? "Daytona sandbox" : snapshot ? "Mock sandbox" : "Sandbox";
+  const showEmpty = !selectedRun && !selectedActivity;
 
   return (
     <aside className="computer" aria-label="Computer">
@@ -37,12 +47,12 @@ export function ComputerPane({
           </button>
         ) : null}
       </header>
-      {status === "loading" && !snapshot ? (
+      {status === "loading" && !snapshot && activities.length === 0 ? (
         <div className="computer-empty">
           <h3>Loading computer</h3>
           <p>The sandbox inspector will show commands, output, and exit codes.</p>
         </div>
-      ) : status === "error" && !snapshot ? (
+      ) : status === "error" && !snapshot && activities.length === 0 ? (
         <div className="computer-empty">
           <h3>Computer unavailable</h3>
           <p>The sandbox inspector could not be loaded.</p>
@@ -61,15 +71,7 @@ export function ComputerPane({
               <p>No files yet.</p>
             )}
           </section>
-          {runs.length === 0 || !selected ? (
-            <div className="computer-empty">
-              <h3>Nothing has run</h3>
-              <p>
-                Ask the agent to create a file or run a command. The command, output, and exit code
-                show up here.
-              </p>
-            </div>
-          ) : (
+          {selectedRun ? (
             <>
               <div className="computer-list" role="list" aria-label="Sandbox runs">
                 {runs.map((run) => (
@@ -77,18 +79,70 @@ export function ComputerPane({
                     key={run.id}
                     type="button"
                     role="listitem"
-                    className={run.id === selected.id ? "computer-item on" : "computer-item"}
-                    aria-current={run.id === selected.id ? "true" : undefined}
-                    onClick={() => setSelectedId(run.id)}
+                    className={run.id === selectedRun.id ? "computer-item on" : "computer-item"}
+                    aria-current={run.id === selectedRun.id ? "true" : undefined}
+                    onClick={() => setSelectedRunId(run.id)}
                   >
                     <span>{runTitle(run)}</span>
                     <span className="computer-status">{exitLabel(run)}</span>
                   </button>
                 ))}
               </div>
-              <RunDetail run={selected} />
+              <RunDetail run={selectedRun} />
             </>
-          )}
+          ) : null}
+          {selectedActivity ? (
+            <>
+              <div className="computer-list" role="list" aria-label="Tool calls">
+                {activities.map((activity) => (
+                  <button
+                    key={activity.id}
+                    type="button"
+                    role="listitem"
+                    className={
+                      activity.id === selectedActivity.id ? "computer-item on" : "computer-item"
+                    }
+                    onClick={() => onSelect?.(activity.id)}
+                  >
+                    <span>{activity.title}</span>
+                    <span className="computer-status">{statusLabel(activity.state)}</span>
+                  </button>
+                ))}
+              </div>
+              <section className="computer-detail" aria-label={`${selectedActivity.title} details`}>
+                <p className="computer-kicker">{selectedActivity.name}</p>
+                <h3>{selectedActivity.title}</h3>
+                {selectedActivity.state === "approval" ? (
+                  <p className="computer-note">
+                    {selectedActivity.summary} Approve or deny it in the transcript.
+                  </p>
+                ) : null}
+                {selectedActivity.arguments ? (
+                  <>
+                    <h4>Arguments</h4>
+                    <pre>{formatToolPayload(selectedActivity.arguments)}</pre>
+                  </>
+                ) : null}
+                {selectedActivity.output ? (
+                  <>
+                    <h4>{selectedActivity.state === "error" ? "Error" : "Result"}</h4>
+                    <pre>{selectedActivity.output}</pre>
+                  </>
+                ) : selectedActivity.state === "running" ? (
+                  <p className="computer-note">Running…</p>
+                ) : null}
+              </section>
+            </>
+          ) : null}
+          {showEmpty ? (
+            <div className="computer-empty">
+              <h3>Nothing has run</h3>
+              <p>
+                Ask the agent to create a file or run a command. The command, output, and exit code
+                show up here.
+              </p>
+            </div>
+          ) : null}
         </div>
       )}
     </aside>
@@ -100,7 +154,7 @@ function RunDetail({ run }: { run: SandboxRun }) {
   const output = run.stdout || run.stderr || "(no output)";
   return (
     <section
-      className="computer-detail"
+      className="computer-detail sandbox-run"
       aria-label={`${command} details`}
       data-command={command}
       data-exit-code={exitLabel(run)}
@@ -145,4 +199,12 @@ function exitLabel(run: SandboxRun): string {
   if (run.timedOut) return "killed";
   if (run.exitCode == null) return "failed";
   return String(run.exitCode);
+}
+
+function statusLabel(state: ToolActivity["state"]): string {
+  if (state === "running") return "Running";
+  if (state === "approval") return "Needs approval";
+  if (state === "denied") return "Denied";
+  if (state === "error") return "Failed";
+  return "Done";
 }

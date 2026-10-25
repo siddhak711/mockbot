@@ -1,19 +1,45 @@
 import { selectProvider, type LlmProvider } from "./llm";
 import { openComputer } from "./sandbox/open";
 import type { ComputerSupervisor } from "./sandbox/supervisor";
+import { createComputerTools } from "./sandbox/tools";
 import { SandboxTurnProvider } from "./sandbox/turn";
 import { ConversationStore } from "./store";
+import { ApprovalGate } from "./tools/approval";
+import { createDefaultTools } from "./tools/builtins";
+import type { ToolRegistry } from "./tools/registry";
 
 export type AppContext = {
   store: ConversationStore;
   provider: LlmProvider;
+  tools: ToolRegistry;
+  approvals: ApprovalGate;
   sandbox?: ComputerSupervisor;
 };
 
 let current: AppContext | undefined;
 
-export function setAppContext(context: AppContext): void {
-  current = context;
+export function registerComputerTools(registry: ToolRegistry, sandbox: ComputerSupervisor): void {
+  for (const tool of createComputerTools(sandbox)) {
+    if (!registry.get(tool.name)) registry.register(tool);
+  }
+}
+
+export function setAppContext(context: {
+  store: ConversationStore;
+  provider: LlmProvider;
+  tools?: ToolRegistry;
+  approvals?: ApprovalGate;
+  sandbox?: ComputerSupervisor;
+}): void {
+  const tools = context.tools ?? createDefaultTools({});
+  if (context.sandbox) registerComputerTools(tools, context.sandbox);
+  current = {
+    store: context.store,
+    provider: context.provider,
+    tools,
+    approvals: context.approvals ?? new ApprovalGate(),
+    sandbox: context.sandbox,
+  };
 }
 
 export async function resetAppContext(): Promise<void> {
@@ -37,13 +63,16 @@ export async function getAppContext(): Promise<AppContext> {
     const store = await ConversationStore.open(dataDir);
     try {
       const sandbox = await openComputer({ env: process.env });
+      const tools = createDefaultTools(process.env);
+      registerComputerTools(tools, sandbox);
       const inner = selectProvider(process.env);
       current = {
         store,
         sandbox,
+        tools,
+        approvals: new ApprovalGate(),
         provider: new SandboxTurnProvider({
           inner,
-          supervisor: sandbox,
           delayMs: inner.id === "mock" ? streamDelay(process.env) : 0,
         }),
       };
