@@ -114,6 +114,35 @@ npm run dev
 
 `DAYTONA_API_URL` defaults to the SDK's Daytona cloud URL. `DAYTONA_TARGET` is the region, when you set one. Computer records and the mock workspace are stored in embedded Postgres under `.data/sandbox`.
 
+## Routines
+
+A routine is a saved prompt. Cron routines run on a UTC schedule. Event routines run once each time an event with the same name is inserted. The scheduler is a long-lived worker that claims due rows from Postgres. It is not a serverless cron.
+
+`npm run dev` starts that worker in the same process. Embedded Postgres is single-connection, so the dev worker shares the Next.js process and the `.data/pglite` database. Open [http://localhost:3000/routines](http://localhost:3000/routines) to create a routine, read its next run time, pause it, and inspect runs. A finished run appends the prompt and the reply to a conversation.
+
+Cron expressions are five fields, `minute hour day month weekday`, evaluated in UTC. `0 9 * * 1` means Monday at 09:00 UTC. Names such as `MON` are not accepted. When both the day-of-month and weekday are restricted, the routine runs when either field matches.
+
+Run the worker as its own process beside the app:
+
+```bash
+ROUTINES_WORKER=off npm run start
+npm run routines
+```
+
+`npm run routines` polls until it receives SIGINT or SIGTERM. `ROUTINE_POLL_MS` defaults to 1000. `ROUTINE_WORKER_ID` sets the id stored on a claimed run. Use `ROUTINES_WORKER=off` so the app process does not start a second loop. Two processes can share a Postgres server. They cannot share one embedded PGlite directory, so local development uses the in-process worker.
+
+A failed run is stored as failed with the error. The worker does not claim that row again. The next cron occurrence is a new run.
+
+Insert a named event while the app is running:
+
+```bash
+curl -s -X POST http://localhost:3000/api/routines/events \
+  -H 'content-type: application/json' \
+  -d '{"name":"deploy.finished","payload":"optional"}'
+```
+
+The same form is on the Routines page.
+
 ## API
 
 - `POST /api/chat` with `{ "message": "...", "conversationId": "optional" }` streams server-sent events:
@@ -144,6 +173,10 @@ npm run dev
 - `GET /api/agents` lists agents and their grants.
 - `POST /api/agents` with `{ "name", "instructions", "memoryNote?", "computerId?", "connectorId?" }` creates an agent. Optional ids are grants for a computer or a connector.
 - `POST /api/chat` accepts an optional `agentId` when starting a conversation. On a Mockbot conversation, a message that begins `delegate to <name>: <task>` makes the mock provider call the `delegate` tool. The tool opens a child conversation for that agent and returns the result on the parent turn. Delegating to Mockbot is refused. Other agents do not get the delegate tool.
+- `GET /api/routines` lists routines and their latest runs.
+- `POST /api/routines` with `{ "name", "prompt", "cron" }` or `{ "name", "prompt", "eventName" }` creates one. A cron routine includes `nextRunAt`.
+- `PATCH /api/routines/:id` with `{ "status": "paused" }` or `{ "status": "active" }` pauses or resumes it.
+- `POST /api/routines/events` with `{ "name", "payload": "optional" }` stores an event and schedules one run for each active routine listening for that name.
 
 ## Checks
 
