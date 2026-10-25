@@ -13,7 +13,11 @@ suite("neon durable memory", () => {
     });
     try {
       expect(store.driver).toBe("neon");
-      expect(await store.migrationIds()).toEqual(["001_conversations", "002_memory"]);
+      expect(await store.migrationIds()).toEqual([
+        "001_conversations",
+        "002_memory",
+        "003_tool_trace",
+      ]);
       const written = await store.memories.write({
         agentId,
         key: "city",

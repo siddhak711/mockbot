@@ -66,4 +66,25 @@ CREATE TABLE IF NOT EXISTS conversation_summaries (
 );
 `,
   },
+  {
+    id: "003_tool_trace",
+    sql: `
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS trace JSONB;
+
+CREATE TABLE IF NOT EXISTS tool_calls (
+  seq BIGSERIAL PRIMARY KEY,
+  id TEXT NOT NULL UNIQUE,
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  arguments TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL CHECK (status IN ('running', 'approval', 'done', 'denied', 'error')),
+  output TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS tool_calls_message_idx ON tool_calls (message_id, seq);
+`,
+  },
 ];

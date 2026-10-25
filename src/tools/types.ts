@@ -22,9 +22,18 @@ export type ToolResult = {
   blocked?: ToolBlockReason;
 };
 
+export type MemoryToolDeps = {
+  agentId: string;
+  conversationId: string;
+  sourceMessageId: string | null;
+  userMessages: string[];
+  toolOutputs: string[];
+};
+
 export type ToolContext = {
   signal?: AbortSignal;
   promote?: (names: string[]) => void;
+  memory?: MemoryToolDeps;
 };
 
 export type PreparedArgs = { args: Record<string, unknown> } | { error: string };
@@ -39,10 +48,4 @@ export type ToolDefinition = {
   invoke: (args: Record<string, unknown>, context: ToolContext) => Promise<ToolResult>;
 };
 
-export type MemoryToolDeps = {
-  agentId: string;
-  conversationId: string;
-  sourceMessageId: string | null;
-  userMessages: string[];
-  toolOutputs: string[];
-};
+export type FetchLike = typeof fetch;

@@ -3,17 +3,15 @@ import { compactIfNeeded } from "./memory/compact";
 import { buildSystemPrompt } from "./memory/prompt";
 import { contextTokenLimit, SEARCH_TOP_K } from "./memory/tokens";
 import type { ConversationStore } from "./store";
-import { createMemoryTools } from "./tools/memory";
-import { ToolRegistry } from "./tools/registry";
-import type { MemoryToolDeps, ToolDefinition } from "./tools/types";
-import type { LlmMessage } from "./types";
+import type { MemoryToolDeps } from "./tools/types";
+import type { LlmMessage, Message } from "./types";
 
 export async function buildModelInput(options: {
   store: ConversationStore;
   conversationId: string;
   agentId?: string;
   contextTokens?: number;
-}): Promise<{ messages: LlmMessage[]; tools: ToolDefinition[]; deps: MemoryToolDeps } | null> {
+}): Promise<{ messages: LlmMessage[]; deps: MemoryToolDeps } | null> {
   const agentId = options.agentId ?? DEFAULT_AGENT_ID;
   const contextTokens = options.contextTokens ?? contextTokenLimit(process.env);
   await compactIfNeeded(options.store, options.conversationId, agentId, contextTokens);
@@ -37,10 +35,11 @@ export async function buildModelInput(options: {
   }
   const messages: LlmMessage[] = [
     { role: "system", content: buildSystemPrompt({ profiles, facts, summary }) },
-    ...promptMessages
-      .filter((message) => message.content.length > 0)
-      .map((message) => ({ role: message.role, content: message.content })),
   ];
+  for (const message of promptMessages) {
+    const rendered = renderTurnMessage(message);
+    if (rendered) messages.push(rendered);
+  }
   const deps: MemoryToolDeps = {
     agentId,
     conversationId: options.conversationId,
@@ -50,7 +49,23 @@ export async function buildModelInput(options: {
       .map((message) => message.content),
     toolOutputs: [],
   };
-  const registry = new ToolRegistry();
-  for (const tool of createMemoryTools(options.store, deps)) registry.register(tool);
-  return { messages, tools: registry.exposed(), deps };
+  return { messages, deps };
+}
+
+function renderTurnMessage(message: Message): LlmMessage | null {
+  if (message.role === "user") {
+    if (message.content.length === 0) return null;
+    return { role: "user", content: message.content };
+  }
+  const activity = (message.tools ?? [])
+    .map((tool) => {
+      const output = tool.output ? tool.output.slice(0, 500) : tool.status;
+      return `${tool.name} (${tool.status}): ${output}`;
+    })
+    .join("\n");
+  const content = [message.content.trim(), activity ? `Previous tool activity:\n${activity}` : ""]
+    .filter(Boolean)
+    .join("\n\n");
+  if (!content) return null;
+  return { role: "assistant", content };
 }

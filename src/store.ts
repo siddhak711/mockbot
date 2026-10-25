@@ -4,7 +4,16 @@ import { openDatabase, type ProcessEnv } from "./db/open";
 import { openPglite } from "./db/pglite";
 import type { Sql, SqlDriver } from "./db/sql";
 import { MemoryRepository } from "./memory/repository";
-import type { Conversation, ConversationSummary, Message, Role } from "./types";
+import { parseTrace } from "./trace";
+import type {
+  Conversation,
+  ConversationSummary,
+  Message,
+  MessageTrace,
+  Role,
+  StoredToolCall,
+  ToolCallStatus,
+} from "./types";
 
 type ConversationRow = {
   id: string;
@@ -18,6 +27,18 @@ type MessageRow = {
   conversation_id: string;
   role: Role;
   content: string;
+  created_at: Date | string;
+  trace: unknown;
+};
+
+type ToolCallRow = {
+  id: string;
+  conversation_id: string;
+  message_id: string;
+  name: string;
+  arguments: string;
+  status: ToolCallStatus;
+  output: string | null;
   created_at: Date | string;
 };
 
@@ -49,7 +70,25 @@ function mapMessage(row: MessageRow): Message {
     role: row.role,
     content: row.content,
     createdAt: asIso(row.created_at),
+    trace: parseTrace(row.trace),
   };
+}
+
+function mapToolCall(row: ToolCallRow): StoredToolCall {
+  return {
+    id: row.id,
+    conversationId: row.conversation_id,
+    messageId: row.message_id,
+    name: row.name,
+    arguments: row.arguments,
+    status: row.status,
+    output: row.output,
+    createdAt: asIso(row.created_at),
+  };
+}
+
+function traceParam(trace: MessageTrace | null): string | null {
+  return trace ? JSON.stringify(trace) : null;
 }
 
 export function titleFromMessage(message: string): string {
@@ -133,13 +172,27 @@ export class ConversationStore {
     const conversation = conversations.rows[0];
     if (!conversation) return null;
     const messages = await this.db.query<MessageRow>(
-      `SELECT id, conversation_id, role, content, created_at
+      `SELECT id, conversation_id, role, content, trace, created_at
        FROM messages
        WHERE conversation_id = $1
        ORDER BY seq ASC`,
       [id],
     );
-    return { conversation: mapConversation(conversation), messages: messages.rows.map(mapMessage) };
+    const toolCalls = await this.db.query<ToolCallRow>(
+      `SELECT id, conversation_id, message_id, name, arguments, status, output, created_at
+       FROM tool_calls
+       WHERE conversation_id = $1
+       ORDER BY seq ASC`,
+      [id],
+    );
+    const tools = toolCalls.rows.map(mapToolCall);
+    return {
+      conversation: mapConversation(conversation),
+      messages: messages.rows.map((row) => ({
+        ...mapMessage(row),
+        tools: tools.filter((tool) => tool.messageId === row.id),
+      })),
+    };
   }
 
   async renameConversation(
@@ -170,6 +223,7 @@ export class ConversationStore {
     conversationId: string,
     role: Role,
     content: string,
+    trace: MessageTrace | null = null,
     agentId = DEFAULT_AGENT_ID,
   ): Promise<Message> {
     const owned = await this.db.query<{ id: string }>(
@@ -179,10 +233,10 @@ export class ConversationStore {
     if (!owned.rows[0]) throw new Error("Conversation not found");
     const id = crypto.randomUUID();
     const inserted = await this.db.query<MessageRow>(
-      `INSERT INTO messages (id, conversation_id, role, content)
-       VALUES ($1, $2, $3, $4)
-       RETURNING id, conversation_id, role, content, created_at`,
-      [id, conversationId, role, content],
+      `INSERT INTO messages (id, conversation_id, role, content, trace)
+       VALUES ($1, $2, $3, $4, $5::jsonb)
+       RETURNING id, conversation_id, role, content, trace, created_at`,
+      [id, conversationId, role, content, traceParam(trace)],
     );
     await this.db.query(
       `UPDATE conversations SET updated_at = NOW() WHERE id = $1 AND agent_id = $2`,
@@ -193,17 +247,47 @@ export class ConversationStore {
     return mapMessage(row);
   }
 
-  async updateMessageContent(
+  async updateMessage(
     id: string,
     content: string,
+    trace: MessageTrace | null,
     agentId = DEFAULT_AGENT_ID,
   ): Promise<void> {
     await this.db.query(
       `UPDATE messages
-       SET content = $2
+       SET content = $2, trace = $3::jsonb
        WHERE id = $1
-         AND conversation_id IN (SELECT id FROM conversations WHERE agent_id = $3)`,
-      [id, content, agentId],
+         AND conversation_id IN (SELECT id FROM conversations WHERE agent_id = $4)`,
+      [id, content, traceParam(trace), agentId],
+    );
+  }
+
+  async saveToolCall(input: {
+    id: string;
+    conversationId: string;
+    messageId: string;
+    name: string;
+    arguments: string;
+    status: ToolCallStatus;
+    output: string | null;
+  }): Promise<void> {
+    await this.db.query(
+      `INSERT INTO tool_calls (id, conversation_id, message_id, name, arguments, status, output)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (id) DO UPDATE SET
+         arguments = EXCLUDED.arguments,
+         status = EXCLUDED.status,
+         output = EXCLUDED.output,
+         updated_at = NOW()`,
+      [
+        input.id,
+        input.conversationId,
+        input.messageId,
+        input.name,
+        input.arguments,
+        input.status,
+        input.output,
+      ],
     );
   }
 

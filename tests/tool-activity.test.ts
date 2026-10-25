@@ -51,16 +51,21 @@ it("saves a memory whose key and text contain secret without labeling it blocked
   const store = await ConversationStore.open();
   openStores.push(store);
   const text = "the secret project is named aurora and is not stored in the other notebook";
-  const tools = createMemoryTools(store, {
-    agentId: DEFAULT_AGENT_ID,
-    conversationId: "conversation",
-    sourceMessageId: null,
-    userMessages: [`Remember that ${text}`],
-    toolOutputs: [],
-  });
+  const tools = createMemoryTools(store);
   const write = tools.find((tool) => tool.name === "memory_write");
   if (!write) throw new Error("memory_write is missing");
-  const saved = await write.invoke({ key: "secret project", text, kind: "fact" }, {});
+  const saved = await write.invoke(
+    { key: "secret project", text, kind: "fact" },
+    {
+      memory: {
+        agentId: DEFAULT_AGENT_ID,
+        conversationId: "conversation",
+        sourceMessageId: null,
+        userMessages: [`Remember that ${text}`],
+        toolOutputs: [],
+      },
+    },
+  );
   expect(saved.isError).toBeUndefined();
   expect(saved.blocked).toBeUndefined();
   expect(saved.content).toContain("secret project");

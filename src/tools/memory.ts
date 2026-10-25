@@ -3,21 +3,26 @@ import { saveMemory, type SaveResult } from "../memory/save";
 import { SEARCH_TOKEN_BUDGET, SEARCH_TOP_K, trimToTokens } from "../memory/tokens";
 import { memoryLine } from "../memory/prompt";
 import type { MemoryKind } from "../types";
-import type { MemoryToolDeps, ToolDefinition, ToolResult } from "./types";
+import type { MemoryToolDeps, ToolContext, ToolDefinition, ToolResult } from "./types";
 
-export function createMemoryTools(
-  store: ConversationStore,
-  deps: MemoryToolDeps,
-): ToolDefinition[] {
+export function createMemoryTools(store: ConversationStore): ToolDefinition[] {
   return [
-    memoryWriteTool(store, deps),
-    memoryUpdateTool(store, deps),
-    memoryDeleteTool(store, deps),
-    memorySearchTool(store, deps),
+    memoryWriteTool(store),
+    memoryUpdateTool(store),
+    memoryDeleteTool(store),
+    memorySearchTool(store),
   ];
 }
 
-function memoryWriteTool(store: ConversationStore, deps: MemoryToolDeps): ToolDefinition {
+function turnDeps(context: ToolContext): MemoryToolDeps | null {
+  return context.memory ?? null;
+}
+
+function missingTurn(): ToolResult {
+  return { content: "Memory tools are not available for this turn.", isError: true };
+}
+
+function memoryWriteTool(store: ConversationStore): ToolDefinition {
   return {
     name: "memory_write",
     description:
@@ -35,7 +40,9 @@ function memoryWriteTool(store: ConversationStore, deps: MemoryToolDeps): ToolDe
       additionalProperties: false,
     },
     prepare: prepareKeyText,
-    async invoke(args) {
+    async invoke(args, context) {
+      const deps = turnDeps(context);
+      if (!deps) return missingTurn();
       const saved = await saveMemory(store.memories, {
         agentId: deps.agentId,
         key: String(args.key),
@@ -59,7 +66,7 @@ function memoryWriteTool(store: ConversationStore, deps: MemoryToolDeps): ToolDe
   };
 }
 
-function memoryUpdateTool(store: ConversationStore, deps: MemoryToolDeps): ToolDefinition {
+function memoryUpdateTool(store: ConversationStore): ToolDefinition {
   return {
     name: "memory_update",
     description:
@@ -77,7 +84,9 @@ function memoryUpdateTool(store: ConversationStore, deps: MemoryToolDeps): ToolD
       additionalProperties: false,
     },
     prepare: prepareKeyText,
-    async invoke(args) {
+    async invoke(args, context) {
+      const deps = turnDeps(context);
+      if (!deps) return missingTurn();
       const saved = await saveMemory(store.memories, {
         agentId: deps.agentId,
         key: String(args.key),
@@ -98,12 +107,12 @@ function memoryUpdateTool(store: ConversationStore, deps: MemoryToolDeps): ToolD
   };
 }
 
-function memoryDeleteTool(store: ConversationStore, deps: MemoryToolDeps): ToolDefinition {
+function memoryDeleteTool(store: ConversationStore): ToolDefinition {
   return {
     name: "memory_delete",
     description: "Soft-delete a memory by key so it is no longer retrieved.",
     exposure: "pinned",
-    approval: "never",
+    approval: "always",
     inputSchema: {
       type: "object",
       properties: {
@@ -117,7 +126,9 @@ function memoryDeleteTool(store: ConversationStore, deps: MemoryToolDeps): ToolD
       if (!key) return { error: "memory_delete requires a key." };
       return { args: { key } };
     },
-    async invoke(args) {
+    async invoke(args, context) {
+      const deps = turnDeps(context);
+      if (!deps) return missingTurn();
       const deleted = await store.memories.softDeleteByKey(deps.agentId, String(args.key));
       if (!deleted) {
         return {
@@ -132,10 +143,11 @@ function memoryDeleteTool(store: ConversationStore, deps: MemoryToolDeps): ToolD
   };
 }
 
-function memorySearchTool(store: ConversationStore, deps: MemoryToolDeps): ToolDefinition {
+function memorySearchTool(store: ConversationStore): ToolDefinition {
   return {
     name: "memory_search",
-    description: "Search this agent's live memories by full text. Returns the top matches.",
+    description:
+      "Search this agent's live memories by full text. Read-only, so it runs without approval.",
     exposure: "pinned",
     approval: "never",
     inputSchema: {
@@ -156,7 +168,9 @@ function memorySearchTool(store: ConversationStore, deps: MemoryToolDeps): ToolD
           : SEARCH_TOP_K;
       return { args: { query, limit } };
     },
-    async invoke(args) {
+    async invoke(args, context) {
+      const deps = turnDeps(context);
+      if (!deps) return missingTurn();
       const query = String(args.query ?? "");
       const limit = typeof args.limit === "number" ? args.limit : SEARCH_TOP_K;
       const matches = await store.memories.search({

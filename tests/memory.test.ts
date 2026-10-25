@@ -100,18 +100,20 @@ it("blocks a planted API key and does not log the secret", async () => {
     warnings.push(String(message));
   });
   try {
-    const tools = createMemoryTools(store, {
-      agentId: DEFAULT_AGENT_ID,
-      conversationId: "conversation",
-      sourceMessageId: null,
-      userMessages: [`Remember that my API key is ${secret}`],
-      toolOutputs: [],
-    });
+    const tools = createMemoryTools(store);
     const write = tools.find((tool) => tool.name === "memory_write");
     const prepared = write?.prepare?.({ key: "api key", text: `my API key is ${secret}` });
     expect(prepared && "args" in prepared).toBe(true);
     if (!prepared || !("args" in prepared) || !write) throw new Error("expected prepared args");
-    const result = await write.invoke(prepared.args, {});
+    const result = await write.invoke(prepared.args, {
+      memory: {
+        agentId: DEFAULT_AGENT_ID,
+        conversationId: "conversation",
+        sourceMessageId: null,
+        userMessages: [`Remember that my API key is ${secret}`],
+        toolOutputs: [],
+      },
+    });
     expect(result.isError).toBe(true);
     expect(result.content).toMatch(/not stored/i);
     expect(result.content).not.toContain(secret);
@@ -125,13 +127,16 @@ it("blocks a planted API key and does not log the secret", async () => {
 
 it("rejects tool output and accepts a fact the user stated", async () => {
   const store = await openStore();
-  const tools = createMemoryTools(store, {
-    agentId: DEFAULT_AGENT_ID,
-    conversationId: "conversation",
-    sourceMessageId: "message-1",
-    userMessages: ["Please look up Paris", "Remember that my favorite color is blue"],
-    toolOutputs: ["Paris population is 2100000 according to the fetched page"],
-  });
+  const tools = createMemoryTools(store);
+  const turn = {
+    memory: {
+      agentId: DEFAULT_AGENT_ID,
+      conversationId: "conversation",
+      sourceMessageId: "message-1",
+      userMessages: ["Please look up Paris", "Remember that my favorite color is blue"],
+      toolOutputs: ["Paris population is 2100000 according to the fetched page"],
+    },
+  };
   const write = tools.find((tool) => tool.name === "memory_write");
   if (!write?.prepare) throw new Error("missing memory_write");
   const copied = write.prepare({
@@ -140,7 +145,7 @@ it("rejects tool output and accepts a fact the user stated", async () => {
     kind: "fact",
   });
   if (!("args" in copied)) throw new Error(copied.error);
-  const rejected = await write.invoke(copied.args, {});
+  const rejected = await write.invoke(copied.args, turn);
   expect(rejected.isError).toBe(true);
 
   const stated = write.prepare({
@@ -149,7 +154,7 @@ it("rejects tool output and accepts a fact the user stated", async () => {
     kind: "profile",
   });
   if (!("args" in stated)) throw new Error(stated.error);
-  const saved = await write.invoke(stated.args, {});
+  const saved = await write.invoke(stated.args, turn);
   expect(saved.isError).toBeUndefined();
   const live = await store.memories.listLive(DEFAULT_AGENT_ID);
   expect(live.map((memory) => memory.content)).toEqual(["my favorite color is blue"]);
@@ -227,12 +232,20 @@ it("applies migrations once and refuses embedded postgres in production", async 
   const dir = await mkdtemp(join(tmpdir(), "mockbot-memory-"));
   try {
     const first = await ConversationStore.open(dir);
-    expect(await first.migrationIds()).toEqual(["001_conversations", "002_memory"]);
+    expect(await first.migrationIds()).toEqual([
+      "001_conversations",
+      "002_memory",
+      "003_tool_trace",
+    ]);
     expect(first.driver).toBe("pglite");
     await first.close();
     const second = await ConversationStore.open(dir);
     openStores.push(second);
-    expect(await second.migrationIds()).toEqual(["001_conversations", "002_memory"]);
+    expect(await second.migrationIds()).toEqual([
+      "001_conversations",
+      "002_memory",
+      "003_tool_trace",
+    ]);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

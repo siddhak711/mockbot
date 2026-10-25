@@ -2,10 +2,10 @@ import { afterEach, expect, it, vi } from "vitest";
 import { POST } from "../app/api/chat/route";
 import { DEFAULT_AGENT_ID } from "../src/agent";
 import { resetAppContext, setAppContext } from "../src/context";
-import { MockProvider, type LlmProvider, type ProviderEvent } from "../src/llm";
+import { MockProvider, type LlmProvider } from "../src/llm";
 import { sectionText } from "../src/memory/prompt";
 import { ConversationStore } from "../src/store";
-import type { LlmMessage } from "../src/types";
+import type { LlmMessage, LlmStreamEvent } from "../src/types";
 import { deltas, readSse } from "./helpers";
 
 afterEach(async () => {
@@ -128,20 +128,20 @@ it("stops the tool loop at the step cap", async () => {
   const provider: LlmProvider = {
     id: "mock",
     model: null,
-    async *stream() {
-      yield* [] as string[];
-    },
-    async *streamEvents(): AsyncIterable<ProviderEvent> {
+    async *stream(): AsyncIterable<LlmStreamEvent> {
       yield {
         type: "tool_call",
+        index: 0,
         id: `call_${crypto.randomUUID()}`,
         name: "memory_search",
-        argumentsDelta: JSON.stringify({ query: "zzzz-no-such-memory" }),
+        arguments: JSON.stringify({ query: "zzzz-no-such-memory" }),
       };
+      yield { type: "end", finishReason: "tool_calls" };
     },
   };
   setAppContext({ store, provider });
   const events = await readSse(await post("Search forever"));
   expect(events.at(-1)?.event).toBe("done");
-  expect(deltas(events)).toContain("tool step limit");
+  expect(events.filter((event) => event.event === "tool_start").length).toBeGreaterThan(0);
+  expect(events.filter((event) => event.event === "tool_start").length).toBeLessThanOrEqual(8);
 });

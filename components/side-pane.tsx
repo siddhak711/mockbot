@@ -2,6 +2,7 @@
 
 import { ComputerPane } from "./computer-pane";
 import { MemoryPanel } from "./memory-panel";
+import type { ToolActivity } from "../src/tools/display";
 import type { Memory } from "../src/types";
 
 export function SidePane({
@@ -11,6 +12,9 @@ export function SidePane({
   memories,
   memoryError,
   onMemoriesChanged,
+  activities = [],
+  selectedId,
+  onSelect,
 }: {
   tab: "computer" | "memory";
   onTab: (tab: "computer" | "memory") => void;
@@ -18,6 +22,9 @@ export function SidePane({
   memories: Memory[] | null;
   memoryError: string | null;
   onMemoriesChanged: () => Promise<void>;
+  activities?: ToolActivity[];
+  selectedId?: string | null;
+  onSelect?: (id: string) => void;
 }) {
   return (
     <aside className="computer" aria-label={tab === "memory" ? "Memory" : "Computer"}>
@@ -51,7 +58,12 @@ export function SidePane({
       {tab === "memory" ? (
         <MemoryPanel memories={memories} error={memoryError} onChanged={onMemoriesChanged} />
       ) : (
-        <ComputerPane embedded />
+        <ComputerPane
+          embedded
+          activities={activities}
+          selectedId={selectedId}
+          onSelect={onSelect}
+        />
       )}
     </aside>
   );
