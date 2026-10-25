@@ -331,6 +331,128 @@ it("keeps one conversation when two runs create one together", async () => {
   expect(await routines.setConversation(routine.id, later.id, now)).toBe(saved?.conversationId);
 });
 
+it("keeps an in-flight prompt when another run shares the conversation", async () => {
+  const { store, routines } = await open();
+  const now = new Date("2026-10-25T21:00:00.000Z");
+  const routine = await routines.create({
+    name: "Shared",
+    prompt: "Note it",
+    eventName: "shipped",
+    now,
+  });
+  await routines.recordEvent({ name: "shipped", payload: "one", now });
+  await routines.recordEvent({ name: "shipped", payload: "two", now });
+
+  const seen: LlmMessage[][] = [];
+  let calls = 0;
+  let release: () => void = () => {};
+  const hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let entered: () => void = () => {};
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const provider: LlmProvider = {
+    id: "mock",
+    model: null,
+    async *stream(messages: LlmMessage[]): AsyncIterable<LlmStreamEvent> {
+      seen.push(messages.map((message) => ({ ...message })));
+      calls += 1;
+      if (calls === 1) {
+        entered();
+        await hold;
+      }
+      yield { type: "text", text: "noted" };
+      yield { type: "end", finishReason: "stop" };
+    },
+  };
+  const clock = new FakeClock(now);
+  const first = tick({ routines, store, provider, clock, workerId: "worker-a" });
+  await started;
+  const second = tick({ routines, store, provider, clock, workerId: "worker-b" });
+  for (let turn = 0; turn < 20; turn += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  expect(seen).toHaveLength(1);
+  const livePrompt = seen[0]?.find((message) => message.role === "user")?.content;
+  expect(livePrompt).toBeTruthy();
+  release();
+  const [leader, follower] = await Promise.all([first, second]);
+  expect(leader.succeeded + follower.succeeded).toBe(2);
+  const secondUsers = seen[1]
+    ?.filter((message) => message.role === "user")
+    .map((message) => message.content);
+  expect(secondUsers?.[0]).toBe(livePrompt);
+  expect(secondUsers?.[1]).toMatch(/Event shipped:/);
+  expect(secondUsers?.[1]).not.toBe(livePrompt);
+  expect(
+    seen[1]?.some((message) => message.role === "assistant" && message.content === "noted"),
+  ).toBe(true);
+  expect((await routines.get(routine.id))?.conversationId).toBeTruthy();
+});
+
+it("does not skip a cron slot when a later enqueue saw the same due row", async () => {
+  const { store, routines } = await open();
+  const routine = await routines.create({
+    name: "Hourly",
+    prompt: "Ping",
+    cron: "* * * * *",
+    now: new Date("2026-10-25T21:00:00.000Z"),
+  });
+  expect(routine.nextRunAt).toBe("2026-10-25T21:01:00.000Z");
+  const early = new Date("2026-10-25T21:01:10.000Z");
+  const later = new Date("2026-10-25T21:02:10.000Z");
+  const db = store.connection;
+  const original = db.query.bind(db);
+  let releaseEarly: () => void = () => {};
+  const earlyGo = new Promise<void>((resolve) => {
+    releaseEarly = resolve;
+  });
+  let earlySelected: () => void = () => {};
+  const earlyReady = new Promise<void>((resolve) => {
+    earlySelected = resolve;
+  });
+  let releaseLate: () => void = () => {};
+  const lateGo = new Promise<void>((resolve) => {
+    releaseLate = resolve;
+  });
+  let lateSelected: () => void = () => {};
+  const lateReady = new Promise<void>((resolve) => {
+    lateSelected = resolve;
+  });
+  db.query = (async (sql: string, params?: unknown[]) => {
+    const result = await original(sql, params);
+    if (sql.includes("ORDER BY next_run_at, id")) {
+      const at = params?.[0] instanceof Date ? params[0] : new Date(String(params?.[0]));
+      if (at.getTime() === early.getTime()) {
+        earlySelected();
+        await earlyGo;
+      } else if (at.getTime() === later.getTime()) {
+        lateSelected();
+        await lateGo;
+      }
+    }
+    return result;
+  }) as typeof db.query;
+
+  const earlyEnqueue = routines.enqueueDue(early);
+  await earlyReady;
+  const lateEnqueue = routines.enqueueDue(later);
+  await lateReady;
+  releaseEarly();
+  expect(await earlyEnqueue).toBe(1);
+  releaseLate();
+  expect(await lateEnqueue).toBe(1);
+  const saved = await routines.get(routine.id);
+  const runs = await routines.listRuns(routine.id);
+  expect(runs.map((run) => run.scheduledFor).sort()).toEqual([
+    "2026-10-25T21:01:00.000Z",
+    "2026-10-25T21:02:00.000Z",
+  ]);
+  expect(saved?.nextRunAt).toBe("2026-10-25T21:03:00.000Z");
+});
+
 it("lets only one of two workers complete a run", async () => {
   const { store, routines } = await open();
   const clock = new FakeClock(new Date("2026-10-25T21:00:00.000Z"));

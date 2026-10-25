@@ -289,11 +289,24 @@ export class RoutineStore {
     );
     let created = 0;
     for (const routine of due) {
-      if (!routine.cron || !routine.next_run_at) continue;
-      const scheduledFor = new Date(routine.next_run_at);
-      const next = nextCron(routine.cron, now);
       const runId = crypto.randomUUID();
       const inserted = await this.db.transaction(async (tx) => {
+        const locked = await query<Pick<RoutineRow, "id" | "cron" | "next_run_at">>(
+          tx,
+          `SELECT id, cron, next_run_at
+           FROM routines
+           WHERE id = $1
+             AND status = 'active'
+             AND trigger_kind = 'cron'
+             AND next_run_at IS NOT NULL
+             AND next_run_at <= $2
+           FOR UPDATE SKIP LOCKED`,
+          [routine.id, now],
+        );
+        const row = locked[0];
+        if (!row?.cron || !row.next_run_at) return false;
+        const scheduledFor = new Date(row.next_run_at);
+        const next = nextCron(row.cron, now);
         const rows = await query<{ id: string }>(
           tx,
           `INSERT INTO routine_runs (
@@ -301,13 +314,13 @@ export class RoutineStore {
            ) VALUES ($1, $2, 'pending', 'cron', $3, $4)
            ON CONFLICT (routine_id, scheduled_for) WHERE source = 'cron' DO NOTHING
            RETURNING id`,
-          [runId, routine.id, scheduledFor, now],
+          [runId, row.id, scheduledFor, now],
         );
         await tx.query(
           `UPDATE routines
            SET next_run_at = $2, updated_at = $3
-           WHERE id = $1 AND next_run_at <= $3`,
-          [routine.id, next, now],
+           WHERE id = $1 AND next_run_at = $4`,
+          [row.id, next, now, scheduledFor],
         );
         return rows.length > 0;
       });

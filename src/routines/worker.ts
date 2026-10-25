@@ -34,6 +34,29 @@ async function recordFailure(
   return saved.id;
 }
 
+const conversationTurn = new Map<string, Promise<void>>();
+
+/** One routine turn at a time per conversation, so an in-flight prompt is not dropped. */
+async function withConversation<T>(conversationId: string, task: () => Promise<T>): Promise<T> {
+  const previous = conversationTurn.get(conversationId) ?? Promise.resolve();
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = previous.then(
+    () => gate,
+    () => gate,
+  );
+  conversationTurn.set(conversationId, tail);
+  await previous.catch(() => undefined);
+  try {
+    return await task();
+  } finally {
+    release();
+    if (conversationTurn.get(conversationId) === tail) conversationTurn.delete(conversationId);
+  }
+}
+
 async function ensureConversation(
   store: ConversationStore,
   routines: RoutineStore,
@@ -78,36 +101,49 @@ export async function tick(options: {
         conversationId,
         now,
       );
-      const event = job.run.eventId ? await options.routines.getEvent(job.run.eventId) : null;
-      const turn = await runRoutineTurn({
-        store: options.store,
-        provider: options.provider,
-        conversationId,
-        prompt: promptForRun(job.routine.prompt, event),
+      const activeConversation = conversationId;
+      await withConversation(activeConversation, async () => {
+        try {
+          const event = job.run.eventId ? await options.routines.getEvent(job.run.eventId) : null;
+          const turn = await runRoutineTurn({
+            store: options.store,
+            provider: options.provider,
+            conversationId: activeConversation,
+            prompt: promptForRun(job.routine.prompt, event),
+          });
+          const saved = await options.routines.finishRun(job.run.id, options.workerId, {
+            status: "succeeded",
+            finishedAt: options.clock.now(),
+            conversationId: activeConversation,
+            assistantMessageId: turn.assistantMessageId,
+            error: null,
+          });
+          if (saved) result.succeeded += 1;
+        } catch (error) {
+          const text = errorText(error);
+          let assistantMessageId: string | null = null;
+          try {
+            assistantMessageId = await recordFailure(options.store, activeConversation, text);
+          } catch {
+            // The run is still marked failed. The next turn skips an unanswered prompt.
+          }
+          const saved = await options.routines.finishRun(job.run.id, options.workerId, {
+            status: "failed",
+            finishedAt: options.clock.now(),
+            conversationId: activeConversation,
+            assistantMessageId,
+            error: text,
+          });
+          if (saved) result.failed += 1;
+        }
       });
-      const saved = await options.routines.finishRun(job.run.id, options.workerId, {
-        status: "succeeded",
-        finishedAt: options.clock.now(),
-        conversationId,
-        assistantMessageId: turn.assistantMessageId,
-        error: null,
-      });
-      if (saved) result.succeeded += 1;
     } catch (error) {
       const text = errorText(error);
-      let assistantMessageId: string | null = null;
-      if (conversationId) {
-        try {
-          assistantMessageId = await recordFailure(options.store, conversationId, text);
-        } catch {
-          assistantMessageId = null;
-        }
-      }
       const saved = await options.routines.finishRun(job.run.id, options.workerId, {
         status: "failed",
         finishedAt: options.clock.now(),
         conversationId,
-        assistantMessageId,
+        assistantMessageId: null,
         error: text,
       });
       if (saved) result.failed += 1;
