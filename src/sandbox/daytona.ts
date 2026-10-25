@@ -1,4 +1,5 @@
 import type { Daytona, Sandbox } from "@daytonaio/sdk";
+import { isAbortError, throwIfAborted, withSignal } from "./abort";
 import { toSandboxPath } from "./limits";
 import type { ExecOutcome, SandboxEntry, SandboxRuntime } from "./runtime";
 import type { SandboxStore } from "./store";
@@ -87,21 +88,30 @@ export class DaytonaRuntime implements SandboxRuntime {
     }
   }
 
-  async prepare(agentId: string): Promise<void> {
+  async prepare(agentId: string, signal?: AbortSignal): Promise<void> {
     try {
-      await this.#require(agentId);
+      throwIfAborted(signal);
+      await withSignal(this.#require(agentId), signal);
     } catch (error) {
+      if (isAbortError(error)) throw error;
       throw redactError(error, this.secret);
     }
   }
 
-  async exec(agentId: string, command: string, timeoutMs: number): Promise<ExecOutcome> {
+  async exec(
+    agentId: string,
+    command: string,
+    timeoutMs: number,
+    signal?: AbortSignal,
+  ): Promise<ExecOutcome> {
+    throwIfAborted(signal);
     const handle = this.#handles.get(agentId);
     if (!handle) throw new Error("Sandbox is unavailable");
     const timeoutSec = Math.max(1, Math.ceil(timeoutMs / 1000));
     try {
-      return await handle.exec(command, "workspace", timeoutSec);
+      return await withSignal(handle.exec(command, "workspace", timeoutSec), signal);
     } catch (error) {
+      if (isAbortError(error)) throw error;
       throw redactError(error, this.secret);
     }
   }

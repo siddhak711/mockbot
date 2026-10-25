@@ -1,3 +1,4 @@
+import { throwIfAborted } from "./abort";
 import { resolveWorkspacePath } from "./limits";
 import type { ExecOutcome, SandboxEntry, SandboxRuntime } from "./runtime";
 import type { SandboxStore } from "./store";
@@ -37,9 +38,17 @@ export class MockSandboxRuntime implements SandboxRuntime {
     return { ok: true as const };
   }
 
-  async prepare(): Promise<void> {}
+  async prepare(_agentId: string, signal?: AbortSignal): Promise<void> {
+    throwIfAborted(signal);
+  }
 
-  async exec(agentId: string, command: string, timeoutMs: number): Promise<ExecOutcome> {
+  async exec(
+    agentId: string,
+    command: string,
+    timeoutMs: number,
+    signal?: AbortSignal,
+  ): Promise<ExecOutcome> {
+    throwIfAborted(signal);
     const tokens = tokenize(command);
     if ("error" in tokens) {
       return { stdout: "", stderr: tokens.error, exitCode: 126, timedOut: false };

@@ -293,6 +293,55 @@ describe("sandbox", { concurrent: false }, () => {
     await supervisor.close();
   });
 
+  it("cancels prepare and exec when the abort signal fires", async () => {
+    const store = await SandboxStore.open("memory://");
+    const runtime = new GateRuntime();
+    const supervisor = new ComputerSupervisor(store, runtime, 5_000);
+
+    const preparing = new AbortController();
+    const sawPrepare = runtime.nextPrepare();
+    const stoppedEarly = supervisor.invoke(
+      "agent",
+      "exec",
+      { command: "echo hi" },
+      preparing.signal,
+    );
+    await sawPrepare;
+    preparing.abort();
+    await expect(stoppedEarly).rejects.toMatchObject({ name: "AbortError" });
+    expect(runtime.execCalls).toBe(0);
+    expect(await store.listRuns("agent")).toEqual([]);
+
+    const running = new AbortController();
+    const sawPrepareAgain = runtime.nextPrepare();
+    const sawExec = runtime.nextExec();
+    const started = Date.now();
+    const stoppedLate = supervisor.invoke("agent", "exec", { command: "echo hi" }, running.signal);
+    await sawPrepareAgain;
+    runtime.finishPrepare();
+    await sawExec;
+    running.abort();
+    await expect(stoppedLate).rejects.toMatchObject({ name: "AbortError" });
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(runtime.execSignal?.aborted).toBe(true);
+    expect(await store.listRuns("agent")).toEqual([]);
+    await supervisor.close();
+  });
+
+  it("lists nested Daytona files in the snapshot", async () => {
+    const fleet = new FakeFleet();
+    const store = await SandboxStore.open("memory://");
+    const runtime = new DaytonaRuntime(fleet, store, "secret");
+    const supervisor = new ComputerSupervisor(store, runtime, 1_000);
+    await supervisor.invoke("agent", "write", { path: "notes/hello.txt", content: "nested" });
+    await supervisor.invoke("agent", "write", { path: "top.txt", content: "top" });
+    const snapshot = await supervisor.snapshot("agent");
+    expect(snapshot.files.map((file) => file.path).sort()).toEqual(["notes/hello.txt", "top.txt"]);
+    const read = await supervisor.invoke("agent", "read", { path: "notes/hello.txt" });
+    expect(read.run.stdout).toBe("nested");
+    await supervisor.close();
+  });
+
   it("streams the sandbox tools through chat and the computer API", async () => {
     const supervisor = await openComputer({ env: {}, dataDir: "memory://" });
     const store = await ConversationStore.open();
@@ -408,6 +457,82 @@ describe("sandbox", { concurrent: false }, () => {
     }
   });
 
+  class GateRuntime implements SandboxRuntime {
+    readonly kind = "mock" as const;
+    execCalls = 0;
+    execSignal: AbortSignal | undefined;
+    #prepareNotify = () => {};
+    #execNotify = () => {};
+    #releasePrepare = () => {};
+
+    nextPrepare(): Promise<void> {
+      return new Promise((resolve) => {
+        this.#prepareNotify = resolve;
+      });
+    }
+
+    nextExec(): Promise<void> {
+      return new Promise((resolve) => {
+        this.#execNotify = resolve;
+      });
+    }
+
+    finishPrepare(): void {
+      this.#releasePrepare();
+    }
+
+    list(): Promise<{ ok: true; entries: [] }> {
+      return Promise.resolve({ ok: true, entries: [] });
+    }
+
+    read(): Promise<{ ok: false; error: string }> {
+      return Promise.resolve({ ok: false, error: "missing" });
+    }
+
+    write(): Promise<{ ok: true }> {
+      return Promise.resolve({ ok: true });
+    }
+
+    prepare(_agentId: string, signal?: AbortSignal): Promise<void> {
+      this.#prepareNotify();
+      return new Promise((resolve, reject) => {
+        const onAbort = () => {
+          reject(Object.assign(new Error("The operation was aborted"), { name: "AbortError" }));
+        };
+        if (signal?.aborted) {
+          onAbort();
+          return;
+        }
+        signal?.addEventListener("abort", onAbort, { once: true });
+        this.#releasePrepare = () => {
+          signal?.removeEventListener("abort", onAbort);
+          resolve();
+        };
+      });
+    }
+
+    exec(
+      _agentId: string,
+      _command: string,
+      _timeoutMs: number,
+      signal?: AbortSignal,
+    ): Promise<ExecOutcome> {
+      this.execCalls += 1;
+      this.execSignal = signal;
+      this.#execNotify();
+      return new Promise((_resolve, reject) => {
+        const onAbort = () => {
+          reject(Object.assign(new Error("The operation was aborted"), { name: "AbortError" }));
+        };
+        if (signal?.aborted) {
+          onAbort();
+          return;
+        }
+        signal?.addEventListener("abort", onAbort, { once: true });
+      });
+    }
+  }
+
   class HangingRuntime implements SandboxRuntime {
     readonly kind = "mock" as const;
 
@@ -481,17 +606,21 @@ describe("sandbox", { concurrent: false }, () => {
           this.#running.add(id);
         },
         async list(dir: string) {
-          const prefix = dir.endsWith("/") ? dir : `${dir}/`;
-          const names = new Set<string>();
+          const prefix = dir.endsWith("/") || dir === "" ? dir : `${dir}/`;
+          const names = new Map<string, "file" | "dir">();
           for (const path of files.keys()) {
-            if (!path.startsWith(prefix)) continue;
-            const rest = path.slice(prefix.length);
-            const name = rest.split("/")[0];
-            if (name) names.add(name);
+            if (prefix && !path.startsWith(prefix)) continue;
+            const rest = prefix ? path.slice(prefix.length) : path;
+            if (!rest) continue;
+            const slash = rest.indexOf("/");
+            const name = slash === -1 ? rest : rest.slice(0, slash);
+            if (!name) continue;
+            const kind = slash === -1 ? "file" : "dir";
+            if (names.get(name) !== "dir") names.set(name, kind);
           }
           return {
             ok: true as const,
-            entries: [...names].map((name) => ({ name, kind: "file" as const })),
+            entries: [...names].map(([name, kind]) => ({ name, kind })),
           };
         },
         async read(path: string) {

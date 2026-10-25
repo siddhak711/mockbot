@@ -1,3 +1,4 @@
+import { isAbortError, throwIfAborted } from "./abort";
 import {
   formatExecResult,
   formatFailure,
@@ -75,7 +76,7 @@ export class ComputerSupervisor {
     if (tool === "list") return this.#list(id, args);
     if (tool === "read") return this.#read(id, args);
     if (tool === "write") return this.#write(id, args);
-    return this.#exec(id, args);
+    return this.#exec(id, args, signal);
   }
 
   async #files(agentId: string): Promise<ComputerFile[]> {
@@ -85,12 +86,20 @@ export class ComputerSupervisor {
     }
     const computer = await this.store.getComputer(agentId);
     if (!computer?.sandboxId) return [];
-    const listed = await this.runtime.list(agentId, "");
+    return this.#nestedFiles(agentId, "");
+  }
+
+  async #nestedFiles(agentId: string, dir: string, depth = 0): Promise<ComputerFile[]> {
+    if (depth > 16) return [];
+    const listed = await this.runtime.list(agentId, dir);
     if (!listed.ok) return [];
-    return listed.entries.map((entry) => ({
-      path: entry.name,
-      kind: entry.kind,
-    }));
+    const files: ComputerFile[] = [];
+    for (const entry of listed.entries) {
+      const path = dir ? `${dir}/${entry.name}` : entry.name;
+      if (entry.kind === "dir") files.push(...(await this.#nestedFiles(agentId, path, depth + 1)));
+      else files.push({ path, kind: "file" });
+    }
+    return files;
   }
 
   async #list(agentId: string, args: Record<string, unknown>): Promise<ComputerInvocation> {
@@ -141,7 +150,11 @@ export class ComputerSupervisor {
     return { result: formatWriteResult(resolved.path), run };
   }
 
-  async #exec(agentId: string, args: Record<string, unknown>): Promise<ComputerInvocation> {
+  async #exec(
+    agentId: string,
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<ComputerInvocation> {
     const command = typeof args.command === "string" ? args.command.trim() : "";
     if (!command) return this.#fail(agentId, "exec", "", args, "exec requires a command.", []);
     if (command.length > MAX_COMMAND_CHARS) {
@@ -149,9 +162,17 @@ export class ComputerSupervisor {
     }
     let outcome: ExecOutcome;
     try {
-      await this.runtime.prepare(agentId);
-      outcome = await deadline(this.runtime.exec(agentId, command, this.timeoutMs), this.timeoutMs);
+      throwIfAborted(signal);
+      await this.runtime.prepare(agentId, signal);
+      throwIfAborted(signal);
+      outcome = await deadline(
+        this.runtime.exec(agentId, command, this.timeoutMs, signal),
+        this.timeoutMs,
+        signal,
+      );
     } catch (error) {
+      if (isAbortError(error) || signal?.aborted)
+        throw isAbortError(error) ? error : abortFrom(signal);
       const message = error instanceof Error ? error.message : "Sandbox command failed";
       return this.#fail(agentId, "exec", command, { command }, message, []);
     }
@@ -234,28 +255,44 @@ export class ComputerSupervisor {
   }
 
   #throwIfAborted(signal?: AbortSignal): void {
-    if (!signal?.aborted) return;
-    throw Object.assign(new Error("The operation was aborted"), { name: "AbortError" });
+    throwIfAborted(signal);
   }
+}
+
+function abortFrom(signal?: AbortSignal): Error {
+  const reason = signal?.reason;
+  if (reason instanceof Error && reason.name === "AbortError") return reason;
+  return Object.assign(new Error("The operation was aborted"), { name: "AbortError" });
 }
 
 function stringArg(value: unknown, fallback: string): string {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
 
-function deadline(work: Promise<ExecOutcome>, timeoutMs: number): Promise<ExecOutcome> {
+function deadline(
+  work: Promise<ExecOutcome>,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<ExecOutcome> {
+  throwIfAborted(signal);
   return new Promise((resolve, reject) => {
+    let settled = false;
     const timer = setTimeout(() => {
-      resolve({ stdout: "", stderr: "", exitCode: null, timedOut: true });
+      finish(() => resolve({ stdout: "", stderr: "", exitCode: null, timedOut: true }));
     }, timeoutMs);
+    const onAbort = () => finish(() => reject(abortFrom(signal)));
+    const finish = (settle: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      settle();
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
     work.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
+      (value) => finish(() => resolve(value)),
       (error: unknown) => {
-        clearTimeout(timer);
-        reject(error instanceof Error ? error : new Error("Sandbox command failed"));
+        finish(() => reject(error instanceof Error ? error : new Error("Sandbox command failed")));
       },
     );
   });
