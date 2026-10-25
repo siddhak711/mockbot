@@ -1,8 +1,8 @@
 import { afterEach, expect, it } from "vitest";
 import { POST } from "../app/api/chat/route";
 import { resetAppContext, setAppContext } from "../src/context";
-import type { LlmProvider, ProviderEvent } from "../src/llm";
-import type { LlmMessage } from "../src/types";
+import type { LlmProvider } from "../src/llm";
+import type { LlmMessage, LlmStreamEvent } from "../src/types";
 import { SseParser } from "../src/sse";
 import { ConversationStore } from "../src/store";
 
@@ -10,11 +10,7 @@ class PausingProvider implements LlmProvider {
   readonly id = "mock" as const;
   readonly model = null;
 
-  async *stream(
-    _messages: LlmMessage[],
-    options?: { signal?: AbortSignal },
-  ): AsyncIterable<ProviderEvent> {
-    const signal = options?.signal;
+  async *stream(_messages: LlmMessage[], signal?: AbortSignal): AsyncIterable<LlmStreamEvent> {
     yield { type: "text", text: "Hello " };
     await new Promise<void>((_resolve, reject) => {
       const fail = () => reject(Object.assign(new Error("aborted"), { name: "AbortError" }));

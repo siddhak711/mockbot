@@ -1,13 +1,13 @@
 import { useEffect, useRef } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import type { Message } from "../src/types";
+import type { LivePhase, Message } from "../src/types";
 import type { ToolActivity } from "../src/tools/display";
+import { AssistantStream } from "./assistant-stream";
 import { ToolActivityCards } from "./tool-activity";
 
 export function Transcript({
   messages,
   streaming = false,
+  livePhase = null,
   activities = [],
   decidingId,
   onDecide,
@@ -15,6 +15,7 @@ export function Transcript({
 }: {
   messages: Message[];
   streaming?: boolean;
+  livePhase?: LivePhase | null;
   activities?: ToolActivity[];
   decidingId?: string | null;
   onDecide?: (id: string, decision: "approve" | "deny") => void;
@@ -27,14 +28,17 @@ export function Transcript({
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
-  }, [messages, streaming, activities]);
+  }, [messages, streaming, activities, livePhase]);
 
   if (messages.length === 0) {
     return (
       <div className="transcript">
         <div className="transcript-empty">
           <h2>Start a conversation</h2>
-          <p>Messages stream here. With no API key, Mockbot replies locally.</p>
+          <p>
+            Replies stream in full: the start token, reasoning, the answer, and the end token. Tool
+            calls show up when the model sends them.
+          </p>
         </div>
       </div>
     );
@@ -55,10 +59,6 @@ export function Transcript({
           const messageActivities = activities.filter(
             (activity) => activity.messageId === message.id,
           );
-          const waiting =
-            live &&
-            messageActivities.some((activity) => activity.state === "approval") &&
-            !message.content;
           return (
             <article
               key={message.id}
@@ -71,11 +71,7 @@ export function Transcript({
                 onDecide={onDecide}
                 onSelect={onSelectTool}
               />
-              <div className={live && !waiting ? "markdown streaming" : "markdown"}>
-                {message.content ? (
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
-                ) : null}
-              </div>
+              <AssistantStream message={message} live={live} livePhase={live ? livePhase : null} />
             </article>
           );
         })}

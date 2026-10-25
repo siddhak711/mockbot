@@ -1,11 +1,12 @@
 import { encodeSse, ssePadding } from "./sse";
 import { titleFromMessage, type ConversationStore } from "./store";
-import { SYSTEM_PROMPT, type LlmProvider, type ProviderEvent } from "./llm";
+import { SYSTEM_PROMPT, type LlmProvider } from "./llm";
 import { requiresApproval, type ApprovalGate } from "./tools/approval";
 import { runTool, type ToolRegistry } from "./tools/registry";
-import { describeTool, previewText } from "./tools/display";
+import { describeTool } from "./tools/display";
 import type { ToolContext } from "./tools/types";
-import type { LlmMessage, LlmToolCall, Message, ToolCallStatus } from "./types";
+import { applyStreamEvent, emptyTrace, hasVisibleStream } from "./trace";
+import type { LlmMessage, LlmStreamEvent, LlmToolCall, Message, MessageTrace } from "./types";
 
 const MAX_MESSAGE_LENGTH = 20_000;
 const MAX_ROUNDS = 8;
@@ -17,13 +18,14 @@ const SSE_HEADERS = {
   "X-Accel-Buffering": "no",
 };
 
-type LiveCall = {
+type PendingCall = {
+  index: number;
   id: string;
   name: string;
   arguments: string;
-  status: ToolCallStatus;
+  result: string | null;
+  status: "running" | "approval" | "done" | "denied" | "error";
   output: string | null;
-  started: boolean;
 };
 
 function isAbort(error: unknown, signal?: AbortSignal): boolean {
@@ -31,27 +33,57 @@ function isAbort(error: unknown, signal?: AbortSignal): boolean {
   return error instanceof Error && error.name === "AbortError";
 }
 
+function eventName(event: LlmStreamEvent): string {
+  return event.type === "text" ? "delta" : event.type;
+}
+
+function eventData(event: LlmStreamEvent): unknown {
+  switch (event.type) {
+    case "start":
+      return { role: event.role };
+    case "reasoning":
+    case "text":
+      return { text: event.text };
+    case "tool_call": {
+      const data: { index: number; id?: string; name?: string; arguments?: string } = {
+        index: event.index,
+      };
+      if (event.id) data.id = event.id;
+      if (event.name) data.name = event.name;
+      if (event.arguments) data.arguments = event.arguments;
+      return data;
+    }
+    case "tool_result":
+      return { id: event.id, name: event.name, content: event.content };
+    case "end":
+      return { finishReason: event.finishReason };
+  }
+}
+
+function mergeName(current: string, chunk: string): string {
+  if (!chunk) return current;
+  if (!current || chunk === current || chunk.startsWith(current)) return chunk;
+  return current + chunk;
+}
+
 function toLlmHistory(messages: Message[]): LlmMessage[] {
   const history: LlmMessage[] = [{ role: "system", content: SYSTEM_PROMPT }];
   for (const message of messages) {
     if (message.role === "user") {
-      history.push({ role: "user", content: message.content });
+      if (message.content.length > 0) history.push({ role: "user", content: message.content });
       continue;
     }
     const tools = message.tools ?? [];
-    if (tools.length === 0) {
-      history.push({ role: "assistant", content: message.content });
-      continue;
-    }
-    const trace = tools
+    const activity = tools
       .map((tool) => {
-        const output = tool.output ? previewText(tool.output) : tool.status;
+        const output = tool.output ? tool.output.slice(0, 500) : tool.status;
         return `${tool.name} (${tool.status}): ${output}`;
       })
       .join("\n");
-    const content = [message.content.trim(), `Previous tool activity:\n${trace}`]
+    const content = [message.content.trim(), activity ? `Previous tool activity:\n${activity}` : ""]
       .filter(Boolean)
       .join("\n\n");
+    if (!content) continue;
     history.push({ role: "assistant", content });
   }
   return history;
@@ -62,6 +94,28 @@ function denialText(reason: "user" | "timeout"): string {
     return "Approval timed out before the user responded, so the action was not run. Do not retry it unless they ask.";
   }
   return "The user denied this action. Do not retry it unless they ask.";
+}
+
+function upsertCall(
+  calls: PendingCall[],
+  event: Extract<LlmStreamEvent, { type: "tool_call" }>,
+): void {
+  let call = calls.find((item) => item.index === event.index);
+  if (!call) {
+    call = {
+      index: event.index,
+      id: "",
+      name: "",
+      arguments: "",
+      result: null,
+      status: "running",
+      output: null,
+    };
+    calls.push(call);
+  }
+  if (event.id && !call.id) call.id = event.id;
+  if (event.name) call.name = mergeName(call.name, event.name);
+  if (event.arguments) call.arguments += event.arguments;
 }
 
 export async function streamChatTurn(options: {
@@ -102,41 +156,27 @@ export async function streamChatTurn(options: {
   };
 
   let partial = "";
+  let trace = emptyTrace();
   let assistantId: string | null = null;
   let saved = "";
   let persistQueue = Promise.resolve();
   let userStopped = false;
-  const liveCalls: LiveCall[] = [];
+  const liveCalls: PendingCall[] = [];
 
-  const persist = (text: string) => {
+  const persist = (text: string, current: MessageTrace) => {
+    const encoded = JSON.stringify({ text, trace: current });
     persistQueue = persistQueue.then(async () => {
-      if (text === saved) return;
-      if (!assistantId) return;
-      await store.updateMessageContent(assistantId, text);
-      saved = text;
+      if (encoded === saved) return;
+      if (!hasVisibleStream(current, text)) return;
+      if (!assistantId) {
+        const created = await store.addMessage(conversationSnapshot.id, "assistant", text, current);
+        assistantId = created.id;
+      } else {
+        await store.updateMessage(assistantId, text, current);
+      }
+      saved = encoded;
     });
     return persistQueue;
-  };
-
-  const ensureAssistant = async (): Promise<string> => {
-    if (assistantId) return assistantId;
-    const created = await store.addMessage(conversationSnapshot.id, "assistant", "");
-    assistantId = created.id;
-    saved = "";
-    return created.id;
-  };
-
-  const saveCall = async (call: LiveCall) => {
-    const messageId = await ensureAssistant();
-    await store.saveToolCall({
-      id: call.id,
-      conversationId: conversationSnapshot.id,
-      messageId,
-      name: call.name,
-      arguments: call.arguments,
-      status: call.status,
-      output: call.output,
-    });
   };
 
   const stream = new ReadableStream<Uint8Array>({
@@ -160,6 +200,41 @@ export async function streamChatTurn(options: {
         }
       };
 
+      const publish = async (next: MessageTrace, event: LlmStreamEvent) => {
+        trace = next;
+        partial = next.text;
+        await persist(partial, trace);
+        if (signal?.aborted) return;
+        enqueue(eventName(event), eventData(event));
+      };
+
+      const remember = async (next: MessageTrace) => {
+        trace = next;
+        partial = next.text;
+        await persist(partial, trace);
+      };
+
+      const saveCall = async (call: PendingCall) => {
+        if (!assistantId) {
+          const created = await store.addMessage(
+            conversationSnapshot.id,
+            "assistant",
+            partial,
+            trace,
+          );
+          assistantId = created.id;
+        }
+        await store.saveToolCall({
+          id: call.id,
+          conversationId: conversationSnapshot.id,
+          messageId: assistantId,
+          name: call.name,
+          arguments: call.arguments,
+          status: call.status,
+          output: call.output,
+        });
+      };
+
       const stopOpenCalls = async () => {
         for (const call of liveCalls) {
           if (call.status !== "running" && call.status !== "approval") continue;
@@ -177,66 +252,75 @@ export async function streamChatTurn(options: {
           userMessageId: user.id,
         });
 
+        let sawStart = false;
+        let roundEnded = false;
         for (let round = 0; round < MAX_ROUNDS; round += 1) {
           if (signal?.aborted || userStopped) break;
           const exposed = tools.exposed({ promoted });
-          const turnCalls: LiveCall[] = [];
+          const roundCalls: PendingCall[] = [];
           let roundText = "";
-          const applyProviderEvent = async (event: ProviderEvent): Promise<void> => {
-            if (event.type === "text") {
-              if (!event.text) return;
-              partial += event.text;
-              roundText += event.text;
-              const messageId = await ensureAssistant();
-              enqueue("delta", { text: event.text, assistantMessageId: messageId });
-              await persist(partial);
-              return;
-            }
-            let call = turnCalls.find((item) => item.id === event.id);
-            if (!call) {
-              call = {
-                id: event.id,
-                name: event.name ?? "",
-                arguments: "",
-                status: "running",
-                output: null,
-                started: false,
-              };
-              turnCalls.push(call);
-              liveCalls.push(call);
-            }
-            if (event.name) call.name = event.name;
-            if (event.argumentsDelta) call.arguments += event.argumentsDelta;
-            if (!call.started && call.name) {
-              call.started = true;
-              const messageId = await ensureAssistant();
-              await saveCall(call);
-              enqueue("tool_start", {
-                id: call.id,
-                name: call.name,
-                assistantMessageId: messageId,
-              });
-            }
-            if (call.started && event.argumentsDelta) {
-              await saveCall(call);
-              enqueue("tool_args", { id: call.id, arguments: call.arguments });
-            }
+          let finishReason: string | null = null;
+          roundEnded = false;
+          const indexBase = trace.tools.length;
+          const roundAbort = new AbortController();
+          const providerSignal = roundAbort.signal as AbortSignal & {
+            tools?: typeof exposed;
           };
-          for await (const event of provider.stream(history, { tools: exposed, signal })) {
-            if (signal?.aborted) break;
-            await applyProviderEvent(event);
-          }
-          if (signal?.aborted) break;
-          if (turnCalls.length === 0) break;
+          providerSignal.tools = exposed;
+          const abortRound = () => roundAbort.abort(signal?.reason);
+          if (signal?.aborted) abortRound();
+          else signal?.addEventListener("abort", abortRound, { once: true });
 
+          try {
+            for await (const event of provider.stream(history, providerSignal)) {
+              if (signal?.aborted || userStopped) break;
+              if (!sawStart && event.type !== "start") {
+                sawStart = true;
+                await publish(applyStreamEvent(trace, { type: "start", role: "assistant" }), {
+                  type: "start",
+                  role: "assistant",
+                });
+                if (signal?.aborted || userStopped) break;
+              }
+              if (event.type === "start") sawStart = true;
+              if (event.type === "text") roundText += event.text;
+              if (event.type === "tool_call") upsertCall(roundCalls, event);
+              if (event.type === "tool_result") {
+                const match =
+                  roundCalls.find((call) => call.id === event.id) ??
+                  roundCalls.find((call) => call.name === event.name && call.result == null);
+                if (match) match.result = event.content;
+              }
+              if (event.type === "end") {
+                roundEnded = true;
+                finishReason = event.finishReason;
+              }
+              const published =
+                event.type === "tool_call" ? { ...event, index: indexBase + event.index } : event;
+              await publish(applyStreamEvent(trace, published), published);
+              if (signal?.aborted || userStopped) break;
+            }
+          } finally {
+            signal?.removeEventListener("abort", abortRound);
+          }
+          if (signal?.aborted || userStopped) break;
+
+          const pending = roundCalls.filter((call) => call.name && call.result == null);
+          const shouldRun =
+            pending.length > 0 && (finishReason === "tool_calls" || roundText.length === 0);
+          if (!shouldRun) break;
+
+          for (const call of pending) {
+            if (!call.id) call.id = `call_${call.index}_${crypto.randomUUID()}`;
+          }
           history.push({
             role: "assistant",
             content: roundText,
-            tool_calls: turnCalls.map(toLlmToolCall),
+            tool_calls: pending.map(toLlmToolCall),
           });
-
-          for (const call of turnCalls) {
+          for (const call of pending) {
             if (signal?.aborted || userStopped) break;
+            liveCalls.push(call);
             const output = await executeCall(call);
             if (output === null) break;
             history.push({ role: "tool", tool_call_id: call.id, content: output });
@@ -244,7 +328,13 @@ export async function streamChatTurn(options: {
           if (signal?.aborted || userStopped) break;
         }
 
-        await persist(partial);
+        if (!signal?.aborted && !userStopped && sawStart && !roundEnded) {
+          await publish(applyStreamEvent(trace, { type: "end", finishReason: "stop" }), {
+            type: "end",
+            finishReason: "stop",
+          });
+        }
+        await persist(partial, trace);
         if (signal?.aborted || userStopped) {
           await stopOpenCalls();
         } else {
@@ -254,7 +344,7 @@ export async function streamChatTurn(options: {
           });
         }
       } catch (error) {
-        await persist(partial);
+        await persist(partial, trace);
         if (isAbort(error, signal)) {
           await stopOpenCalls();
         } else {
@@ -263,19 +353,22 @@ export async function streamChatTurn(options: {
           enqueue("error", { message: text });
         }
       } finally {
-        await persist(partial);
-        if (assistantId && partial === "" && liveCalls.length === 0) {
-          await store.deleteMessage(assistantId);
-          assistantId = null;
-        }
+        await persist(partial, trace);
         close();
       }
 
-      async function executeCall(call: LiveCall): Promise<string | null> {
+      async function executeCall(call: PendingCall): Promise<string | null> {
+        call.status = "running";
+        await saveCall(call);
+        enqueue("tool_start", {
+          id: call.id,
+          name: call.name,
+          assistantMessageId: assistantId,
+        });
+        enqueue("tool_args", { id: call.id, arguments: call.arguments });
+
         const parsed = parseArguments(call.arguments);
-        if (!parsed.ok) {
-          return finish(call, "error", parsed.error);
-        }
+        if (!parsed.ok) return finish(call, "error", parsed.error);
         const tool = tools.get(call.name);
         if (!tool) {
           return finish(
@@ -303,6 +396,14 @@ export async function streamChatTurn(options: {
             call.status = "error";
             call.output = "Stopped before the tool ran.";
             await saveCall(call);
+            await remember(
+              applyStreamEvent(trace, {
+                type: "tool_result",
+                id: call.id,
+                name: call.name,
+                content: call.output,
+              }),
+            );
             return null;
           }
           if (outcome.decision !== "approve") {
@@ -328,22 +429,35 @@ export async function streamChatTurn(options: {
         return finish(call, result.isError ? "error" : "done", result.content);
       }
 
-      function finish(call: LiveCall, status: ToolCallStatus, output: string): Promise<string> {
+      async function finish(
+        call: PendingCall,
+        status: PendingCall["status"],
+        output: string,
+      ): Promise<string> {
         call.status = status;
         call.output = output;
-        const messageId = assistantId;
+        call.result = output;
         enqueue("tool_result", {
           id: call.id,
           name: call.name,
           status,
           output,
-          assistantMessageId: messageId,
+          assistantMessageId: assistantId,
         });
-        return saveCall(call).then(() => output);
+        await saveCall(call);
+        await remember(
+          applyStreamEvent(trace, {
+            type: "tool_result",
+            id: call.id,
+            name: call.name,
+            content: output,
+          }),
+        );
+        return output;
       }
     },
     async cancel() {
-      await persist(partial);
+      await persist(partial, trace);
     },
   });
 
@@ -365,7 +479,7 @@ function parseArguments(
   }
 }
 
-function toLlmToolCall(call: LiveCall): LlmToolCall {
+function toLlmToolCall(call: PendingCall): LlmToolCall {
   return {
     id: call.id,
     type: "function",

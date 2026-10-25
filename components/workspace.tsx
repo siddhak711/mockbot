@@ -7,13 +7,14 @@ import { ConversationList } from "./conversation-list";
 import { Transcript } from "./transcript";
 import { releaseDecision, settleDecision, stopDecision } from "../src/decision-lock";
 import { SseParser } from "../src/sse";
+import { applyClientEvent, emptyTrace, phaseFromEvent, streamedWeight } from "../src/trace";
 import {
   activitiesFromMessages,
   describeTool,
   previewText,
   type ToolActivity,
 } from "../src/tools/display";
-import type { Conversation, Message, ToolCallStatus } from "../src/types";
+import type { Conversation, LivePhase, Message, ToolCallStatus } from "../src/types";
 
 function isAbort(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
@@ -23,10 +24,10 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function preferLongerAssistant(local: Message[], remote: Message[]): Message[] {
+function preferRicherAssistant(local: Message[], remote: Message[]): Message[] {
   const localAssistant = [...local].reverse().find((message) => message.role === "assistant");
   const remoteAssistant = [...remote].reverse().find((message) => message.role === "assistant");
-  if ((localAssistant?.content.length ?? 0) > (remoteAssistant?.content.length ?? 0)) return local;
+  if (streamedWeight(localAssistant) > streamedWeight(remoteAssistant)) return local;
   return remote;
 }
 
@@ -35,6 +36,7 @@ export function Workspace() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState(false);
+  const [livePhase, setLivePhase] = useState<LivePhase | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [providerLabel, setProviderLabel] = useState("Mock provider");
   const [editing, setEditing] = useState(false);
@@ -176,8 +178,12 @@ export function Workspace() {
     if (!response.ok) return;
     const data = (await response.json()) as { conversation: Conversation; messages: Message[] };
     setActiveId(data.conversation.id);
-    setMessages((local) => preferLongerAssistant(local, data.messages));
-    setActivities(activitiesFromMessages(data.messages));
+    setMessages((local) => preferRicherAssistant(local, data.messages));
+    setActivities((local) => {
+      const remote = activitiesFromMessages(data.messages);
+      if (remote.length === 0 && local.length > 0) return local;
+      return remote;
+    });
     setConversations((prev) =>
       prev.map((item) => (item.id === data.conversation.id ? data.conversation : item)),
     );
@@ -194,6 +200,7 @@ export function Workspace() {
     const controller = new AbortController();
     abortRef.current = controller;
     setStreaming(true);
+    setLivePhase(null);
 
     const localUserId = `local-${crypto.randomUUID()}`;
     setMessages((prev) => [
@@ -204,6 +211,7 @@ export function Workspace() {
         role: "user",
         content: trimmed,
         createdAt: new Date().toISOString(),
+        trace: null,
       },
     ]);
 
@@ -211,9 +219,18 @@ export function Workspace() {
     let conversationId = activeIdRef.current;
     let sawMeta = false;
 
-    const ensureAssistant = (id: string, convId: string) => {
-      if (assistantLocalId) return;
-      assistantLocalId = id;
+    const bindAssistant = (serverId: string) => {
+      if (!serverId) return;
+      if (!assistantLocalId) assistantLocalId = serverId;
+      else if (assistantLocalId !== serverId) {
+        const previous = assistantLocalId;
+        assistantLocalId = serverId;
+        setMessages((prev) =>
+          prev.map((item) => (item.id === previous ? { ...item, id: serverId } : item)),
+        );
+      }
+      const id = assistantLocalId;
+      const convId = conversationId ?? "";
       setMessages((prev) => {
         if (prev.some((item) => item.id === id)) return prev;
         return [
@@ -224,8 +241,42 @@ export function Workspace() {
             role: "assistant",
             content: "",
             createdAt: new Date().toISOString(),
+            trace: emptyTrace(),
           },
         ];
+      });
+    };
+
+    const applyStream = (name: string, payload: Record<string, unknown>) => {
+      const phase = phaseFromEvent(name);
+      if (phase) setLivePhase(phase);
+      if (!assistantLocalId) assistantLocalId = `local-${crypto.randomUUID()}`;
+      const assistantId = assistantLocalId;
+      const convId = conversationId ?? "";
+      setMessages((prev) => {
+        const index = prev.findIndex((item) => item.id === assistantId);
+        if (index === -1) {
+          return [
+            ...prev,
+            applyClientEvent(
+              {
+                id: assistantId,
+                conversationId: convId,
+                role: "assistant",
+                content: "",
+                createdAt: new Date().toISOString(),
+                trace: emptyTrace(),
+              },
+              name,
+              payload,
+            ),
+          ];
+        }
+        const next = prev.slice();
+        const current = prev[index];
+        if (!current) return prev;
+        next[index] = applyClientEvent(current, name, payload);
+        return next;
       });
     };
 
@@ -275,23 +326,23 @@ export function Workspace() {
                 item.id === localUserId ? { ...item, conversationId: id } : item,
               ),
             );
-          } else if (event.event === "delta") {
-            const chunk = String(payload.text ?? "");
-            const id = String(payload.assistantMessageId ?? assistantLocalId ?? "");
-            if (id) ensureAssistant(id, conversationId ?? "");
-            const assistantId = assistantLocalId;
-            if (!assistantId) continue;
-            setMessages((prev) =>
-              prev.map((item) =>
-                item.id === assistantId ? { ...item, content: item.content + chunk } : item,
-              ),
-            );
+          } else if (
+            event.event === "start" ||
+            event.event === "reasoning" ||
+            event.event === "tool_call" ||
+            event.event === "delta" ||
+            event.event === "end" ||
+            (event.event === "tool_result" &&
+              typeof payload.content === "string" &&
+              typeof payload.status !== "string")
+          ) {
+            applyStream(event.event, payload);
           } else if (event.event === "tool_start") {
             const id = String(payload.id ?? "");
             const name = String(payload.name ?? "");
             const messageId = String(payload.assistantMessageId ?? "");
             if (!id || !messageId) continue;
-            ensureAssistant(messageId, conversationId ?? "");
+            bindAssistant(messageId);
             const described = describeTool(name, "");
             setActivities((prev) => [
               ...prev.filter((item) => item.id !== id),
@@ -379,6 +430,7 @@ export function Workspace() {
       }
     } finally {
       setStreaming(false);
+      setLivePhase(null);
       abortRef.current = null;
     }
   }
@@ -559,6 +611,7 @@ export function Workspace() {
           <Transcript
             messages={messages}
             streaming={streaming}
+            livePhase={livePhase}
             activities={activities}
             decidingId={decidingId}
             onDecide={(id, decision) => void decide(id, decision)}

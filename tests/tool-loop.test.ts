@@ -5,18 +5,13 @@ import { POST as postChat } from "../app/api/chat/route";
 import { GET as readConversation } from "../app/api/conversations/[id]/route";
 import { POST as postApproval } from "../app/api/tools/approvals/route";
 import { resetAppContext, setAppContext } from "../src/context";
-import {
-  selectProvider,
-  type LlmProvider,
-  type ProviderEvent,
-  type StreamOptions,
-} from "../src/llm";
+import { MockProvider, selectProvider, streamOptions, type LlmProvider } from "../src/llm";
 import { SseParser } from "../src/sse";
 import { ConversationStore } from "../src/store";
 import { ApprovalGate } from "../src/tools/approval";
 import { createDefaultTools } from "../src/tools/builtins";
 import { toolSearchTool, ToolRegistry } from "../src/tools/registry";
-import type { LlmMessage, StoredToolCall } from "../src/types";
+import type { LlmMessage, LlmStreamEvent, StoredToolCall } from "../src/types";
 import type { ToolDefinition } from "../src/tools/types";
 import { deltas, readSse } from "./helpers";
 
@@ -26,20 +21,48 @@ afterEach(async () => {
 
 type SseEvent = { event: string; data: Record<string, unknown> };
 
+type ScriptedEvent =
+  | { type: "text"; text: string }
+  | { type: "tool_call"; id: string; name?: string; argumentsDelta: string };
+
 class ScriptedProvider implements LlmProvider {
   readonly id = "mock" as const;
   readonly model = null;
   readonly seen: string[][] = [];
   #turn = 0;
 
-  constructor(private readonly turns: ProviderEvent[][]) {}
+  constructor(private readonly turns: ScriptedEvent[][]) {}
 
-  async *stream(_messages: LlmMessage[], options?: StreamOptions): AsyncIterable<ProviderEvent> {
-    this.seen.push((options?.tools ?? []).map((tool) => tool.name));
+  async *stream(_messages: LlmMessage[], input?: AbortSignal): AsyncIterable<LlmStreamEvent> {
+    const { tools = [] } = streamOptions(input);
+    this.seen.push(tools.map((tool) => tool.name));
     const turn = this.turns[this.#turn] ?? [{ type: "text", text: "Done." }];
     this.#turn += 1;
-    for (const event of turn) yield event;
+    const indexes = new Map<string, number>();
+    for (const event of turn) {
+      if (event.type === "text") {
+        yield { type: "text", text: event.text };
+        continue;
+      }
+      const first = !indexes.has(event.id);
+      let index = indexes.get(event.id);
+      if (index === undefined) {
+        index = indexes.size;
+        indexes.set(event.id, index);
+      }
+      yield {
+        type: "tool_call",
+        index,
+        ...(first ? { id: event.id } : {}),
+        ...(event.name ? { name: event.name } : {}),
+        ...(event.argumentsDelta ? { arguments: event.argumentsDelta } : {}),
+      };
+    }
   }
+}
+
+function demoProvider(chunkSize: number): MockProvider {
+  return new MockProvider({ delayMs: 0, chunkSize, demoTools: true });
 }
 
 async function readUntil(response: Response, eventName: string) {
@@ -98,7 +121,7 @@ it("streams a mock tool_search and web_search before the reply and stores the ca
   const store = await ConversationStore.open();
   setAppContext({
     store,
-    provider: selectProvider({ MOCK_STREAM_DELAY_MS: "0", MOCK_CHUNK_SIZE: "12" }),
+    provider: demoProvider(12),
   });
 
   const response = await postChat(
@@ -146,7 +169,7 @@ it("pauses a write tool on an approval card and continues after the decision", a
   const store = await ConversationStore.open();
   setAppContext({
     store,
-    provider: selectProvider({ MOCK_STREAM_DELAY_MS: "0", MOCK_CHUNK_SIZE: "20" }),
+    provider: demoProvider(20),
   });
   const response = await postChat(
     new Request("http://localhost/api/chat", {
@@ -197,7 +220,7 @@ it("records a denial and still lets the conversation continue", async () => {
   const store = await ConversationStore.open();
   setAppContext({
     store,
-    provider: selectProvider({ MOCK_STREAM_DELAY_MS: "0", MOCK_CHUNK_SIZE: "40" }),
+    provider: demoProvider(40),
   });
   const response = await postChat(
     new Request("http://localhost/api/chat", {
@@ -246,7 +269,7 @@ it("keeps a pending approval when the chat client disconnects", async () => {
   const store = await ConversationStore.open();
   setAppContext({
     store,
-    provider: selectProvider({ MOCK_STREAM_DELAY_MS: "0", MOCK_CHUNK_SIZE: "40" }),
+    provider: demoProvider(40),
   });
   const controller = new AbortController();
   const response = await postChat(
@@ -294,7 +317,7 @@ it("ends a pending approval on an explicit stop", async () => {
   const store = await ConversationStore.open();
   setAppContext({
     store,
-    provider: selectProvider({ MOCK_STREAM_DELAY_MS: "0", MOCK_CHUNK_SIZE: "40" }),
+    provider: demoProvider(40),
   });
   const response = await postChat(
     new Request("http://localhost/api/chat", {
@@ -340,7 +363,7 @@ it("closes a timed-out calendar invite as a denial", async () => {
   const store = await ConversationStore.open();
   setAppContext({
     store,
-    provider: selectProvider({ MOCK_STREAM_DELAY_MS: "0", MOCK_CHUNK_SIZE: "80" }),
+    provider: demoProvider(80),
     approvals: new ApprovalGate(30),
   });
   const response = await postChat(

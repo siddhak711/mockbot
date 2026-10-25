@@ -86,6 +86,9 @@ it("sends the turn to the configured base URL and keeps the key off the client r
       true,
     );
     expect(deltas(events)).toBe("Upstream hello");
+    expect(events.some((event) => event.event === "end")).toBe(true);
+    const end = events.find((event) => event.event === "end");
+    expect((end?.data as { finishReason?: string }).finishReason).toBe("stop");
     expect(raw).not.toContain(SECRET);
     expect(raw).not.toContain("LLM_API_KEY");
 

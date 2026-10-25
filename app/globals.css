@@ -467,6 +467,121 @@ input:focus-visible {
   line-height: 1.4;
 }
 
+.card-body {
+  min-width: 0;
+}
+
+.stream-token {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  letter-spacing: 0;
+}
+
+.stream-token.end {
+  margin: 14px 0 0;
+}
+
+.token-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid #3a3a3a;
+  background: #161616;
+  color: #f5f5f5;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.reasoning {
+  margin: 0 0 12px;
+  border: 1px solid #262626;
+  background: #0c0c0c;
+  border-radius: 12px;
+  padding: 10px 12px 12px;
+}
+
+.reasoning summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 550;
+  color: #c8c8c8;
+  list-style: none;
+}
+
+.reasoning summary::-webkit-details-marker {
+  display: none;
+}
+
+.reasoning summary:focus-visible {
+  outline: 2px solid #f3f3f3;
+  outline-offset: 2px;
+}
+
+.reasoning-mark {
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid #9a9a9a;
+  border-bottom: 1.5px solid #9a9a9a;
+  transform: rotate(-45deg);
+  margin-top: -2px;
+}
+
+.reasoning[open] .reasoning-mark {
+  transform: rotate(45deg);
+  margin-top: 0;
+}
+
+.reasoning-body {
+  margin: 8px 0 0;
+  color: #bdbdbd;
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.tool-label {
+  margin-top: 8px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.tool-block {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #0a0a0a;
+  border: 1px solid #222;
+  color: #d7d7d7;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.reasoning-body.streaming::after,
+.tool-block.streaming::after {
+  content: "";
+  display: inline-block;
+  width: 2px;
+  height: 0.95em;
+  background: #f3f3f3;
+  margin-left: 2px;
+  transform: translateY(0.12em);
+}
+
 .state {
   color: #d8d8d8;
   display: grid;

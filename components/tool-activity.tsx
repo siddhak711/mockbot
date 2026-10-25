@@ -1,6 +1,39 @@
 import type { ToolActivity } from "../src/tools/display";
+import type { ToolTrace } from "../src/types";
 
 export type { ToolActivity };
+
+export function ToolCallCard({ tool, pending }: { tool: ToolTrace; pending: boolean }) {
+  const title = tool.name || "Tool call";
+  return (
+    <div
+      className={pending ? "card live" : "card"}
+      aria-label={`Tool call ${title}`}
+      data-tool-name={title}
+    >
+      <ToolGlyph live={pending} />
+      <div className="card-body">
+        <div className="card-title">{title}</div>
+        {tool.id ? <div className="card-sub">{tool.id}</div> : null}
+        {tool.arguments ? (
+          <>
+            <div className="tool-label">Arguments</div>
+            <pre className={pending ? "tool-block streaming" : "tool-block"}>{tool.arguments}</pre>
+          </>
+        ) : null}
+        {tool.result != null ? (
+          <>
+            <div className="tool-label">Result</div>
+            <pre className="tool-block">{tool.result}</pre>
+          </>
+        ) : null}
+      </div>
+      <span className="state" aria-hidden="true">
+        {tool.result != null ? <Check /> : pending ? <Spinner /> : null}
+      </span>
+    </div>
+  );
+}
 
 export function ToolActivityCards({
   activities,
@@ -92,6 +125,24 @@ function StatusIcon({ state }: { state: ToolActivity["state"] }) {
   if (state === "approval") return <Dot />;
   if (state === "error" || state === "denied") return <Cross />;
   return <Check />;
+}
+
+function ToolGlyph({ live }: { live: boolean }) {
+  const stroke = live ? "#f2f2f2" : "#d6d6d6";
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke={stroke}
+      strokeWidth="1.75"
+      aria-hidden="true"
+    >
+      <path d="M8 7.5 12 12l-4 4.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M13 16.5h5" strokeLinecap="round" />
+    </svg>
+  );
 }
 
 function ToolIcon({ kind, live }: { kind: ToolActivity["kind"]; live: boolean }) {
