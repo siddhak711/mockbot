@@ -59,7 +59,11 @@ export class ToolRegistry {
     const defaults = this.#tools.filter(
       (tool) => exposureOf(tool) === "default" && !promoted.has(tool.name),
     );
-    return unique([...promotedTools, ...pinned, ...defaults]).slice(0, cap);
+    const ordered = unique([...promotedTools, ...pinned, ...defaults]);
+    const search = ordered.find((tool) => tool.name === "tool_search");
+    if (!search || promoted.has(search.name) || ordered.length <= cap) return ordered.slice(0, cap);
+    const rest = ordered.filter((tool) => tool.name !== "tool_search");
+    return [...rest.slice(0, cap - 1), search];
   }
 
   search(query: string, limit = 5): ToolDefinition[] {

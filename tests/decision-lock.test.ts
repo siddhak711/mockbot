@@ -5,7 +5,12 @@ import {
   stopDecision,
   type DecisionLock,
 } from "../src/decision-lock";
-import { activitiesAfterReconnect, type ToolActivity } from "../src/tools/display";
+import {
+  activitiesAfterReconnect,
+  activitiesAfterStop,
+  STOPPED_TOOL_OUTPUT,
+  type ToolActivity,
+} from "../src/tools/display";
 
 function activity(id: string, state: ToolActivity["state"]): ToolActivity {
   return {
@@ -55,6 +60,20 @@ it("clears the approval lock on reconnect and reloads a pending approval", () =>
     true,
   );
   expect(activitiesAfterReconnect(local, [])).toEqual(local);
+});
+
+it("clears a pending approval locally when the turn is stopped", () => {
+  const local = [activity("call-1", "approval"), activity("call-2", "done")];
+  const stopped = activitiesAfterStop(local);
+  expect(stopped[0]?.state).toBe("error");
+  expect(stopped[0]?.output).toBe(STOPPED_TOOL_OUTPUT);
+  expect(stopped.some((item) => item.state === "approval")).toBe(false);
+  expect(stopped[1]?.state).toBe("done");
+
+  const stale = [activity("call-1", "approval"), activity("call-2", "done")];
+  expect(activitiesAfterReconnect(stopped, stale)[0]?.state).toBe("error");
+  const saved = [{ ...stale[0]!, state: "error" as const, output: STOPPED_TOOL_OUTPUT }, stale[1]!];
+  expect(activitiesAfterReconnect(stopped, saved)).toEqual(saved);
 });
 
 it("clears the approval lock when the decision request fails", async () => {

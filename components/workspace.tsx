@@ -10,6 +10,7 @@ import { SseParser } from "../src/sse";
 import { applyClientEvent, emptyTrace, phaseFromEvent, streamedWeight } from "../src/trace";
 import {
   activitiesAfterReconnect,
+  activitiesAfterStop,
   activitiesFromMessages,
   describeTool,
   previewText,
@@ -484,17 +485,18 @@ export function Workspace() {
   }
 
   function stopTurn() {
-    for (const activity of activitiesRef.current) {
-      if (activity.state !== "approval") continue;
+    const pending = activitiesRef.current.filter((activity) => activity.state === "approval");
+    if (pending.length > 0) setActivities((current) => activitiesAfterStop(current));
+    abortRef.current?.abort();
+    stopDecision(decidingRef);
+    setDecidingId(null);
+    for (const activity of pending) {
       void fetch("/api/tools/approvals", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: activity.id, decision: "stop" }),
       });
     }
-    abortRef.current?.abort();
-    stopDecision(decidingRef);
-    setDecidingId(null);
   }
 
   const active = conversations.find((item) => item.id === activeId) ?? null;

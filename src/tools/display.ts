@@ -135,10 +135,36 @@ export function activitiesFromMessages(
   return messages.flatMap((message) => (message.tools ?? []).map((tool) => toToolActivity(tool)));
 }
 
+export const STOPPED_TOOL_OUTPUT = "Stopped before the tool ran.";
+
+export function activitiesAfterStop(activities: ToolActivity[]): ToolActivity[] {
+  return activities.map((activity) =>
+    activity.state === "approval"
+      ? {
+          ...activity,
+          state: "error",
+          output: STOPPED_TOOL_OUTPUT,
+          preview: previewText(STOPPED_TOOL_OUTPUT),
+        }
+      : activity,
+  );
+}
+
 export function activitiesAfterReconnect(
   local: ToolActivity[],
   remote: ToolActivity[],
 ): ToolActivity[] {
   if (remote.length === 0) return local;
-  return remote;
+  return remote.map((item) => {
+    const previous = local.find((entry) => entry.id === item.id);
+    if (
+      previous &&
+      item.state === "approval" &&
+      previous.state !== "approval" &&
+      previous.output === STOPPED_TOOL_OUTPUT
+    ) {
+      return previous;
+    }
+    return item;
+  });
 }

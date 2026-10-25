@@ -3,7 +3,7 @@ import { titleFromMessage, type ConversationStore } from "./store";
 import { SYSTEM_PROMPT, type LlmProvider } from "./llm";
 import { requiresApproval, type ApprovalGate } from "./tools/approval";
 import { runTool, type ToolRegistry } from "./tools/registry";
-import { describeTool } from "./tools/display";
+import { describeTool, STOPPED_TOOL_OUTPUT } from "./tools/display";
 import type { ToolContext } from "./tools/types";
 import { applyStreamEvent, emptyTrace, hasVisibleStream } from "./trace";
 import type { LlmMessage, LlmStreamEvent, LlmToolCall, Message, MessageTrace } from "./types";
@@ -400,7 +400,7 @@ export async function streamChatTurn(options: {
           if (outcome.reason === "stopped") {
             userStopped = true;
             call.status = "error";
-            call.output = "Stopped before the tool ran.";
+            call.output = STOPPED_TOOL_OUTPUT;
             await saveCall(call);
             await remember(
               applyStreamEvent(trace, {
