@@ -5,6 +5,9 @@ import { Composer } from "./composer";
 import { ComputerPane } from "./computer-pane";
 import { ConversationList } from "./conversation-list";
 import { Transcript } from "./transcript";
+import type { AgentDraft } from "./agent-panel";
+import { LEAD_AGENT_ID } from "../src/agents/ids";
+import type { Agent } from "../src/agents/types";
 import { releaseDecision, settleDecision, stopDecision } from "../src/decision-lock";
 import { SseParser } from "../src/sse";
 import { applyClientEvent, emptyTrace, phaseFromEvent, streamedWeight } from "../src/trace";
@@ -35,6 +38,8 @@ function preferRicherAssistant(local: Message[], remote: Message[]): Message[] {
 
 export function Workspace() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [activeAgentId, setActiveAgentId] = useState(LEAD_AGENT_ID);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState(false);
@@ -77,6 +82,7 @@ export function Workspace() {
       }
       const data = (await response.json()) as { conversation: Conversation; messages: Message[] };
       setActiveId(data.conversation.id);
+      setActiveAgentId(data.conversation.agentId);
       setMessages(data.messages);
       releaseApprovalLock();
       const nextActivities = activitiesFromMessages(data.messages);
@@ -104,12 +110,20 @@ export function Workspace() {
     setConversations(data.conversations);
   }, []);
 
+  const refreshAgents = useCallback(async () => {
+    const response = await fetch("/api/agents");
+    if (!response.ok) return;
+    const data = (await response.json()) as { agents: Agent[] };
+    setAgents(data.agents);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const [listResponse, statusResponse] = await Promise.all([
+      const [listResponse, statusResponse, agentResponse] = await Promise.all([
         fetch("/api/conversations"),
         fetch("/api/status"),
+        fetch("/api/agents"),
       ]);
       if (cancelled) return;
       if (statusResponse.ok) {
@@ -119,6 +133,10 @@ export function Workspace() {
             ? `OpenAI-compatible${status.model ? ` · ${status.model}` : ""}`
             : "Mock provider",
         );
+      }
+      if (agentResponse.ok) {
+        const agentData = (await agentResponse.json()) as { agents: Agent[] };
+        if (!cancelled) setAgents(agentData.agents);
       }
       if (!listResponse.ok) return;
       const data = (await listResponse.json()) as { conversations: Conversation[] };
@@ -148,6 +166,26 @@ export function Workspace() {
     const url = new URL(window.location.href);
     url.searchParams.delete("c");
     window.history.replaceState(null, "", url);
+  }
+
+  function selectAgent(id: string) {
+    if (streaming) return;
+    setActiveAgentId(id);
+    newChat();
+  }
+
+  async function createAgent(draft: AgentDraft): Promise<string | null> {
+    const response = await fetch("/api/agents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(draft),
+    });
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      return body?.error ?? "Could not create agent";
+    }
+    await refreshAgents();
+    return null;
   }
 
   async function rename(id: string, title: string) {
@@ -191,6 +229,7 @@ export function Workspace() {
     if (!response.ok) return;
     const data = (await response.json()) as { conversation: Conversation; messages: Message[] };
     setActiveId(data.conversation.id);
+    setActiveAgentId(data.conversation.agentId);
     setMessages((local) => preferRicherAssistant(local, data.messages));
     setActivities((local) =>
       activitiesAfterReconnect(local, activitiesFromMessages(data.messages)),
@@ -303,6 +342,7 @@ export function Workspace() {
         body: JSON.stringify({
           message: trimmed,
           conversationId: conversationId ?? undefined,
+          agentId: conversationId ? undefined : activeAgentId,
         }),
         signal: controller.signal,
       });
@@ -331,7 +371,10 @@ export function Workspace() {
             setConversations((prev) => {
               const others = prev.filter((item) => item.id !== id);
               const now = new Date().toISOString();
-              return [{ id, title, createdAt: now, updatedAt: now }, ...others];
+              return [
+                { id, title, agentId: activeAgentId, createdAt: now, updatedAt: now },
+                ...others,
+              ];
             });
             setMessages((prev) =>
               prev.map((item) =>
@@ -500,6 +543,8 @@ export function Workspace() {
   }
 
   const active = conversations.find((item) => item.id === activeId) ?? null;
+  const speakingId = active?.agentId ?? activeAgentId;
+  const speaking = agents.find((agent) => agent.id === speakingId) ?? null;
   const awaitingApproval = activities.some((activity) => activity.state === "approval");
 
   return (
@@ -507,6 +552,8 @@ export function Workspace() {
       <ConversationList
         conversations={conversations}
         activeId={activeId}
+        agents={agents}
+        activeAgentId={speakingId}
         providerLabel={providerLabel}
         busy={streaming}
         open={navOpen}
@@ -516,6 +563,8 @@ export function Workspace() {
           setMobilePane("chat");
           if (!streaming) void selectConversation(id);
         }}
+        onSelectAgent={selectAgent}
+        onCreateAgent={createAgent}
       />
       <button
         type="button"
@@ -592,6 +641,7 @@ export function Workspace() {
           ) : (
             <>
               <h1>{active?.title ?? "New chat"}</h1>
+              {speaking ? <span className="agent-chip">{speaking.name}</span> : null}
               <div className="header-actions">
                 {active ? (
                   <>
@@ -647,6 +697,7 @@ export function Workspace() {
           <Composer
             streaming={streaming}
             awaitingApproval={awaitingApproval}
+            placeholder={speaking ? `Message ${speaking.name}` : "Message Mockbot"}
             onSend={(text) => void send(text)}
             onStop={stopTurn}
           />

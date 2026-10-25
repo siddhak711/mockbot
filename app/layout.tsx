@@ -4,7 +4,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Mockbot",
-  description: "A personal agent workspace",
+  description: "A multi-agent chat workspace",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

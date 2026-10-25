@@ -1,5 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
+import { LEAD_AGENT_ID } from "./agents/ids";
+import { applyAgentSchema } from "./agents/migration";
 import { parseTrace } from "./trace";
 import type {
   Conversation,
@@ -51,6 +53,7 @@ CREATE INDEX IF NOT EXISTS tool_calls_message_idx ON tool_calls (message_id, seq
 type ConversationRow = {
   id: string;
   title: string;
+  agent_id: string;
   created_at: Date | string;
   updated_at: Date | string;
 };
@@ -84,6 +87,7 @@ function mapConversation(row: ConversationRow): Conversation {
   return {
     id: row.id,
     title: row.title,
+    agentId: row.agent_id,
     createdAt: asIso(row.created_at),
     updatedAt: asIso(row.updated_at),
   };
@@ -127,12 +131,18 @@ export function titleFromMessage(message: string): string {
 export class ConversationStore {
   private constructor(private readonly db: PGlite) {}
 
+  /** Shared embedded database. The agent directory keeps its tables here. */
+  get connection(): PGlite {
+    return this.db;
+  }
+
   static async open(dataDir?: string): Promise<ConversationStore> {
     const persistent = dataDir && !dataDir.startsWith("memory:");
     if (persistent) await mkdir(dataDir, { recursive: true });
     const db = new PGlite(persistent ? dataDir : "memory://");
     await db.waitReady;
     await db.exec(SCHEMA);
+    await applyAgentSchema(db);
     return new ConversationStore(db);
   }
 
@@ -140,17 +150,12 @@ export class ConversationStore {
     if (!this.db.closed) await this.db.close();
   }
 
-  /** Embedded Postgres. Other modules apply their own migrations and queries. */
-  get database(): PGlite {
-    return this.db;
-  }
-
-  async createConversation(title: string): Promise<Conversation> {
+  async createConversation(title: string, agentId = LEAD_AGENT_ID): Promise<Conversation> {
     const id = crypto.randomUUID();
     const result = await this.db.query<ConversationRow>(
-      `INSERT INTO conversations (id, title) VALUES ($1, $2)
-       RETURNING id, title, created_at, updated_at`,
-      [id, title],
+      `INSERT INTO conversations (id, title, agent_id) VALUES ($1, $2, $3)
+       RETURNING id, title, agent_id, created_at, updated_at`,
+      [id, title, agentId],
     );
     const row = result.rows[0];
     if (!row) throw new Error("Failed to create conversation");
@@ -159,7 +164,7 @@ export class ConversationStore {
 
   async listConversations(): Promise<Conversation[]> {
     const result = await this.db.query<ConversationRow>(
-      `SELECT id, title, created_at, updated_at
+      `SELECT id, title, agent_id, created_at, updated_at
        FROM conversations
        ORDER BY updated_at DESC, id DESC`,
     );
@@ -170,7 +175,7 @@ export class ConversationStore {
     id: string,
   ): Promise<{ conversation: Conversation; messages: Message[] } | null> {
     const conversations = await this.db.query<ConversationRow>(
-      `SELECT id, title, created_at, updated_at FROM conversations WHERE id = $1`,
+      `SELECT id, title, agent_id, created_at, updated_at FROM conversations WHERE id = $1`,
       [id],
     );
     const conversation = conversations.rows[0];
@@ -204,7 +209,7 @@ export class ConversationStore {
       `UPDATE conversations
        SET title = $2, updated_at = NOW()
        WHERE id = $1
-       RETURNING id, title, created_at, updated_at`,
+       RETURNING id, title, agent_id, created_at, updated_at`,
       [id, title],
     );
     const row = result.rows[0];

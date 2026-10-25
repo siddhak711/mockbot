@@ -1,3 +1,7 @@
+import { AgentDirectory } from "./agents/directory";
+import { withAgentMock } from "./agents/mock-script";
+import { NoteMemory, defaultComputer, defaultConnector } from "./agents/ports";
+import type { AgentMemoryPort, ComputerPort, ConnectorPort } from "./agents/types";
 import { selectProvider, type LlmProvider } from "./llm";
 import { RoutineStore } from "./routines/store";
 import { ConversationStore } from "./store";
@@ -11,6 +15,10 @@ export type AppContext = {
   tools: ToolRegistry;
   approvals: ApprovalGate;
   routines?: RoutineStore;
+  agents?: AgentDirectory;
+  memory?: AgentMemoryPort;
+  computer?: ComputerPort;
+  connector?: ConnectorPort;
 };
 
 const GLOBAL_KEY = "__mockbotAppContext";
@@ -26,6 +34,11 @@ function slot(): Slot {
   return g[GLOBAL_KEY];
 }
 
+export async function getAgents(context: AppContext): Promise<AgentDirectory> {
+  if (!context.agents) context.agents = await AgentDirectory.attach(context.store);
+  return context.agents;
+}
+
 let current: AppContext | undefined;
 
 export function setAppContext(context: {
@@ -34,6 +47,10 @@ export function setAppContext(context: {
   tools?: ToolRegistry;
   approvals?: ApprovalGate;
   routines?: RoutineStore;
+  agents?: AgentDirectory;
+  memory?: AgentMemoryPort;
+  computer?: ComputerPort;
+  connector?: ConnectorPort;
 }): void {
   current = {
     store: context.store,
@@ -41,6 +58,10 @@ export function setAppContext(context: {
     tools: context.tools ?? createDefaultTools({}),
     approvals: context.approvals ?? new ApprovalGate(),
     routines: context.routines,
+    agents: context.agents,
+    memory: context.memory,
+    computer: context.computer,
+    connector: context.connector,
   };
   const shared = slot();
   shared.current = current;
@@ -65,13 +86,20 @@ export async function getAppContext(): Promise<AppContext> {
   }
   if (!shared.opening) {
     const dataDir = process.env.DATA_DIR?.trim() || ".data/pglite";
-    shared.opening = ConversationStore.open(dataDir).then(async (store) => ({
-      store,
-      provider: selectProvider(process.env),
-      tools: createDefaultTools(process.env),
-      approvals: new ApprovalGate(),
-      routines: await RoutineStore.attach(store),
-    }));
+    shared.opening = ConversationStore.open(dataDir).then(async (store) => {
+      const agents = await AgentDirectory.attach(store);
+      return {
+        store,
+        provider: withAgentMock(selectProvider(process.env)),
+        agents,
+        memory: new NoteMemory(agents),
+        computer: defaultComputer,
+        connector: defaultConnector,
+        tools: createDefaultTools(process.env),
+        approvals: new ApprovalGate(),
+        routines: await RoutineStore.attach(store),
+      };
+    });
   }
   try {
     const opened = await shared.opening;

@@ -142,12 +142,12 @@ export class RoutineStore {
   private constructor(private readonly conversations: ConversationStore) {}
 
   static async attach(conversations: ConversationStore): Promise<RoutineStore> {
-    await conversations.database.exec(ROUTINES_MIGRATION);
+    await conversations.connection.exec(ROUTINES_MIGRATION);
     return new RoutineStore(conversations);
   }
 
   private get db(): PGlite {
-    return this.conversations.database;
+    return this.conversations.connection;
   }
 
   async create(input: NewRoutine): Promise<Routine> {

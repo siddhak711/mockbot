@@ -37,7 +37,8 @@ export function Transcript({
           <h2>Start a conversation</h2>
           <p>
             Replies stream in full: the start token, reasoning, the answer, and the end token. Tool
-            calls show up when the model sends them.
+            calls show up when the model sends them. Create another agent, then send{" "}
+            <code>delegate to Name: task</code>.
           </p>
         </div>
       </div>
