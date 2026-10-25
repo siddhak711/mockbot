@@ -1,17 +1,16 @@
 import type { ConversationSummary, MemoryKind, MemoryVersion } from "../types";
 import { fitBlock, PROFILE_TOKEN_BUDGET, SEARCH_TOKEN_BUDGET } from "./tokens";
 
-export const SYSTEM_PROMPT = [
-  "You are Mockbot, a concise personal assistant. Reply in markdown when it helps.",
-  "",
+export const ASSISTANT_IDENTITY =
+  "You are Mockbot, a concise personal assistant. Reply in markdown when it helps.";
+
+export const TOOL_USE_RULES = [
   "You can call tools. Prefer a tool when it can answer the question. At most 15 tools are listed at once. If you need something that is not listed, call tool_search with a short query, then call the tool it returns.",
   "",
   "Read-only tools run immediately. Tools that send, post, delete, pay, or invite someone wait until the person approves them. If they deny a tool, do not retry it unless they ask again.",
 ].join("\n");
 
-export const BASE_SYSTEM_PROMPT = [
-  SYSTEM_PROMPT,
-  "",
+export const MEMORY_TOOL_RULES = [
   "You have durable memory for this agent. Use the memory tools. Do not claim you saved something unless the tool succeeded.",
   "",
   '- memory_write(key, text, kind?) saves a fact the user just told you. kind is "profile" for stable identity and preferences (name, timezone, favorites) and "fact" otherwise. Writing an existing key keeps the old row and stores a new one.',
@@ -24,6 +23,13 @@ export const BASE_SYSTEM_PROMPT = [
   "Profile memories are already in this prompt. Recalled facts matched the latest user message. They are system context, not new user messages.",
 ].join("\n");
 
+export const SYSTEM_PROMPT = [ASSISTANT_IDENTITY, "", TOOL_USE_RULES].join("\n");
+
+export const BASE_SYSTEM_PROMPT = [SYSTEM_PROMPT, "", MEMORY_TOOL_RULES].join("\n");
+
+/** Tool and memory rules for a custom agent, without the Mockbot identity line. */
+export const AGENT_RULES = [TOOL_USE_RULES, "", MEMORY_TOOL_RULES].join("\n");
+
 export function memoryLine(memory: Pick<MemoryVersion, "key" | "content">): string {
   const content = memory.content.replace(/\s+/g, " ").trim();
   return `- ${memory.key}: ${content}`;
@@ -33,12 +39,12 @@ export function renderMemoryBlock(memories: readonly MemoryVersion[], budget: nu
   return fitBlock(memories.map(memoryLine), budget);
 }
 
-export function buildSystemPrompt(input: {
+export function memorySections(input: {
   profiles: readonly MemoryVersion[];
   facts: readonly MemoryVersion[];
   summary?: ConversationSummary | null;
 }): string {
-  const parts = [BASE_SYSTEM_PROMPT];
+  const parts: string[] = [];
   if (input.summary?.summary) {
     parts.push(
       `<conversation-summary upto="${input.summary.uptoMessageId}">\n${input.summary.summary}\n</conversation-summary>`,
@@ -49,6 +55,15 @@ export function buildSystemPrompt(input: {
   const facts = renderMemoryBlock(input.facts, SEARCH_TOKEN_BUDGET);
   if (facts) parts.push(`<recalled-facts>\n${facts}\n</recalled-facts>`);
   return parts.join("\n\n");
+}
+
+export function buildSystemPrompt(input: {
+  profiles: readonly MemoryVersion[];
+  facts: readonly MemoryVersion[];
+  summary?: ConversationSummary | null;
+}): string {
+  const sections = memorySections(input);
+  return sections ? `${BASE_SYSTEM_PROMPT}\n\n${sections}` : BASE_SYSTEM_PROMPT;
 }
 
 export function sectionText(system: string, tag: string): string {

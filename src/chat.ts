@@ -11,7 +11,12 @@ import { titleFromMessage, type ConversationStore } from "./store";
 import type { LlmProvider } from "./llm";
 import { requiresApproval, type ApprovalGate } from "./tools/approval";
 import { runTool, type ToolRegistry } from "./tools/registry";
-import { BLOCKED_MEMORY_OUTPUT, describeTool, STOPPED_TOOL_OUTPUT } from "./tools/display";
+import {
+  activityTitle,
+  BLOCKED_MEMORY_OUTPUT,
+  describeTool,
+  STOPPED_TOOL_OUTPUT,
+} from "./tools/display";
 import type { ToolContext } from "./tools/types";
 import { buildModelInput } from "./turn";
 import { applyStreamEvent, emptyTrace, hasVisibleStream } from "./trace";
@@ -490,12 +495,22 @@ export async function streamChatTurn(options: {
         if (!call.name.startsWith("memory_")) memoryDeps.toolOutputs.push(result.content);
         const blocked = result.blocked === "secret";
         const shown = blocked ? BLOCKED_MEMORY_OUTPUT : result.content;
+        const activity = toolActivity(
+          {
+            id: call.id,
+            name: call.name,
+            output: shown,
+            isError: Boolean(result.isError),
+            blocked: result.blocked,
+          },
+          "done",
+        );
         return finish(
           call,
           result.isError ? "error" : "done",
           shown,
           result.content,
-          blocked ? "Memory write blocked" : undefined,
+          call.name.startsWith("memory_") ? activity.title : undefined,
         );
       }
 
@@ -506,6 +521,11 @@ export async function streamChatTurn(options: {
         modelOutput = output,
         title?: string,
       ): Promise<string> {
+        const resolvedTitle =
+          title ??
+          (call.name.startsWith("memory_")
+            ? activityTitle(call.name, "done", status === "error", output === BLOCKED_MEMORY_OUTPUT)
+            : undefined);
         call.status = status;
         call.output = output;
         call.result = output;
@@ -514,7 +534,7 @@ export async function streamChatTurn(options: {
           name: call.name,
           status,
           output,
-          ...(title ? { title } : {}),
+          ...(resolvedTitle ? { title: resolvedTitle } : {}),
           assistantMessageId: assistantId,
         });
         await saveCall(call);
@@ -558,31 +578,6 @@ function toLlmToolCall(call: PendingCall): LlmToolCall {
     type: "function",
     function: { name: call.name, arguments: call.arguments || "{}" },
   };
-}
-
-function activityTitle(
-  name: string,
-  phase: "running" | "done",
-  isError: boolean,
-  blockedWrite: boolean,
-): string {
-  if (blockedWrite) return "Memory write blocked";
-  const label =
-    name === "memory_search"
-      ? "Searching memory"
-      : name === "memory_delete"
-        ? "Forgetting a memory"
-        : name === "memory_update"
-          ? "Updating a memory"
-          : name === "memory_write"
-            ? "Saving a memory"
-            : name;
-  if (phase === "running" || !isError) return label;
-  if (name === "memory_delete") return "Could not forget that memory";
-  if (name === "memory_search") return "Memory search failed";
-  if (name === "memory_update") return "Could not update that memory";
-  if (name === "memory_write") return "Could not save that memory";
-  return `${name} failed`;
 }
 
 export function toolActivity(

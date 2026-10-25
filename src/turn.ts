@@ -1,20 +1,25 @@
 import { DEFAULT_AGENT_ID } from "./agent";
 import { compactIfNeeded } from "./memory/compact";
-import { BASE_SYSTEM_PROMPT, buildSystemPrompt, SYSTEM_PROMPT } from "./memory/prompt";
+import { AGENT_RULES, BASE_SYSTEM_PROMPT, memorySections, SYSTEM_PROMPT } from "./memory/prompt";
 import { contextTokenLimit, SEARCH_TOP_K } from "./memory/tokens";
 import type { ConversationStore } from "./store";
 import type { MemoryToolDeps } from "./tools/types";
 import type { LlmMessage, Message } from "./types";
 
-function systemContent(agentPrompt: string | undefined, memoryPrompt: string): string {
+function withSections(prefix: string, sections: string): string {
+  return sections ? `${prefix}\n\n${sections}` : prefix;
+}
+
+function systemContent(agentPrompt: string | undefined, sections: string): string {
+  const lead = withSections(BASE_SYSTEM_PROMPT, sections);
   if (!agentPrompt || agentPrompt === SYSTEM_PROMPT || agentPrompt === BASE_SYSTEM_PROMPT) {
-    return memoryPrompt;
+    return lead;
   }
   if (agentPrompt.startsWith(`${SYSTEM_PROMPT}\n`)) {
     const agentExtra = agentPrompt.slice(SYSTEM_PROMPT.length).replace(/^\n+/, "");
-    return `${memoryPrompt}\n\n${agentExtra}`;
+    return agentExtra ? `${lead}\n\n${agentExtra}` : lead;
   }
-  return `${agentPrompt}\n\n${memoryPrompt}`;
+  return withSections(`${agentPrompt}\n\n${AGENT_RULES}`, sections);
 }
 
 export async function buildModelInput(options: {
@@ -45,9 +50,9 @@ export async function buildModelInput(options: {
     const covered = promptMessages.findIndex((message) => message.id === summary.uptoMessageId);
     if (covered >= 0) promptMessages = promptMessages.slice(covered + 1);
   }
-  const memoryPrompt = buildSystemPrompt({ profiles, facts, summary });
+  const sections = memorySections({ profiles, facts, summary });
   const messages: LlmMessage[] = [
-    { role: "system", content: systemContent(options.agentPrompt, memoryPrompt) },
+    { role: "system", content: systemContent(options.agentPrompt, sections) },
   ];
   for (const message of promptMessages) {
     const rendered = renderTurnMessage(message);

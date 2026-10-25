@@ -48,6 +48,7 @@ it("includes memory tool rules on the first remember turn before any memory exis
     "You have durable memory for this agent. Use the memory tools. Do not claim you saved something unless the tool succeeded.",
   );
   expect(system).toContain("memory_write(key, text, kind?)");
+  expect(system).toContain("You are Mockbot");
   expect(system).not.toContain("<profile-memories>");
 });
 
@@ -91,6 +92,7 @@ it("includes memory tool rules for a custom agent", async () => {
   expect(system).toContain(
     "Tools that send, post, delete, pay, or invite someone wait until the person approves them.",
   );
+  expect(system).not.toContain("You are Mockbot");
   expect(sectionText(system, "profile-memories")).toContain("42");
 });
 

@@ -117,6 +117,31 @@ export function approvalSummary(name: string, args: Record<string, unknown> | nu
   return `Allow ${name} to ${action}? This can send, post, delete, or pay.`;
 }
 
+export function activityTitle(
+  name: string,
+  phase: "running" | "done",
+  isError: boolean,
+  blockedWrite: boolean,
+): string {
+  if (blockedWrite) return "Memory write blocked";
+  const label =
+    name === "memory_search"
+      ? "Searching memory"
+      : name === "memory_delete"
+        ? "Forgetting a memory"
+        : name === "memory_update"
+          ? "Updating a memory"
+          : name === "memory_write"
+            ? "Saving a memory"
+            : name;
+  if (phase === "running" || !isError) return label;
+  if (name === "memory_delete") return "Could not forget that memory";
+  if (name === "memory_search") return "Memory search failed";
+  if (name === "memory_update") return "Could not update that memory";
+  if (name === "memory_write") return "Could not save that memory";
+  return `${name} failed`;
+}
+
 export function describeTool(
   name: string,
   raw: string,
@@ -134,6 +159,9 @@ export function toToolActivity(tool: StoredToolCall): ToolActivity {
   const described = describeTool(tool.name, tool.arguments);
   const output = tool.output ?? "";
   const blocked = tool.name === "memory_write" && output === BLOCKED_MEMORY_OUTPUT;
+  const title = tool.name.startsWith("memory_")
+    ? activityTitle(tool.name, "done", tool.status === "error", blocked)
+    : described.title;
   return {
     id: tool.id,
     messageId: tool.messageId,
@@ -143,7 +171,7 @@ export function toToolActivity(tool: StoredToolCall): ToolActivity {
     preview: output ? previewText(output) : "",
     state: tool.status,
     ...described,
-    title: blocked ? "Memory write blocked" : described.title,
+    title,
   };
 }
 
