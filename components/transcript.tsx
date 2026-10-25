@@ -1,18 +1,25 @@
 import { useEffect, useRef } from "react";
 import type { LivePhase, Message } from "../src/types";
+import type { ToolActivity } from "../src/tools/display";
 import { AssistantStream } from "./assistant-stream";
-import { ToolActivityCards, type ToolActivity } from "./tool-activity";
+import { ToolActivityCards } from "./tool-activity";
 
 export function Transcript({
   messages,
   streaming = false,
   livePhase = null,
   activities = [],
+  decidingId,
+  onDecide,
+  onSelectTool,
 }: {
   messages: Message[];
   streaming?: boolean;
   livePhase?: LivePhase | null;
   activities?: ToolActivity[];
+  decidingId?: string | null;
+  onDecide?: (id: string, decision: "approve" | "deny") => void;
+  onSelectTool?: (id: string) => void;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
   const lastAssistantId = [...messages]
@@ -21,7 +28,7 @@ export function Transcript({
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
-  }, [messages, streaming, activities]);
+  }, [messages, streaming, activities, livePhase]);
 
   if (messages.length === 0) {
     return (
@@ -50,15 +57,21 @@ export function Transcript({
               </article>
             );
           }
+          const messageActivities = activities.filter(
+            (activity) => activity.messageId === message.id,
+          );
           return (
             <article
               key={message.id}
               className="message assistant"
               aria-label={live ? "Reply still streaming" : "Mockbot"}
             >
-              {message.id === lastAssistantId ? (
-                <ToolActivityCards activities={activities} />
-              ) : null}
+              <ToolActivityCards
+                activities={messageActivities}
+                decidingId={decidingId}
+                onDecide={onDecide}
+                onSelect={onSelectTool}
+              />
               <AssistantStream message={message} live={live} livePhase={live ? livePhase : null} />
             </article>
           );

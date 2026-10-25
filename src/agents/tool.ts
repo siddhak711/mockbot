@@ -1,8 +1,10 @@
 import type { LlmProvider } from "../llm";
 import type { ConversationStore } from "../store";
+import { ToolRegistry } from "../tools/registry";
+import type { ToolDefinition } from "../tools/types";
 import { performDelegation } from "./delegate";
 import type { AgentDirectory } from "./directory";
-import { DELEGATE_TOOL_NAME } from "./ids";
+import { DELEGATE_TOOL_NAME, LEAD_AGENT_ID } from "./ids";
 import type { AgentMemoryPort, ComputerPort, ConnectorPort } from "./types";
 
 /**
@@ -88,4 +90,17 @@ export function delegateTool(deps: DelegateDeps): AgentTool {
 
 export function registerDelegateTool(host: AgentToolHost, deps: DelegateDeps): void {
   host.register(delegateTool(deps));
+}
+
+/** Lead conversations see `delegate`. Every other agent keeps the shared registry unchanged. */
+export function toolsForSpeaker(
+  base: ToolRegistry,
+  speakerId: string,
+  deps: DelegateDeps,
+): ToolRegistry {
+  if (speakerId !== LEAD_AGENT_ID || base.get(DELEGATE_TOOL_NAME)) return base;
+  const copy = new ToolRegistry();
+  for (const tool of base.list()) copy.register(tool);
+  copy.register(delegateTool(deps) as ToolDefinition);
+  return copy;
 }

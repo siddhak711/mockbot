@@ -4,10 +4,15 @@ import { NoteMemory, defaultComputer, defaultConnector } from "./agents/ports";
 import type { AgentMemoryPort, ComputerPort, ConnectorPort } from "./agents/types";
 import { selectProvider, type LlmProvider } from "./llm";
 import { ConversationStore } from "./store";
+import { ApprovalGate } from "./tools/approval";
+import { createDefaultTools } from "./tools/builtins";
+import type { ToolRegistry } from "./tools/registry";
 
 export type AppContext = {
   store: ConversationStore;
   provider: LlmProvider;
+  tools: ToolRegistry;
+  approvals: ApprovalGate;
   agents?: AgentDirectory;
   memory?: AgentMemoryPort;
   computer?: ComputerPort;
@@ -21,8 +26,26 @@ export async function getAgents(context: AppContext): Promise<AgentDirectory> {
 
 let current: AppContext | undefined;
 
-export function setAppContext(context: AppContext): void {
-  current = context;
+export function setAppContext(context: {
+  store: ConversationStore;
+  provider: LlmProvider;
+  tools?: ToolRegistry;
+  approvals?: ApprovalGate;
+  agents?: AgentDirectory;
+  memory?: AgentMemoryPort;
+  computer?: ComputerPort;
+  connector?: ConnectorPort;
+}): void {
+  current = {
+    store: context.store,
+    provider: context.provider,
+    tools: context.tools ?? createDefaultTools({}),
+    approvals: context.approvals ?? new ApprovalGate(),
+    agents: context.agents,
+    memory: context.memory,
+    computer: context.computer,
+    connector: context.connector,
+  };
 }
 
 export async function resetAppContext(): Promise<void> {
@@ -43,6 +66,8 @@ export async function getAppContext(): Promise<AppContext> {
       memory: new NoteMemory(agents),
       computer: defaultComputer,
       connector: defaultConnector,
+      tools: createDefaultTools(process.env),
+      approvals: new ApprovalGate(),
     };
   }
   return current;

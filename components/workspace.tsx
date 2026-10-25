@@ -8,9 +8,18 @@ import { Transcript } from "./transcript";
 import type { AgentDraft } from "./agent-panel";
 import { LEAD_AGENT_ID } from "../src/agents/ids";
 import type { Agent } from "../src/agents/types";
+import { releaseDecision, settleDecision, stopDecision } from "../src/decision-lock";
 import { SseParser } from "../src/sse";
 import { applyClientEvent, emptyTrace, phaseFromEvent, streamedWeight } from "../src/trace";
-import type { Conversation, LivePhase, Message } from "../src/types";
+import {
+  activitiesAfterReconnect,
+  activitiesAfterStop,
+  activitiesFromMessages,
+  describeTool,
+  previewText,
+  type ToolActivity,
+} from "../src/tools/display";
+import type { Conversation, LivePhase, Message, ToolCallStatus } from "../src/types";
 
 function isAbort(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
@@ -42,32 +51,57 @@ export function Workspace() {
   const [computerOpen, setComputerOpen] = useState(true);
   const [navOpen, setNavOpen] = useState(false);
   const [mobilePane, setMobilePane] = useState<"chat" | "computer">("chat");
+  const [activities, setActivities] = useState<ToolActivity[]>([]);
+  const [selectedToolId, setSelectedToolId] = useState<string | null>(null);
+  const [decidingId, setDecidingId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const activeIdRef = useRef<string | null>(null);
+  const activitiesRef = useRef(activities);
+  const decidingRef = useRef<string | null>(null);
+  activitiesRef.current = activities;
+
+  const releaseApprovalLock = useCallback(() => {
+    stopDecision(decidingRef);
+    setDecidingId(null);
+  }, []);
 
   useEffect(() => {
     activeIdRef.current = activeId;
   }, [activeId]);
 
-  const selectConversation = useCallback(async (id: string) => {
-    const response = await fetch(`/api/conversations/${id}`);
-    if (!response.ok) {
-      setActiveId(null);
-      setMessages([]);
-      return;
-    }
-    const data = (await response.json()) as { conversation: Conversation; messages: Message[] };
-    setActiveId(data.conversation.id);
-    setActiveAgentId(data.conversation.agentId);
-    setMessages(data.messages);
-    setEditing(false);
-    setConversations((prev) =>
-      prev.map((item) => (item.id === data.conversation.id ? data.conversation : item)),
-    );
-    const url = new URL(window.location.href);
-    url.searchParams.set("c", data.conversation.id);
-    window.history.replaceState(null, "", url);
-  }, []);
+  const selectConversation = useCallback(
+    async (id: string) => {
+      const response = await fetch(`/api/conversations/${id}`);
+      if (!response.ok) {
+        releaseApprovalLock();
+        setActiveId(null);
+        setMessages([]);
+        setActivities([]);
+        setSelectedToolId(null);
+        return;
+      }
+      const data = (await response.json()) as { conversation: Conversation; messages: Message[] };
+      setActiveId(data.conversation.id);
+      setActiveAgentId(data.conversation.agentId);
+      setMessages(data.messages);
+      releaseApprovalLock();
+      const nextActivities = activitiesFromMessages(data.messages);
+      setActivities(nextActivities);
+      setSelectedToolId((current) =>
+        current && nextActivities.some((item) => item.id === current)
+          ? current
+          : (nextActivities[nextActivities.length - 1]?.id ?? null),
+      );
+      setEditing(false);
+      setConversations((prev) =>
+        prev.map((item) => (item.id === data.conversation.id ? data.conversation : item)),
+      );
+      const url = new URL(window.location.href);
+      url.searchParams.set("c", data.conversation.id);
+      window.history.replaceState(null, "", url);
+    },
+    [releaseApprovalLock],
+  );
 
   const refreshList = useCallback(async () => {
     const response = await fetch("/api/conversations");
@@ -125,6 +159,8 @@ export function Workspace() {
     setMobilePane("chat");
     setActiveId(null);
     setMessages([]);
+    setActivities([]);
+    setSelectedToolId(null);
     setError(null);
     setEditing(false);
     const url = new URL(window.location.href);
@@ -178,6 +214,8 @@ export function Workspace() {
     if (activeIdRef.current === id) {
       setActiveId(null);
       setMessages([]);
+      setActivities([]);
+      setSelectedToolId(null);
       setEditing(false);
       const url = new URL(window.location.href);
       url.searchParams.delete("c");
@@ -186,12 +224,16 @@ export function Workspace() {
   }
 
   async function reloadKeepingLonger(id: string) {
+    releaseApprovalLock();
     const response = await fetch(`/api/conversations/${id}`);
     if (!response.ok) return;
     const data = (await response.json()) as { conversation: Conversation; messages: Message[] };
     setActiveId(data.conversation.id);
     setActiveAgentId(data.conversation.agentId);
     setMessages((local) => preferRicherAssistant(local, data.messages));
+    setActivities((local) =>
+      activitiesAfterReconnect(local, activitiesFromMessages(data.messages)),
+    );
     setConversations((prev) =>
       prev.map((item) => (item.id === data.conversation.id ? data.conversation : item)),
     );
@@ -202,7 +244,8 @@ export function Workspace() {
 
   async function send(text: string) {
     const trimmed = text.trim();
-    if (!trimmed || streaming) return;
+    const approvalPending = activitiesRef.current.some((item) => item.state === "approval");
+    if (!trimmed || streaming || approvalPending) return;
     setError(null);
     setEditing(false);
     const controller = new AbortController();
@@ -226,6 +269,71 @@ export function Workspace() {
     let assistantLocalId: string | null = null;
     let conversationId = activeIdRef.current;
     let sawMeta = false;
+
+    const bindAssistant = (serverId: string) => {
+      if (!serverId) return;
+      if (!assistantLocalId) assistantLocalId = serverId;
+      else if (assistantLocalId !== serverId) {
+        const previous = assistantLocalId;
+        assistantLocalId = serverId;
+        setMessages((prev) =>
+          prev.map((item) => (item.id === previous ? { ...item, id: serverId } : item)),
+        );
+      }
+      const id = assistantLocalId;
+      const convId = conversationId ?? "";
+      setMessages((prev) => {
+        if (prev.some((item) => item.id === id)) return prev;
+        return [
+          ...prev,
+          {
+            id,
+            conversationId: convId,
+            role: "assistant",
+            content: "",
+            createdAt: new Date().toISOString(),
+            trace: emptyTrace(),
+          },
+        ];
+      });
+    };
+
+    const applyStream = (name: string, payload: Record<string, unknown>) => {
+      const phase = phaseFromEvent(name);
+      if (phase) setLivePhase(phase);
+      if (!assistantLocalId) assistantLocalId = `local-${crypto.randomUUID()}`;
+      const assistantId = assistantLocalId;
+      const convId = conversationId ?? "";
+      setMessages((prev) => {
+        const index = prev.findIndex((item) => item.id === assistantId);
+        if (index === -1) {
+          return [
+            ...prev,
+            applyClientEvent(
+              {
+                id: assistantId,
+                conversationId: convId,
+                role: "assistant",
+                content: "",
+                createdAt: new Date().toISOString(),
+                trace: emptyTrace(),
+              },
+              name,
+              payload,
+            ),
+          ];
+        }
+        const next = prev.slice();
+        const current = prev[index];
+        if (!current) return prev;
+        next[index] = applyClientEvent(current, name, payload);
+        return next;
+      });
+    };
+
+    const patchActivity = (id: string, patch: Partial<ToolActivity>) => {
+      setActivities((prev) => prev.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+    };
 
     try {
       const response = await fetch("/api/chat", {
@@ -277,40 +385,81 @@ export function Workspace() {
             event.event === "start" ||
             event.event === "reasoning" ||
             event.event === "tool_call" ||
-            event.event === "tool_result" ||
             event.event === "delta" ||
-            event.event === "end"
+            event.event === "end" ||
+            (event.event === "tool_result" &&
+              typeof payload.content === "string" &&
+              typeof payload.status !== "string")
           ) {
-            const phase = phaseFromEvent(event.event);
-            if (phase) setLivePhase(phase);
-            if (!assistantLocalId) assistantLocalId = `local-${crypto.randomUUID()}`;
-            const assistantId = assistantLocalId;
-            const convoId = conversationId ?? "";
-            setMessages((prev) => {
-              const index = prev.findIndex((item) => item.id === assistantId);
-              if (index === -1) {
-                return [
-                  ...prev,
-                  applyClientEvent(
-                    {
-                      id: assistantId,
-                      conversationId: convoId,
-                      role: "assistant",
-                      content: "",
-                      createdAt: new Date().toISOString(),
-                      trace: emptyTrace(),
-                    },
-                    event.event,
-                    payload,
-                  ),
-                ];
-              }
-              const next = prev.slice();
-              const current = prev[index];
-              if (!current) return prev;
-              next[index] = applyClientEvent(current, event.event, payload);
-              return next;
+            applyStream(event.event, payload);
+          } else if (event.event === "tool_start") {
+            const id = String(payload.id ?? "");
+            const name = String(payload.name ?? "");
+            const messageId = String(payload.assistantMessageId ?? "");
+            if (!id || !messageId) continue;
+            bindAssistant(messageId);
+            const described = describeTool(name, "");
+            setActivities((prev) => [
+              ...prev.filter((item) => item.id !== id),
+              {
+                id,
+                messageId,
+                name,
+                arguments: "",
+                output: "",
+                preview: "",
+                state: "running",
+                ...described,
+              },
+            ]);
+            setSelectedToolId(id);
+          } else if (event.event === "tool_args") {
+            const id = String(payload.id ?? "");
+            const raw = String(payload.arguments ?? "");
+            setActivities((prev) =>
+              prev.map((item) => {
+                if (item.id !== id) return item;
+                return { ...item, arguments: raw, ...describeTool(item.name, raw) };
+              }),
+            );
+          } else if (event.event === "approval_required") {
+            const id = String(payload.id ?? "");
+            const raw = String(payload.arguments ?? "");
+            const summary = String(payload.summary ?? "");
+            setActivities((prev) =>
+              prev.map((item) => {
+                if (item.id !== id) return item;
+                const described = describeTool(item.name, raw || item.arguments);
+                return {
+                  ...item,
+                  ...described,
+                  state: "approval",
+                  arguments: raw || item.arguments,
+                  summary: summary || described.summary,
+                };
+              }),
+            );
+            setSelectedToolId(id);
+          } else if (event.event === "tool_status") {
+            const id = String(payload.id ?? "");
+            const status = String(payload.status ?? "") as ToolCallStatus;
+            if (!id || !status) continue;
+            patchActivity(id, { state: status });
+            if (status !== "approval") {
+              releaseDecision(decidingRef, id);
+              setDecidingId((current) => (current === id ? null : current));
+            }
+          } else if (event.event === "tool_result") {
+            const id = String(payload.id ?? "");
+            const status = String(payload.status ?? "done") as ToolCallStatus;
+            const output = String(payload.output ?? "");
+            patchActivity(id, {
+              state: status,
+              output,
+              preview: output ? previewText(output) : "",
             });
+            releaseDecision(decidingRef, id);
+            setDecidingId((current) => (current === id ? null : current));
           } else if (event.event === "error") {
             setError(String(payload.message ?? "The model request failed"));
           }
@@ -341,9 +490,62 @@ export function Workspace() {
     }
   }
 
+  async function decide(id: string, decision: "approve" | "deny") {
+    try {
+      const outcome = await settleDecision(decidingRef, id, async () => {
+        setDecidingId(id);
+        const response = await fetch("/api/tools/approvals", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id, decision }),
+        });
+        if (response.ok) {
+          setActivities((prev) =>
+            prev.map((item) =>
+              item.id === id
+                ? { ...item, state: decision === "approve" ? "running" : "denied" }
+                : item,
+            ),
+          );
+          return true;
+        }
+        const activity = activitiesRef.current.find((item) => item.id === id);
+        if (!activity || activity.state === "approval") {
+          setError(
+            response.status === 404
+              ? "That approval expired. Send the request again."
+              : "Could not save the decision",
+          );
+        }
+        return false;
+      });
+      if (outcome === "released") {
+        setDecidingId((current) => (current === id ? null : current));
+      }
+    } catch {
+      setDecidingId((current) => (current === id ? null : current));
+    }
+  }
+
+  function stopTurn() {
+    const pending = activitiesRef.current.filter((activity) => activity.state === "approval");
+    if (pending.length > 0) setActivities((current) => activitiesAfterStop(current));
+    abortRef.current?.abort();
+    stopDecision(decidingRef);
+    setDecidingId(null);
+    for (const activity of pending) {
+      void fetch("/api/tools/approvals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: activity.id, decision: "stop" }),
+      });
+    }
+  }
+
   const active = conversations.find((item) => item.id === activeId) ?? null;
   const speakingId = active?.agentId ?? activeAgentId;
   const speaking = agents.find((agent) => agent.id === speakingId) ?? null;
+  const awaitingApproval = activities.some((activity) => activity.state === "approval");
 
   return (
     <div className={computerOpen ? "app with-computer" : "app"}>
@@ -478,7 +680,15 @@ export function Workspace() {
           )}
         </header>
         <div className="chat-body">
-          <Transcript messages={messages} streaming={streaming} livePhase={livePhase} />
+          <Transcript
+            messages={messages}
+            streaming={streaming}
+            livePhase={livePhase}
+            activities={activities}
+            decidingId={decidingId}
+            onDecide={(id, decision) => void decide(id, decision)}
+            onSelectTool={setSelectedToolId}
+          />
           {error ? (
             <p className="error" role="alert">
               {error}
@@ -486,16 +696,28 @@ export function Workspace() {
           ) : null}
           <Composer
             streaming={streaming}
+            awaitingApproval={awaitingApproval}
             placeholder={speaking ? `Message ${speaking.name}` : "Message Mockbot"}
             onSend={(text) => void send(text)}
-            onStop={() => abortRef.current?.abort()}
+            onStop={stopTurn}
           />
         </div>
         <div className="computer-sheet">
-          <ComputerPane />
+          <ComputerPane
+            activities={activities}
+            selectedId={selectedToolId}
+            onSelect={setSelectedToolId}
+          />
         </div>
       </main>
-      {computerOpen ? <ComputerPane onHide={() => setComputerOpen(false)} /> : null}
+      {computerOpen ? (
+        <ComputerPane
+          activities={activities}
+          selectedId={selectedToolId}
+          onSelect={setSelectedToolId}
+          onHide={() => setComputerOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }

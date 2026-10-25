@@ -435,20 +435,25 @@ it("refuses a delegation from Mockbot to itself and keeps the conversation", asy
 });
 
 it("does not register delegate on another agent's conversation", async () => {
+  let turns = 0;
   const store = await ConversationStore.open();
   setAppContext({
     store,
     provider: new MockProvider({
       delayMs: 0,
       chunkSize: 80,
-      tools: () => [
-        {
-          id: "call_delegate",
-          name: "delegate",
-          arguments: JSON.stringify({ agent: "Clerk", task: "file this" }),
-        },
-      ],
-      reply: () => "Researcher stayed here",
+      tools: () => {
+        turns += 1;
+        if (turns > 1) return null;
+        return [
+          {
+            id: "call_delegate",
+            name: "delegate",
+            arguments: JSON.stringify({ agent: "Clerk", task: "file this" }),
+          },
+        ];
+      },
+      reply: () => (turns > 1 ? "Researcher stayed here" : undefined),
     }),
   });
   const created = await createAgent(
@@ -469,8 +474,13 @@ it("does not register delegate on another agent's conversation", async () => {
   );
   const events = await readSse(response);
   expect(events.some((event) => event.event === "error")).toBe(false);
-  expect(deltas(events)).toBe("Researcher stayed here");
-  expect(events.some((event) => event.event === "tool_result")).toBe(false);
+  expect(deltas(events)).toContain("Researcher stayed here");
+  const toolOutput = events
+    .filter((event) => event.event === "tool_result")
+    .map((event) => JSON.stringify(event.data))
+    .join("\n");
+  expect(toolOutput).toContain("Unknown tool");
+  expect(toolOutput).not.toContain("file this");
   const listed = await store.listConversations();
   expect(listed).toHaveLength(1);
   expect(listed[0]?.agentId).toBe(researcherId);

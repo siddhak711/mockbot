@@ -1,4 +1,4 @@
-import type { LlmProvider } from "../llm";
+import { streamOptions, type LlmProvider } from "../llm";
 import type { LlmMessage, LlmStreamEvent } from "../types";
 import { DELEGATE_TOOL_NAME, LEAD_AGENT_NAME, USE_COMPUTER_TOOL, USE_CONNECTOR_TOOL } from "./ids";
 
@@ -124,10 +124,14 @@ export function withAgentMock(provider: LlmProvider): LlmProvider {
   return {
     id: "mock",
     model: provider.model,
-    async *stream(messages: LlmMessage[], signal?: AbortSignal): AsyncIterable<LlmStreamEvent> {
+    async *stream(
+      messages: LlmMessage[],
+      input?: Parameters<LlmProvider["stream"]>[1],
+    ): AsyncIterable<LlmStreamEvent> {
+      const { signal } = streamOptions(input);
       const script = scriptLiveTurn(messages);
       if (!script) {
-        yield* provider.stream(messages, signal);
+        yield* provider.stream(messages, input);
         return;
       }
       if (signal?.aborted) return;

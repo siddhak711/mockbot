@@ -8,6 +8,19 @@ export type Conversation = {
   updatedAt: string;
 };
 
+export type ToolCallStatus = "running" | "approval" | "done" | "denied" | "error";
+
+export type StoredToolCall = {
+  id: string;
+  conversationId: string;
+  messageId: string;
+  name: string;
+  arguments: string;
+  status: ToolCallStatus;
+  output: string | null;
+  createdAt: string;
+};
+
 export type ToolTrace = {
   index: number;
   id: string;
@@ -33,11 +46,20 @@ export type Message = {
   content: string;
   createdAt: string;
   trace: MessageTrace | null;
+  tools?: StoredToolCall[];
+};
+
+export type LlmToolCall = {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
 };
 
 export type LlmMessage = {
-  role: "system" | Role;
+  role: "system" | Role | "tool";
   content: string;
+  tool_calls?: LlmToolCall[];
+  tool_call_id?: string;
 };
 
 export type ProviderId = "mock" | "openai";
