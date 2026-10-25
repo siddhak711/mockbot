@@ -6,7 +6,8 @@ import { ComputerPane } from "./computer-pane";
 import { ConversationList } from "./conversation-list";
 import { Transcript } from "./transcript";
 import { SseParser } from "../src/sse";
-import type { Conversation, Message } from "../src/types";
+import { applyClientEvent, emptyTrace, phaseFromEvent, streamedWeight } from "../src/trace";
+import type { Conversation, LivePhase, Message } from "../src/types";
 
 function isAbort(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
@@ -16,10 +17,10 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function preferLongerAssistant(local: Message[], remote: Message[]): Message[] {
+function preferRicherAssistant(local: Message[], remote: Message[]): Message[] {
   const localAssistant = [...local].reverse().find((message) => message.role === "assistant");
   const remoteAssistant = [...remote].reverse().find((message) => message.role === "assistant");
-  if ((localAssistant?.content.length ?? 0) > (remoteAssistant?.content.length ?? 0)) return local;
+  if (streamedWeight(localAssistant) > streamedWeight(remoteAssistant)) return local;
   return remote;
 }
 
@@ -28,6 +29,7 @@ export function Workspace() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState(false);
+  const [livePhase, setLivePhase] = useState<LivePhase | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [providerLabel, setProviderLabel] = useState("Mock provider");
   const [editing, setEditing] = useState(false);
@@ -150,7 +152,7 @@ export function Workspace() {
     if (!response.ok) return;
     const data = (await response.json()) as { conversation: Conversation; messages: Message[] };
     setActiveId(data.conversation.id);
-    setMessages((local) => preferLongerAssistant(local, data.messages));
+    setMessages((local) => preferRicherAssistant(local, data.messages));
     setConversations((prev) =>
       prev.map((item) => (item.id === data.conversation.id ? data.conversation : item)),
     );
@@ -167,6 +169,7 @@ export function Workspace() {
     const controller = new AbortController();
     abortRef.current = controller;
     setStreaming(true);
+    setLivePhase(null);
 
     const localUserId = `local-${crypto.randomUUID()}`;
     setMessages((prev) => [
@@ -177,6 +180,7 @@ export function Workspace() {
         role: "user",
         content: trimmed,
         createdAt: new Date().toISOString(),
+        trace: null,
       },
     ]);
 
@@ -226,30 +230,44 @@ export function Workspace() {
                 item.id === localUserId ? { ...item, conversationId: id } : item,
               ),
             );
-          } else if (event.event === "delta") {
-            const chunk = String(payload.text ?? "");
-            const id = conversationId ?? "";
-            if (!assistantLocalId) {
-              assistantLocalId = `local-${crypto.randomUUID()}`;
-              const assistantId = assistantLocalId;
-              setMessages((prev) => [
-                ...prev,
-                {
-                  id: assistantId,
-                  conversationId: id,
-                  role: "assistant",
-                  content: chunk,
-                  createdAt: new Date().toISOString(),
-                },
-              ]);
-            } else {
-              const assistantId = assistantLocalId;
-              setMessages((prev) =>
-                prev.map((item) =>
-                  item.id === assistantId ? { ...item, content: item.content + chunk } : item,
-                ),
-              );
-            }
+          } else if (
+            event.event === "start" ||
+            event.event === "reasoning" ||
+            event.event === "tool_call" ||
+            event.event === "tool_result" ||
+            event.event === "delta" ||
+            event.event === "end"
+          ) {
+            const phase = phaseFromEvent(event.event);
+            if (phase) setLivePhase(phase);
+            if (!assistantLocalId) assistantLocalId = `local-${crypto.randomUUID()}`;
+            const assistantId = assistantLocalId;
+            const convoId = conversationId ?? "";
+            setMessages((prev) => {
+              const index = prev.findIndex((item) => item.id === assistantId);
+              if (index === -1) {
+                return [
+                  ...prev,
+                  applyClientEvent(
+                    {
+                      id: assistantId,
+                      conversationId: convoId,
+                      role: "assistant",
+                      content: "",
+                      createdAt: new Date().toISOString(),
+                      trace: emptyTrace(),
+                    },
+                    event.event,
+                    payload,
+                  ),
+                ];
+              }
+              const next = prev.slice();
+              const current = prev[index];
+              if (!current) return prev;
+              next[index] = applyClientEvent(current, event.event, payload);
+              return next;
+            });
           } else if (event.event === "error") {
             setError(String(payload.message ?? "The model request failed"));
           }
@@ -275,6 +293,7 @@ export function Workspace() {
       }
     } finally {
       setStreaming(false);
+      setLivePhase(null);
       abortRef.current = null;
     }
   }
@@ -409,7 +428,7 @@ export function Workspace() {
           )}
         </header>
         <div className="chat-body">
-          <Transcript messages={messages} streaming={streaming} />
+          <Transcript messages={messages} streaming={streaming} livePhase={livePhase} />
           {error ? (
             <p className="error" role="alert">
               {error}
