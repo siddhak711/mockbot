@@ -566,3 +566,70 @@ it("ignores stale MCP names and still matches the names from a full refresh", as
     await server.close();
   }
 });
+
+async function waitUntil(ready: () => boolean, label: string): Promise<void> {
+  const started = Date.now();
+  while (!ready()) {
+    if (Date.now() - started > 5_000) throw new Error(`Timed out waiting for ${label}`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+it("does not save a connector when the request is aborted while another connector is still listing", async () => {
+  let releaseSlow: () => void = () => undefined;
+  const slowGate = new Promise<void>((resolve) => {
+    releaseSlow = resolve;
+  });
+  const slow = await startMockMcpServer({ gate: () => slowGate });
+  const fast = await startMockMcpServer();
+  try {
+    const store = await ConversationStore.open();
+    setAppContext({
+      store,
+      provider: new MockProvider({ delayMs: 0 }),
+      tools: createDefaultTools({}),
+    });
+    await store.createConnector({
+      name: "Existing",
+      transport: "http",
+      target: slow.url,
+      secretRef: null,
+    });
+    const controller = new AbortController();
+    const pending = createConnector(
+      new Request("http://localhost/api/connectors", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Second", transport: "http", target: fast.url }),
+        signal: controller.signal,
+      }),
+    );
+    await waitUntil(() => slow.activity.inflight > 0, "the existing connector to start listing");
+    const started = Date.now();
+    let stableAt = 0;
+    let lastHandled = -1;
+    while (Date.now() - started < 5_000) {
+      if (fast.activity.handled > 0 && fast.activity.inflight === 0) {
+        if (fast.activity.handled !== lastHandled) {
+          lastHandled = fast.activity.handled;
+          stableAt = Date.now();
+        } else if (Date.now() - stableAt >= 50) break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    if (lastHandled < 1 || fast.activity.inflight !== 0) {
+      throw new Error("The new connector did not finish listing");
+    }
+    expect(slow.activity.inflight).toBeGreaterThan(0);
+    controller.abort();
+    const response = await pending;
+    const body = await response.text();
+    expect(response.status, body).toBe(400);
+    expect(JSON.parse(body)).toEqual({ error: "The connection was cancelled." });
+    expect((await store.listConnectors()).map((row) => row.name)).toEqual(["Existing"]);
+  } finally {
+    releaseSlow();
+    await slow.close();
+    await fast.close();
+  }
+});

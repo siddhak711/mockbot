@@ -87,14 +87,21 @@ async function readBody(req) {
 
 export async function startMockMcpServer(options = {}) {
   const leak = options.leak ?? null;
+  const gate = options.gate;
   const authorizations = [];
+  const activity = { inflight: 0, handled: 0 };
   const handler = createMcpHandler(() => createMockServer(leak));
   const httpServer = createServer(async (req, res) => {
+    activity.inflight += 1;
     try {
+      if (gate) await gate();
       await handleHttp(req, res, handler, authorizations);
+      activity.handled += 1;
     } catch {
       if (!res.headersSent) res.statusCode = 500;
       res.end();
+    } finally {
+      activity.inflight -= 1;
     }
   });
   const port = options.port ?? 0;
@@ -107,6 +114,7 @@ export async function startMockMcpServer(options = {}) {
   return {
     url: `http://127.0.0.1:${address.port}/mcp`,
     authorizations,
+    activity,
     async close() {
       await handler.close().catch(() => undefined);
       await new Promise((resolve, reject) => {

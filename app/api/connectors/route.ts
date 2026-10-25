@@ -3,6 +3,7 @@ import { getAppContext } from "../../../src/context";
 import { McpClientError } from "../../../src/mcp/client";
 import { assignMcpToolNames } from "../../../src/mcp/sync";
 import { resolveSecret } from "../../../src/mcp/secrets";
+import { isAbortError } from "../../../src/tools/http";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -42,6 +43,11 @@ export async function POST(request: Request): Promise<Response> {
       env: process.env,
       signal: request.signal,
     });
+    const cancelled =
+      request.signal.aborted || listed.batches.some((batch) => isAbortError(batch.error));
+    if (cancelled) {
+      return Response.json({ error: "The connection was cancelled." }, { status: 400 });
+    }
     const draftBatch = listed.batches.find((batch) => batch.connector.id === draft.id);
     if (draftBatch?.error) throw draftBatch.error;
     const tools = listed.names.get(draft.id) ?? [];
