@@ -234,12 +234,19 @@ export class RoutineStore {
     return row ? mapRoutine(row) : null;
   }
 
-  async setConversation(id: string, conversationId: string, now: Date): Promise<void> {
-    await this.db.query(`UPDATE routines SET conversation_id = $2, updated_at = $3 WHERE id = $1`, [
-      id,
-      conversationId,
-      now,
-    ]);
+  /**
+   * Store this conversation only while the routine still has none.
+   * The id read back may belong to a run that won the update.
+   */
+  async setConversation(id: string, conversationId: string, now: Date): Promise<string | null> {
+    await this.db.query(
+      `UPDATE routines
+       SET conversation_id = $2, updated_at = $3
+       WHERE id = $1 AND conversation_id IS NULL`,
+      [id, conversationId, now],
+    );
+    const saved = await this.get(id);
+    return saved?.conversationId ?? null;
   }
 
   async listRuns(routineId: string, limit = 50): Promise<RoutineRun[]> {

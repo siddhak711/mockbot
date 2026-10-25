@@ -47,8 +47,9 @@ async function ensureConversation(
     if (existing) return existing.conversation.id;
   }
   const created = await store.createConversation(name);
-  await routines.setConversation(routineId, created.id, now);
-  return created.id;
+  const saved = await routines.setConversation(routineId, created.id, now);
+  if (!saved) throw new Error("Routine disappeared before its conversation was saved");
+  return saved;
 }
 
 export async function tick(options: {

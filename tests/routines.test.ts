@@ -284,6 +284,53 @@ it("does not send an unanswered failed prompt as the next run's history", async 
   ]);
 });
 
+it("keeps one conversation when two runs create one together", async () => {
+  const { store, routines } = await open();
+  const now = new Date("2026-10-25T21:00:00.000Z");
+  const routine = await routines.create({
+    name: "Shared",
+    prompt: "Note it",
+    eventName: "shipped",
+    now,
+  });
+  await routines.recordEvent({ name: "shipped", payload: "one", now });
+  await routines.recordEvent({ name: "shipped", payload: "two", now });
+
+  const original = store.createConversation.bind(store);
+  let creates = 0;
+  store.createConversation = async (title: string) => {
+    const created = await original(title);
+    creates += 1;
+    if (creates === 1) {
+      for (let turn = 0; turn < 40 && creates < 2; turn += 1) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    }
+    return created;
+  };
+
+  const clock = new FakeClock(now);
+  const [first, second] = await Promise.all([
+    tick({ routines, store, provider: reply("noted"), clock, workerId: "worker-a" }),
+    tick({ routines, store, provider: reply("noted"), clock, workerId: "worker-b" }),
+  ]);
+  expect(creates).toBe(2);
+  expect(first.succeeded + second.succeeded).toBe(2);
+  const saved = await routines.get(routine.id);
+  const runs = await routines.listRuns(routine.id);
+  expect(runs).toHaveLength(2);
+  expect(runs.every((run) => run.conversationId === saved?.conversationId)).toBe(true);
+  const conversation = await store.getConversation(saved!.conversationId!);
+  expect(
+    conversation?.messages
+      .filter((message) => message.role === "user")
+      .map((message) => message.content)
+      .sort(),
+  ).toEqual(["Note it\n\nEvent shipped:\none", "Note it\n\nEvent shipped:\ntwo"]);
+  const later = await store.createConversation("later");
+  expect(await routines.setConversation(routine.id, later.id, now)).toBe(saved?.conversationId);
+});
+
 it("lets only one of two workers complete a run", async () => {
   const { store, routines } = await open();
   const clock = new FakeClock(new Date("2026-10-25T21:00:00.000Z"));
