@@ -26,7 +26,7 @@ The first agent is Mockbot, seeded with the original assistant prompt. Create an
 delegate to Researcher: What is the grove code?
 ```
 
-The lead transcript shows the `delegate` call and the child result. The child conversation is in the same list, labeled with the child agent. The child uses its own memory note and can read a computer only when that computer id was granted. A connector or computer it was not granted is refused, and the lead conversation stays usable.
+The lead transcript shows the `delegate` call and the child result. Only Mockbot can delegate, and it cannot delegate to itself. The child conversation is in the same list, labeled with the child agent. The child uses its own memory note and can read a computer only when that computer id was granted. A connector or computer it was not granted is refused, and the lead conversation stays usable. A task that says `use connector <id>` asks for that connector.
 
 `npm run build` then `npm start` runs the production server.
 
@@ -87,7 +87,7 @@ You can put the same variables in `.env.local`. Names are listed in `.env.exampl
 - `DELETE /api/conversations/:id` deletes it.
 - `GET /api/agents` lists agents and their grants.
 - `POST /api/agents` with `{ "name", "instructions", "memoryNote?", "computerId?", "connectorId?" }` creates an agent. Optional ids are grants for a computer or a connector.
-- `POST /api/chat` accepts an optional `agentId` when starting a conversation. A message that begins `delegate to <name>: <task>` makes the mock provider call the `delegate` tool. The tool opens a child conversation for that agent and returns the result on the parent turn.
+- `POST /api/chat` accepts an optional `agentId` when starting a conversation. On a Mockbot conversation, a message that begins `delegate to <name>: <task>` makes the mock provider call the `delegate` tool. The tool opens a child conversation for that agent and returns the result on the parent turn. Delegating to Mockbot is refused. Other agents do not get the delegate tool.
 
 ## Checks
 

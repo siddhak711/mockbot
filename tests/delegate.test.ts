@@ -376,3 +376,158 @@ it("runs the live mock handoff for a delegate phrase", async () => {
   const ordinaryEvents = await readSse(ordinary);
   expect(deltas(ordinaryEvents)).toBe(buildMockReply("Say hello"));
 });
+
+it("refuses a delegation from Mockbot to itself and keeps the conversation", async () => {
+  let parentTurns = 0;
+  const store = await ConversationStore.open();
+  setAppContext({
+    store,
+    provider: new MockProvider({
+      delayMs: 0,
+      chunkSize: 80,
+      tools: () => {
+        parentTurns += 1;
+        if (parentTurns === 1) {
+          return [
+            {
+              id: "call_self",
+              name: "delegate",
+              arguments: JSON.stringify({ agent: "Mockbot", task: "hello" }),
+            },
+          ];
+        }
+        return null;
+      },
+      reply: () => (parentTurns > 1 ? "Still working" : undefined),
+    }),
+  });
+
+  const response = await POST(
+    new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "delegate to Mockbot: hello" }),
+    }),
+  );
+  const events = await readSse(response);
+  expect(events.some((event) => event.event === "error")).toBe(false);
+  const result = String(
+    (events.find((event) => event.event === "tool_result")?.data as { content?: string }).content,
+  );
+  expect(result.startsWith("Delegation failed")).toBe(true);
+  expect(result).toContain("cannot delegate to itself");
+  expect(deltas(events)).toBe("The handoff failed. This conversation can continue.");
+  const listed = await store.listConversations();
+  expect(listed).toHaveLength(1);
+  expect(listed[0]?.agentId).toBe(LEAD_AGENT_ID);
+  expect(listed.some((conversation) => conversation.title === "hello")).toBe(false);
+
+  const followUp = await POST(
+    new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Still here", conversationId: listed[0]?.id }),
+    }),
+  );
+  const followEvents = await readSse(followUp);
+  expect(followEvents.some((event) => event.event === "error")).toBe(false);
+  expect(deltas(followEvents)).toBe("Still working");
+});
+
+it("does not register delegate on another agent's conversation", async () => {
+  const store = await ConversationStore.open();
+  setAppContext({
+    store,
+    provider: new MockProvider({
+      delayMs: 0,
+      chunkSize: 80,
+      tools: () => [
+        {
+          id: "call_delegate",
+          name: "delegate",
+          arguments: JSON.stringify({ agent: "Clerk", task: "file this" }),
+        },
+      ],
+      reply: () => "Researcher stayed here",
+    }),
+  });
+  const created = await createAgent(
+    new Request("http://localhost/api/agents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Researcher", instructions: "Stay in this chat." }),
+    }),
+  );
+  const researcherId = ((await created.json()) as { agent: { id: string } }).agent.id;
+
+  const response = await POST(
+    new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Please file this", agentId: researcherId }),
+    }),
+  );
+  const events = await readSse(response);
+  expect(events.some((event) => event.event === "error")).toBe(false);
+  expect(deltas(events)).toBe("Researcher stayed here");
+  expect(events.some((event) => event.event === "tool_result")).toBe(false);
+  const listed = await store.listConversations();
+  expect(listed).toHaveLength(1);
+  expect(listed[0]?.agentId).toBe(researcherId);
+  expect(listed.some((conversation) => conversation.title === "file this")).toBe(false);
+});
+
+it("refuses an ungranted connector from the live delegate phrase", async () => {
+  const connectorCalls: string[] = [];
+  const store = await ConversationStore.open();
+  setAppContext({
+    store,
+    connector: {
+      async call(connectorId: string) {
+        connectorCalls.push(connectorId);
+        return "sent";
+      },
+    },
+    provider: withAgentMock(new MockProvider({ delayMs: 0, chunkSize: 24 })),
+  });
+  await createAgent(
+    new Request("http://localhost/api/agents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Researcher",
+        instructions: "You study groves.",
+        computerId: "desk",
+      }),
+    }),
+  );
+
+  const response = await POST(
+    new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "delegate to Researcher: use connector mail" }),
+    }),
+  );
+  const events = await readSse(response);
+  expect(events.some((event) => event.event === "error")).toBe(false);
+  expect(deltas(events)).toBe("The handoff failed. This conversation can continue.");
+  const result = String(
+    (events.find((event) => event.event === "tool_result")?.data as { content?: string }).content,
+  );
+  expect(result.startsWith("Delegation failed")).toBe(true);
+  expect(result).toContain("not granted connector mail");
+  expect(connectorCalls).toEqual([]);
+
+  const parent = (await store.listConversations()).find(
+    (conversation) => conversation.agentId === LEAD_AGENT_ID,
+  );
+  const followUp = await POST(
+    new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Say hello", conversationId: parent?.id }),
+    }),
+  );
+  expect(deltas(await readSse(followUp))).toBe(buildMockReply("Say hello"));
+});

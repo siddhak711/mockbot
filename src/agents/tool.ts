@@ -59,6 +59,8 @@ export type DelegateDeps = {
   memory: AgentMemoryPort;
   computer: ComputerPort;
   connector: ConnectorPort;
+  /** Conversation owner. The delegate tool is only registered for the lead. */
+  parentAgentId: string;
 };
 
 export function delegateTool(deps: DelegateDeps): AgentTool {

@@ -109,31 +109,35 @@ export async function streamChatTurn(options: {
   ];
 
   const { store, provider, signal } = options;
-  const host = new MapToolHost();
-  registerDelegateTool(host, {
-    directory: agents,
-    store,
-    provider,
-    memory,
-    computer,
-    connector,
-  });
-  const events = runWithDelegate(provider.stream(history, signal), async (call) => {
-    const tool = host.get("delegate");
-    if (!tool) return "Delegation failed: delegate tool is not registered.";
-    let args: Record<string, unknown>;
-    try {
-      const parsed: unknown = JSON.parse(call.arguments);
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+  let events: AsyncIterable<LlmStreamEvent> = provider.stream(history, signal);
+  if (speaker.id === LEAD_AGENT_ID) {
+    const host = new MapToolHost();
+    registerDelegateTool(host, {
+      directory: agents,
+      store,
+      provider,
+      memory,
+      computer,
+      connector,
+      parentAgentId: speaker.id,
+    });
+    events = runWithDelegate(events, async (call) => {
+      const tool = host.get("delegate");
+      if (!tool) return "Delegation failed: delegate tool is not registered.";
+      let args: Record<string, unknown>;
+      try {
+        const parsed: unknown = JSON.parse(call.arguments);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          return "Delegation failed: arguments are not JSON.";
+        }
+        args = parsed as Record<string, unknown>;
+      } catch {
         return "Delegation failed: arguments are not JSON.";
       }
-      args = parsed as Record<string, unknown>;
-    } catch {
-      return "Delegation failed: arguments are not JSON.";
-    }
-    const result = await tool.invoke(args, { signal });
-    return result.content;
-  });
+      const result = await tool.invoke(args, { signal });
+      return result.content;
+    });
+  }
   const conversationSnapshot = conversation;
   let partial = "";
   let trace = emptyTrace();

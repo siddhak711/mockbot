@@ -1,6 +1,6 @@
 import type { LlmProvider } from "../llm";
 import type { LlmMessage, LlmStreamEvent } from "../types";
-import { DELEGATE_TOOL_NAME, USE_COMPUTER_TOOL } from "./ids";
+import { DELEGATE_TOOL_NAME, LEAD_AGENT_NAME, USE_COMPUTER_TOOL, USE_CONNECTOR_TOOL } from "./ids";
 
 export type LiveTool = {
   id: string;
@@ -39,6 +39,32 @@ export function renderScopedMockReply(messages: readonly LlmMessage[]): string {
   return lines.join("\n");
 }
 
+function isLeadTurn(system: string): boolean {
+  if (system.includes("delegation: child")) return false;
+  const name = system.match(/^name: (.+)$/m)?.[1]?.trim();
+  return !name || name === LEAD_AGENT_NAME;
+}
+
+function resourceAsk(task: string): LiveTool | null {
+  const connectorId = task.match(/\buse connector\s+([A-Za-z0-9._:-]+)/i)?.[1];
+  if (connectorId) {
+    return {
+      id: "call_connector",
+      name: USE_CONNECTOR_TOOL,
+      arguments: JSON.stringify({ connectorId, tool: "call" }),
+    };
+  }
+  const computerId = task.match(/\buse computer\s+([A-Za-z0-9._:-]+)/i)?.[1];
+  if (computerId) {
+    return {
+      id: "call_computer",
+      name: USE_COMPUTER_TOOL,
+      arguments: JSON.stringify({ computerId, path: "notes.txt" }),
+    };
+  }
+  return null;
+}
+
 export function scriptLiveTurn(
   messages: readonly LlmMessage[],
 ): { reasoning: string; tools: LiveTool[]; reply?: string } | null {
@@ -46,16 +72,18 @@ export function scriptLiveTurn(
   const child = system.includes("delegation: child");
   if (child) {
     const listed = system.match(/^computers: (.+)$/m)?.[1] ?? "";
-    const computerId = listed
+    const grantedComputer = listed
       .split(",")
       .map((part) => part.trim())
       .find(Boolean);
+    const asked = resourceAsk(lastUser(messages));
     const tools: LiveTool[] = [];
-    if (computerId) {
+    if (asked) tools.push(asked);
+    else if (grantedComputer) {
       tools.push({
         id: "call_computer",
         name: USE_COMPUTER_TOOL,
-        arguments: JSON.stringify({ computerId, path: "notes.txt" }),
+        arguments: JSON.stringify({ computerId: grantedComputer, path: "notes.txt" }),
       });
     }
     return {
@@ -66,7 +94,7 @@ export function scriptLiveTurn(
   }
 
   const phrase = parseDelegatePhrase(lastUser(messages));
-  if (phrase) {
+  if (phrase && isLeadTurn(system)) {
     return {
       reasoning: `Hand this subtask to ${phrase.agent}.`,
       tools: [

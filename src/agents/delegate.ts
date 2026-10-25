@@ -106,6 +106,7 @@ export async function performDelegation(
     memory: AgentMemoryPort;
     computer: ComputerPort;
     connector: ConnectorPort;
+    parentAgentId: string;
     signal?: AbortSignal;
   },
 ): Promise<DelegationOutcome> {
@@ -124,6 +125,13 @@ export async function performDelegation(
   if (!agent) {
     return {
       content: `Delegation failed: no agent named ${agentName}.`,
+      isError: true,
+      conversationId: null,
+    };
+  }
+  if (agent.id === deps.parentAgentId) {
+    return {
+      content: `Delegation failed: ${agent.name} cannot delegate to itself.`,
       isError: true,
       conversationId: null,
     };
