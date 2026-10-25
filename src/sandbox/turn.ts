@@ -1,3 +1,4 @@
+import { parseDelegatePhrase } from "../agents/mock-script";
 import { streamOptions, type LlmProvider, type StreamOptions } from "../llm";
 import type { LlmMessage, LlmStreamEvent, ProviderId } from "../types";
 import { planComputerTurn, type ComputerAction } from "./plan";
@@ -25,7 +26,9 @@ export class SandboxTurnProvider implements LlmProvider {
   ): AsyncIterable<LlmStreamEvent> {
     const { signal } = streamOptions(input);
     const lastUser = [...messages].reverse().find((message) => message.role === "user");
-    const plan = this.#inner.id === "mock" ? planComputerTurn(lastUser?.content ?? "") : null;
+    const text = lastUser?.content ?? "";
+    const plan =
+      this.#inner.id === "mock" && ownsComputerTurn(messages, text) ? planComputerTurn(text) : null;
     if (!plan) {
       yield* this.#inner.stream(messages, input);
       return;
@@ -52,6 +55,13 @@ export class SandboxTurnProvider implements LlmProvider {
     if (signal?.aborted) return;
     yield { type: "end", finishReason: "tool_calls" };
   }
+}
+
+/** Delegate phrases and child turns belong to the agent mock, including `use_computer`. */
+function ownsComputerTurn(messages: readonly LlmMessage[], text: string): boolean {
+  if (parseDelegatePhrase(text)) return false;
+  const system = messages.find((message) => message.role === "system")?.content ?? "";
+  return !system.includes("delegation: child");
 }
 
 function toolResultsSinceUser(messages: LlmMessage[]): number {

@@ -4,6 +4,7 @@ import { join, sep } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { GET, POST } from "../app/api/computer/route";
 import { resetAppContext, setAppContext } from "../src/context";
+import { withAgentMock } from "../src/agents/mock-script";
 import { MockProvider } from "../src/llm";
 import { commandTimeoutMs, resolveWorkspacePath, toSandboxPath } from "../src/sandbox/limits";
 import { openComputer } from "../src/sandbox/open";
@@ -42,6 +43,40 @@ describe("sandbox", { concurrent: false }, () => {
     expect(planComputerTurn("run `echo hi`")).toEqual([
       { name: "exec", args: { command: "echo hi" } },
     ]);
+  });
+
+  it("leaves a delegate phrase to the agent mock and lets a child plan use_computer", async () => {
+    const provider = new SandboxTurnProvider({
+      inner: withAgentMock(new MockProvider({ delayMs: 0, chunkSize: 80 })),
+      delayMs: 0,
+    });
+    const task =
+      "Create a file named notes.txt that says hello from the sandbox, read it back, and run a command that prints it.";
+    const delegated = await toolNames(provider, [
+      { role: "system", content: "You are Mockbot." },
+      { role: "user", content: `delegate to Researcher: ${task}` },
+    ]);
+    expect(delegated).toEqual(["delegate"]);
+
+    const child = await toolNames(provider, [
+      {
+        role: "system",
+        content: [
+          "You study groves.",
+          "",
+          "# Agent",
+          "name: Researcher",
+          "delegation: child",
+          "computers: desk",
+          "Use use_computer only for a listed computer and use_connector only for a listed connector.",
+        ].join("\n"),
+      },
+      { role: "user", content: task },
+    ]);
+    expect(child).toEqual(["use_computer"]);
+
+    const own = await toolNames(provider, [{ role: "user", content: DEMO }]);
+    expect(own).toEqual(["write"]);
   });
 
   it("keeps paths inside the workspace", () => {
@@ -658,6 +693,17 @@ describe("sandbox", { concurrent: false }, () => {
       else if (/\.(tsx?|css)$/.test(entry)) found.push(path);
     }
     return found;
+  }
+
+  async function toolNames(
+    provider: SandboxTurnProvider,
+    messages: Array<{ role: "system" | "user"; content: string }>,
+  ): Promise<string[]> {
+    const names: string[] = [];
+    for await (const event of provider.stream(messages)) {
+      if (event.type === "tool_call" && event.name) names.push(event.name);
+    }
+    return names;
   }
 
   async function POST_CHAT(request: Request): Promise<Response> {
