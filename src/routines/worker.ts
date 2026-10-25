@@ -1,5 +1,6 @@
 import type { LlmProvider } from "../llm";
 import type { ConversationStore } from "../store";
+import { emptyTrace } from "../trace";
 import type { Clock } from "./clock";
 import type { RoutineStore } from "./store";
 import { promptForRun, runRoutineTurn } from "./turn";
@@ -11,6 +12,26 @@ const DEFAULT_LIMIT = 25;
 function errorText(error: unknown): string {
   const message = error instanceof Error && error.message ? error.message : "Routine run failed";
   return message.slice(0, 2000);
+}
+
+async function recordFailure(
+  store: ConversationStore,
+  conversationId: string,
+  text: string,
+): Promise<string | null> {
+  const loaded = await store.getConversation(conversationId);
+  const last = loaded?.messages.at(-1);
+  if (last?.role !== "user") return null;
+  const failure = `Routine failed: ${text}`;
+  const saved = await store.addMessage(conversationId, "assistant", failure, {
+    ...emptyTrace(),
+    started: true,
+    role: "assistant",
+    text: failure,
+    ended: true,
+    finishReason: "error",
+  });
+  return saved.id;
 }
 
 async function ensureConversation(
@@ -72,12 +93,21 @@ export async function tick(options: {
       });
       if (saved) result.succeeded += 1;
     } catch (error) {
+      const text = errorText(error);
+      let assistantMessageId: string | null = null;
+      if (conversationId) {
+        try {
+          assistantMessageId = await recordFailure(options.store, conversationId, text);
+        } catch {
+          assistantMessageId = null;
+        }
+      }
       const saved = await options.routines.finishRun(job.run.id, options.workerId, {
         status: "failed",
         finishedAt: options.clock.now(),
         conversationId,
-        assistantMessageId: null,
-        error: errorText(error),
+        assistantMessageId,
+        error: text,
       });
       if (saved) result.failed += 1;
     }

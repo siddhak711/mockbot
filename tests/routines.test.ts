@@ -3,13 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import type { LlmProvider } from "../src/llm";
-import { MockProvider } from "../src/llm";
+import { MockProvider, SYSTEM_PROMPT } from "../src/llm";
 import { pollIntervalMs, shouldStartInlineWorker } from "../src/routines/clock";
 import { CronError, nextCron } from "../src/routines/cron";
 import { RoutineStore } from "../src/routines/store";
+import { modelMessages } from "../src/routines/turn";
 import { runWorker, tick } from "../src/routines/worker";
 import { ConversationStore } from "../src/store";
-import type { LlmStreamEvent } from "../src/types";
+import type { LlmMessage, LlmStreamEvent } from "../src/types";
 
 const openStores: ConversationStore[] = [];
 
@@ -222,6 +223,65 @@ it("stores a failing run and does not spin on it", async () => {
   expect(runs[0]?.status).toBe("failed");
   expect(runs[0]?.error).toBe("upstream unavailable");
   expect((await routines.get(routine.id))?.nextRunAt).not.toBe(routine.nextRunAt);
+  const conversation = await store.getConversation(
+    (await routines.get(routine.id))!.conversationId!,
+  );
+  expect(conversation?.messages.map((message) => [message.role, message.content])).toEqual([
+    ["user", "Fail please"],
+    ["assistant", "Routine failed: upstream unavailable"],
+  ]);
+});
+
+it("does not send an unanswered failed prompt as the next run's history", async () => {
+  const { store, routines } = await open();
+  const clock = new FakeClock(new Date("2026-10-25T21:00:00.000Z"));
+  const routine = await routines.create({
+    name: "Broken",
+    prompt: "Fail please",
+    cron: "* * * * *",
+    now: clock.now(),
+  });
+  clock.set(new Date(routine.nextRunAt!));
+  await tick({ routines, store, provider: failing, clock, workerId: "worker-a" });
+  const saved = await routines.get(routine.id);
+  await store.addMessage(saved!.conversationId!, "user", "left unanswered");
+
+  const seen: LlmMessage[][] = [];
+  const capturing: LlmProvider = {
+    id: "mock",
+    model: null,
+    async *stream(messages: LlmMessage[]): AsyncIterable<LlmStreamEvent> {
+      seen.push(messages.map((message) => ({ ...message })));
+      yield { type: "text", text: "recovered" };
+      yield { type: "end", finishReason: "stop" };
+    },
+  };
+  clock.set(new Date(saved!.nextRunAt!));
+  const recovered = await tick({
+    routines,
+    store,
+    provider: capturing,
+    clock,
+    workerId: "worker-a",
+  });
+  expect(recovered).toEqual({ claimed: 1, succeeded: 1, failed: 0 });
+  expect(seen).toEqual([
+    [
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: "Fail please" },
+      { role: "assistant", content: "Routine failed: upstream unavailable" },
+      { role: "user", content: "Fail please" },
+    ],
+  ]);
+  expect(
+    modelMessages([
+      { role: "user", content: "orphan" },
+      { role: "user", content: "current" },
+    ]),
+  ).toEqual([
+    { role: "system", content: SYSTEM_PROMPT },
+    { role: "user", content: "current" },
+  ]);
 });
 
 it("lets only one of two workers complete a run", async () => {
