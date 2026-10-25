@@ -1,7 +1,6 @@
 import type { LlmMessage } from "../types";
 import { contentWords } from "./grounding";
 import { inferKind, keyFromFact, sectionText } from "./prompt";
-import { findSecrets } from "./scrub";
 
 export type MockPlan =
   | { type: "text"; text: string }
@@ -15,7 +14,7 @@ export function planMockTurn(messages: LlmMessage[], toolNames: ReadonlySet<stri
   if (toolMessages.length > 0) {
     return {
       type: "text",
-      text: closingText(user, toolMessages[toolMessages.length - 1]?.content ?? ""),
+      text: closingText(toolMessages[toolMessages.length - 1]?.content ?? ""),
     };
   }
   const command = parseMemoryCommand(user);
@@ -101,21 +100,21 @@ function answerFromMemory(messages: LlmMessage[], user: string): string | null {
   return `I remember this: ${best.line}`;
 }
 
-function closingText(user: string, output: string): string {
-  if (findSecrets(output).length > 0 || /blocked|not stored|secret/i.test(output)) {
+function closingText(output: string): string {
+  const text = output.trim();
+  if (/^(?:Saved|Updated) memory "/.test(text)) return "I'll remember that.";
+  if (/^Forgot "/.test(text)) return "I forgot that.";
+  if (text.startsWith("Blocked.") && /not stored/i.test(text)) {
     return "I did not save that. It looked like a secret, so it was not stored.";
   }
-  if (/not saved|tool and web output/i.test(output)) {
+  if (text.startsWith("Not saved.")) {
     return "I did not save that, because I only store what you say yourself.";
   }
-  if (/no memory with that key/i.test(output)) return "I don't have a memory with that key yet.";
-  if (/forgot/i.test(output)) return "I forgot that.";
-  const command = parseMemoryCommand(user);
-  if (command?.name === "memory_write" || command?.name === "memory_update") {
-    const text = typeof command.args.text === "string" ? command.args.text : "";
-    return text ? `I'll remember that: ${text}` : "I'll remember that.";
+  if (text.startsWith("No memory with that key")) return "I don't have a memory with that key yet.";
+  if (text.startsWith("The user denied this action") || text.startsWith("Approval timed out")) {
+    return "I did not do that. It was not approved.";
   }
-  if (command?.name === "memory_search") return `Here is what I found in memory:\n\n${output}`;
-  if (command?.name === "memory_delete") return "I forgot that.";
-  return "Done.";
+  if (text.startsWith("No matching memories.")) return "I don't have a matching memory.";
+  if (/^- .+: /m.test(text)) return `Here is what I found in memory:\n\n${text}`;
+  return text || "Done.";
 }

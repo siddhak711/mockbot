@@ -4,14 +4,6 @@ import { readOpenAiEvents } from "./openai-events";
 import { SseParser } from "./sse";
 import type { ToolDefinition } from "./tools/types";
 
-export const SYSTEM_PROMPT = [
-  "You are Mockbot, a concise personal assistant. Reply in markdown when it helps.",
-  "",
-  "You can call tools. Prefer a tool when it can answer the question. At most 15 tools are listed at once. If you need something that is not listed, call tool_search with a short query, then call the tool it returns.",
-  "",
-  "Read-only tools run immediately. Tools that send, post, delete, pay, or invite someone wait until the person approves them. If they deny a tool, do not retry it unless they ask again.",
-].join("\n");
-
 const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
 const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
 

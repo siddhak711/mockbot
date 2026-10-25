@@ -5,7 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { DEFAULT_AGENT_ID } from "../src/agent";
 import { openDatabase } from "../src/db/open";
 import { findSecrets } from "../src/memory/scrub";
-import { sectionText } from "../src/memory/prompt";
+import { buildSystemPrompt, sectionText } from "../src/memory/prompt";
 import { estimateTokens, PROFILE_TOKEN_BUDGET } from "../src/memory/tokens";
 import { ConversationStore } from "../src/store";
 import { createMemoryTools } from "../src/tools/memory";
@@ -159,6 +159,16 @@ it("rejects tool output and accepts a fact the user stated", async () => {
   const live = await store.memories.listLive(DEFAULT_AGENT_ID);
   expect(live.map((memory) => memory.content)).toEqual(["my favorite color is blue"]);
   expect(live[0]?.sourceMessageId).toBe("message-1");
+});
+
+it("tells the model to search for unlisted tools and to wait for approval", () => {
+  const prompt = buildSystemPrompt({ profiles: [], facts: [] });
+  expect(prompt).toContain(
+    "If you need something that is not listed, call tool_search with a short query, then call the tool it returns.",
+  );
+  expect(prompt).toContain(
+    "Tools that send, post, delete, pay, or invite someone wait until the person approves them.",
+  );
 });
 
 it("keeps profile memories inside the token budget in the system prompt", async () => {
