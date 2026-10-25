@@ -48,59 +48,21 @@ Acceptance criteria:
 
 ## Milestone 3 — Durable memory
 
-The agent can remember a fact in one conversation and use it in another. Memory is something the person can see, correct, and delete. The model writes memory with tools. There is no embedding index and no background extractor.
+The agent can remember a fact in one conversation and use it in another. Memory is something the person can see and delete.
 
-Storage:
+Build:
 
-- Production (`VERCEL=1` or `NODE_ENV=production`) uses Neon Postgres through `DATABASE_URL` and the Neon HTTP serverless driver. The connection string should be the pooled host. There is no PGlite file, `/tmp` database, or blob snapshot in production. A hosted runtime without `DATABASE_URL` refuses to start.
-- Local development and CI use PGlite behind the same SQL interface. One migration runner applies the same SQL to both drivers.
-- `memories(id, agent_id, kind, key, content, source_msg, supersedes, valid_from, valid_to, deleted_at, created_by)`. `kind` is `profile` or `fact`. A GIN full-text index covers `content`. A partial unique index allows one live row per agent and key.
-- `conversation_summaries(conversation_id, summary, upto_msg, updated_at)`.
-- Every memory and conversation query is scoped by `agent_id`. The default agent is `agent_default`.
-
-Remember path:
-
-- `memory_write(key, text)` inserts a row. A duplicate key closes the live row and inserts a new one with `supersedes`. It does not overwrite.
-- `memory_update(key, text)` does the same close-and-insert when a live row exists.
-- `memory_delete(key)` sets `deleted_at`.
-- `memory_search(query)` is full-text, top-k, and token-capped.
-- If the milestone 2 tool loop is not on main, a small loop runs tool calls, feeds the results back, and stops at a step cap. Tool definitions use the same shape milestone 2 registers.
-
-Read path:
-
-- Live profile memories, at most 500 tokens, are injected into the system prompt on every turn.
-- Matching facts are recalled into the system prompt, at most 400 tokens.
-- The system prompt tells the model when to save, update, search, and delete.
-- Past about 60% of the context window, older messages are summarized into `conversation_summaries` and the recent tail stays verbatim.
-
-Safety:
-
-- A secret scrubber (API key, JWT, card, and high-entropy patterns) blocks the write, logs the event without the secret, and tells the model.
-- The model may save only facts grounded in this conversation's user messages, not tool or web output. Edits from the memory panel still pass the scrubber.
-
-API and UI:
-
-- `GET /api/memories`, `PATCH /api/memories/:id`, `DELETE /api/memories/:id`.
-- The memory panel lists, edits, and deletes memories and shows the source snippet and supersede history.
-
-Eval:
-
-- `npm run eval:memory` runs the mockbot recall set on the mock provider.
-- `npm run eval:memory -- --longmemeval` adds a 50-question LongMemEval slice when `LLM_PROVIDER=openai` and `LLM_API_KEY` are set. It is not part of `npm test`.
+- `memories` stored per agent, with soft delete.
+- A remember path (a tool, once milestone 2 exists) and a retrieval step that adds matches to the system prompt.
+- A memory panel in the workspace.
 
 Acceptance criteria:
 
-- [x] Asking the agent to remember a fact creates a memory row tied to the agent.
-- [x] A duplicate key updates in place of a second live row, and an update keeps the old row in history. The new row is the one retrieved.
-- [x] A new conversation can use that fact, and the prompt trace in tests shows it in system context rather than as a fake user message.
-- [x] The person can list memories and delete one. A deleted memory is not retrieved again.
-- [x] Memories from a different agent are not retrieved.
-- [x] A planted API key is not stored. The block is logged without the secret.
-- [x] Profile injection stays inside its token budget.
-- [x] Older conversation turns compact into a summary, and the recent tail stays verbatim.
-- [x] The same memory tests run on PGlite in CI. The Neon test runs only when `DATABASE_URL` is set.
-- [x] `npm run eval:memory` runs the mockbot recall set and documents how to score a LongMemEval sample.
-- [x] `npm run lint`, `npm run typecheck`, and `npm test` pass.
+- [ ] Asking the agent to remember a fact creates a memory row tied to the agent.
+- [ ] A new conversation can use that fact, and the prompt trace in tests shows it in system context rather than as a fake user message.
+- [ ] The person can list memories and delete one. A deleted memory is not retrieved again.
+- [ ] Memories from a different agent are not retrieved.
+- [ ] Tests cover write, retrieve, and delete.
 
 ## Milestone 4 — Sandboxed computer
 
@@ -162,4 +124,4 @@ Acceptance criteria:
 
 ## After the six
 
-Not scheduled, and not allowed to jump the queue: accounts, sharing a workspace, and paying-provider budgets. Hosted Postgres is the production driver as of milestone 3; local development and CI stay on PGlite. Accounts wait until more than one person is a real requirement.
+Not scheduled, and not allowed to jump the queue: accounts, sharing a workspace, hosted Postgres as the default, and paying-provider budgets. Hosted Postgres should be a driver change once the schema has something worth operating. Accounts wait until more than one person is a real requirement.

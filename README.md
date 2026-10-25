@@ -79,22 +79,6 @@ You can put the same variables in `.env.local`. Names are listed in `.env.exampl
 - `PATCH /api/memories/:id` with `{ "content": "...", "kind": "profile" }` records a correction.
 - `DELETE /api/memories/:id` soft-deletes a memory.
 
-## Memory eval
-
-```bash
-npm run eval:memory
-```
-
-That runs the mockbot recall set (about 20 cases) on the mock provider and prints answer, save, and search miss rates. It does not download LongMemEval and it does not spend a model call.
-
-To score a 50-question slice of [LongMemEval](https://github.com/xiaowu0162/LongMemEval) (`xiaowu0162/longmemeval-cleaned`, oracle file), opt in with a model key:
-
-```bash
-LLM_PROVIDER=openai LLM_API_KEY=sk-... npm run eval:memory -- --longmemeval
-```
-
-The script downloads `longmemeval_oracle.json` into `evals/data/` (gitignored), replays user turns, then asks the question in a new conversation. It reports a no-memory baseline, the contains-match rate, and save and search miss rates. The official LongMemEval number uses a GPT judge; this harness uses contains-match. It is not part of `npm test`.
-
 ## Checks
 
 ```bash

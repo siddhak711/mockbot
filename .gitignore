@@ -8,4 +8,3 @@ coverage
 .env
 .env.local
 .env.*.local
-evals/data
