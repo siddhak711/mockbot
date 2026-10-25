@@ -1,6 +1,6 @@
 import type { LlmProvider, ProviderEvent } from "../llm";
 import type { LlmMessage, LlmToolCall } from "../types";
-import type { ToolDefinition } from "./types";
+import type { ToolBlockReason, ToolDefinition } from "./types";
 
 export const MAX_TOOL_STEPS = 4;
 
@@ -10,6 +10,7 @@ export type FinishedToolCall = {
   arguments: string;
   output: string;
   isError: boolean;
+  blocked?: ToolBlockReason;
 };
 
 export async function runToolLoop(options: {
@@ -23,6 +24,7 @@ export async function runToolLoop(options: {
   execute: (call: { id: string; name: string; arguments: string }) => Promise<{
     output: string;
     isError: boolean;
+    blocked?: ToolBlockReason;
   }>;
 }): Promise<{ text: string; toolCalls: number; capped: boolean }> {
   const history = options.messages.map((message) => ({ ...message }));
@@ -68,7 +70,12 @@ export async function runToolLoop(options: {
       options.onTool({ ...call, output: "", isError: false }, "running");
       const result = await options.execute(call);
       toolCalls += 1;
-      const finished = { ...call, output: result.output, isError: result.isError };
+      const finished = {
+        ...call,
+        output: result.output,
+        isError: result.isError,
+        ...(result.blocked ? { blocked: result.blocked } : {}),
+      };
       options.onTool(finished, "done");
       history.push({ role: "tool", tool_call_id: call.id, content: result.output });
     }
@@ -118,7 +125,7 @@ export async function executeRegisteredTool(
   tools: readonly ToolDefinition[],
   call: { name: string; arguments: string },
   signal?: AbortSignal,
-): Promise<{ output: string; isError: boolean }> {
+): Promise<{ output: string; isError: boolean; blocked?: ToolBlockReason }> {
   const parsed = parseToolArguments(call.arguments);
   if (!parsed.ok) return { output: parsed.error, isError: true };
   const tool = tools.find((item) => item.name === call.name);
@@ -128,7 +135,11 @@ export async function executeRegisteredTool(
   try {
     const result = await tool.invoke(prepared.args, { signal });
     const content = result.content.trim() ? result.content : "The tool returned no content.";
-    return { output: content, isError: Boolean(result.isError) };
+    return {
+      output: content,
+      isError: Boolean(result.isError),
+      ...(result.blocked ? { blocked: result.blocked } : {}),
+    };
   } catch (error) {
     if (signal?.aborted || (error instanceof Error && error.name === "AbortError")) throw error;
     const message = error instanceof Error ? error.message : "The tool failed";

@@ -195,7 +195,7 @@ function activityTitle(
 }
 
 export function toolActivity(
-  call: { id: string; name: string; output: string; isError: boolean },
+  call: { id: string; name: string; output: string; isError: boolean; blocked?: "secret" },
   phase: "running" | "done",
 ): {
   id: string;
@@ -205,9 +205,7 @@ export function toolActivity(
   kind: "search" | "draft";
 } {
   const secret = phase === "done" && findSecrets(call.output).length > 0;
-  const write = call.name === "memory_write" || call.name === "memory_update";
-  const blockedWrite =
-    phase === "done" && write && (secret || /secret|not stored/i.test(call.output));
+  const blockedWrite = phase === "done" && call.blocked === "secret";
   const title = activityTitle(call.name, phase, call.isError, blockedWrite);
   const detail =
     phase === "running"

@@ -14,9 +14,12 @@ export type JsonSchema = {
   additionalProperties?: boolean;
 };
 
+export type ToolBlockReason = "secret";
+
 export type ToolResult = {
   content: string;
   isError?: boolean;
+  blocked?: ToolBlockReason;
 };
 
 export type ToolContext = {

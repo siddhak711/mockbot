@@ -1,9 +1,9 @@
 import type { ConversationStore } from "../store";
-import { saveMemory } from "../memory/save";
+import { saveMemory, type SaveResult } from "../memory/save";
 import { SEARCH_TOKEN_BUDGET, SEARCH_TOP_K, trimToTokens } from "../memory/tokens";
 import { memoryLine } from "../memory/prompt";
 import type { MemoryKind } from "../types";
-import type { MemoryToolDeps, ToolDefinition } from "./types";
+import type { MemoryToolDeps, ToolDefinition, ToolResult } from "./types";
 
 export function createMemoryTools(
   store: ConversationStore,
@@ -48,7 +48,7 @@ function memoryWriteTool(store: ConversationStore, deps: MemoryToolDeps): ToolDe
         toolOutputs: deps.toolOutputs,
         ground: true,
       });
-      if (!saved.ok) return { content: saved.error, isError: true };
+      if (!saved.ok) return toolFailure(saved);
       const verb = saved.updated ? "Updated" : "Saved";
       return {
         content: `${verb} memory "${saved.memory.key}" (${saved.memory.kind}). ${
@@ -90,7 +90,7 @@ function memoryUpdateTool(store: ConversationStore, deps: MemoryToolDeps): ToolD
         toolOutputs: deps.toolOutputs,
         ground: true,
       });
-      if (!saved.ok) return { content: saved.error, isError: true };
+      if (!saved.ok) return toolFailure(saved);
       return {
         content: `Updated memory "${saved.memory.key}". The previous row stays in history and the new text is the one that will be retrieved.`,
       };
@@ -184,4 +184,12 @@ function prepareKeyText(args: Record<string, unknown>) {
 
 function kindOf(value: unknown): MemoryKind | null {
   return value === "profile" || value === "fact" ? value : null;
+}
+
+function toolFailure(saved: Extract<SaveResult, { ok: false }>): ToolResult {
+  return {
+    content: saved.error,
+    isError: true,
+    ...(saved.blocked === "secret" ? { blocked: "secret" as const } : {}),
+  };
 }
