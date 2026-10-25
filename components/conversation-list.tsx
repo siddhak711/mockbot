@@ -64,6 +64,21 @@ export function ConversationList({
         </svg>
         New chat
       </button>
+      <a className="new" href="/routines">
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.75"
+          aria-hidden="true"
+        >
+          <circle cx="12" cy="12" r="8" />
+          <path d="M12 8v5l3 2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        Routines
+      </a>
       <div className="sidebar-sections">
         {/* An agents list mounts above conversations in a later milestone. */}
         <section className="conversation-section" aria-label="Conversations">

@@ -94,6 +94,11 @@ export class ConversationStore {
     if (!this.db.closed) await this.db.close();
   }
 
+  /** Embedded Postgres. Other modules apply their own migrations and queries. */
+  get database(): PGlite {
+    return this.db;
+  }
+
   async createConversation(title: string): Promise<Conversation> {
     const id = crypto.randomUUID();
     const result = await this.db.query<ConversationRow>(
