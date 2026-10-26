@@ -102,4 +102,18 @@ CREATE TABLE IF NOT EXISTS connectors (
 );
 `,
   },
+  {
+    id: "005_connector_tools",
+    sql: `
+ALTER TABLE connectors ADD COLUMN IF NOT EXISTS catalog_id TEXT;
+ALTER TABLE connectors ADD COLUMN IF NOT EXISTS auth_type TEXT NOT NULL DEFAULT 'none';
+ALTER TABLE connectors ADD COLUMN IF NOT EXISTS account_label TEXT;
+ALTER TABLE connectors ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'connected';
+ALTER TABLE connectors ADD COLUMN IF NOT EXISTS status_detail TEXT;
+ALTER TABLE connectors ADD COLUMN IF NOT EXISTS tools JSONB NOT NULL DEFAULT '{}';
+ALTER TABLE connectors ADD COLUMN IF NOT EXISTS seen_tools JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE connectors ADD COLUMN IF NOT EXISTS failures JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE connectors ADD COLUMN IF NOT EXISTS secret_cipher TEXT;
+`,
+  },
 ];

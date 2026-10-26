@@ -1,5 +1,21 @@
 export type ConnectorTransport = "http" | "stdio";
 
+export type ConnectorAuth = "oauth" | "apikey" | "none";
+
+export type ConnectorStatus = "connected" | "error" | "reconnect";
+
+export type ToolApprovalMode = "ask" | "auto";
+
+export type ToolRisk = "read" | "write" | "destructive";
+
+export type ConnectorToolSetting = {
+  enabled: boolean;
+  approval: ToolApprovalMode;
+  risk?: ToolRisk;
+  description?: string;
+  skipped?: boolean;
+};
+
 export type ConnectorRecord = {
   id: string;
   name: string;
@@ -9,7 +25,24 @@ export type ConnectorRecord = {
   enabled: boolean;
   createdAt: string;
   updatedAt: string;
+  catalogId?: string | null;
+  authType?: ConnectorAuth;
+  accountLabel?: string | null;
+  status?: ConnectorStatus;
+  statusDetail?: string | null;
+  tools?: Record<string, ConnectorToolSetting>;
+  seenTools?: string[];
+  failures?: number[];
+  /** Server-only ciphertext. Never include this in an API response. */
+  secretCipher?: string | null;
 };
+
+export type PublicConnector = Omit<ConnectorRecord, "secretCipher">;
+
+export function toPublicConnector(record: ConnectorRecord): PublicConnector {
+  const { secretCipher: _secret, ...visible } = record;
+  return visible;
+}
 
 export type ConnectorInput = {
   name: string;
@@ -81,6 +114,35 @@ export function parseConnectorInput(
   return { ok: true, value: { name, transport, target, secretRef } };
 }
 
+export function parseConnectorPatch(
+  body: unknown,
+):
+  | { ok: true; enabled?: boolean; reconnected?: boolean; apiKey?: string }
+  | { ok: false; error: string } {
+  if (!body || typeof body !== "object") return { ok: false, error: "Expected a JSON object." };
+  const record = body as { enabled?: unknown; reconnected?: unknown; apiKey?: unknown };
+  const hasEnabled = "enabled" in record;
+  const hasReconnected = record.reconnected === true;
+  if (!hasEnabled && !hasReconnected) {
+    return { ok: false, error: "enabled must be true or false." };
+  }
+  if (hasEnabled && typeof record.enabled !== "boolean") {
+    return { ok: false, error: "enabled must be true or false." };
+  }
+  if ("apiKey" in record && record.apiKey != null && typeof record.apiKey !== "string") {
+    return { ok: false, error: "API key is invalid." };
+  }
+  if (typeof record.apiKey === "string" && record.apiKey.length > 2_000) {
+    return { ok: false, error: "API key is too long." };
+  }
+  return {
+    ok: true,
+    ...(hasEnabled ? { enabled: record.enabled as boolean } : {}),
+    ...(hasReconnected ? { reconnected: true } : {}),
+    ...(typeof record.apiKey === "string" && record.apiKey ? { apiKey: record.apiKey } : {}),
+  };
+}
+
 export function parseEnabled(
   body: unknown,
 ): { ok: true; enabled: boolean } | { ok: false; error: string } {
@@ -116,6 +178,46 @@ export function httpTargetError(target: string): string | null {
     return "Put the secret in a secret reference, not in the URL.";
   }
   return null;
+}
+
+export function parseToolSettingsBody(body: unknown):
+  | {
+      ok: true;
+      tools: Record<string, { enabled: boolean; approval?: ToolApprovalMode }>;
+      markSeen: boolean;
+    }
+  | { ok: false; error: string } {
+  if (!body || typeof body !== "object") return { ok: false, error: "Expected a JSON object." };
+  const record = body as { tools?: unknown; markSeen?: unknown };
+  const markSeen = record.markSeen === true;
+  if (record.tools == null && !markSeen) {
+    return { ok: false, error: "tools must be an object." };
+  }
+  if (record.tools == null) return { ok: true, tools: {}, markSeen };
+  if (typeof record.tools !== "object" || Array.isArray(record.tools)) {
+    return { ok: false, error: "tools must be an object." };
+  }
+  const tools: Record<string, { enabled: boolean; approval?: ToolApprovalMode }> = {};
+  for (const [name, value] of Object.entries(record.tools as Record<string, unknown>)) {
+    if (!/^[A-Za-z0-9_-]+$/.test(name)) return { ok: false, error: "Tool name is invalid." };
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return { ok: false, error: "Each tool needs enabled true or false." };
+    }
+    const setting = value as { enabled?: unknown; approval?: unknown };
+    if (typeof setting.enabled !== "boolean") {
+      return { ok: false, error: "Each tool needs enabled true or false." };
+    }
+    if (setting.approval != null && setting.approval !== "ask" && setting.approval !== "auto") {
+      return { ok: false, error: "approval must be ask or auto." };
+    }
+    tools[name] = {
+      enabled: setting.enabled,
+      ...(setting.approval === "ask" || setting.approval === "auto"
+        ? { approval: setting.approval }
+        : {}),
+    };
+  }
+  return { ok: true, tools, markSeen };
 }
 
 function parseSecretRef(value: unknown): string | null | "invalid" {

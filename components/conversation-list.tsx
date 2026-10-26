@@ -1,8 +1,8 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import type { Agent } from "../src/agents/types";
 import type { SpriteState } from "../src/sprite";
 import { AgentPanel, type AgentDraft } from "./agent-panel";
-import { ClockIcon, ComposeIcon, TrafficLights } from "./icons";
+import { ClockIcon, ComposeIcon, GearIcon, PlugIcon, TrafficLights } from "./icons";
 import { ThemeToggle } from "./theme";
 import type { Conversation } from "../src/types";
 
@@ -38,6 +38,7 @@ export function ConversationList({
   children,
   onSelectAgent,
   onCreateAgent,
+  onOpenConnectors,
 }: {
   conversations: Conversation[];
   activeId: string | null;
@@ -52,7 +53,9 @@ export function ConversationList({
   children?: ReactNode;
   onSelectAgent: (id: string) => void;
   onCreateAgent: (draft: AgentDraft) => Promise<string | null>;
+  onOpenConnectors?: () => void;
 }) {
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const groups = groupsFor(conversations);
   const names = new Map(agents.map((agent) => [agent.id, agent.name]));
 
@@ -69,6 +72,12 @@ export function ConversationList({
         <ClockIcon />
         Routines
       </a>
+      {onOpenConnectors ? (
+        <button type="button" className="nav-action" onClick={onOpenConnectors}>
+          <PlugIcon />
+          Connectors
+        </button>
+      ) : null}
       <div className="sidebar-sections">
         <AgentPanel
           agents={agents}
@@ -117,6 +126,34 @@ export function ConversationList({
           M
         </span>
         <span className="me-label">{providerLabel}</span>
+        {onOpenConnectors ? (
+          <span className="settings-anchor">
+            {settingsOpen ? (
+              <div className="settings-pop menu" role="menu" aria-label="Settings">
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setSettingsOpen(false);
+                    onOpenConnectors();
+                  }}
+                >
+                  Connectors
+                </button>
+              </div>
+            ) : null}
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label="Settings"
+              aria-expanded={settingsOpen}
+              aria-haspopup="menu"
+              onClick={() => setSettingsOpen((open) => !open)}
+            >
+              <GearIcon />
+            </button>
+          </span>
+        ) : null}
         <ThemeToggle />
       </footer>
     </aside>

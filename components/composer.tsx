@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { PlusIcon } from "./icons";
 
 export function canSendMessage(streaming: boolean, awaitingApproval: boolean): boolean {
   return !streaming && !awaitingApproval;
@@ -10,14 +11,27 @@ export function Composer({
   onSend,
   onStop,
   placeholder = "Message Mockbot",
+  value: controlledValue,
+  onValueChange,
+  onAddConnector,
 }: {
   streaming: boolean;
   awaitingApproval?: boolean;
   onSend: (text: string) => void;
   onStop: () => void;
   placeholder?: string;
+  value?: string;
+  onValueChange?: (value: string) => void;
+  onAddConnector?: () => void;
 }) {
-  const [value, setValue] = useState("");
+  const [internalValue, setInternalValue] = useState("");
+  const [menu, setMenu] = useState(false);
+  const value = controlledValue ?? internalValue;
+
+  function setValue(next: string) {
+    onValueChange?.(next);
+    if (controlledValue === undefined) setInternalValue(next);
+  }
 
   const busy = !canSendMessage(streaming, awaitingApproval);
 
@@ -52,6 +66,34 @@ export function Composer({
           }}
         />
         <div className="composer-row">
+          {onAddConnector ? (
+            <div className="composer-plus">
+              <button
+                type="button"
+                className="icon-btn"
+                aria-label="Add"
+                aria-expanded={menu}
+                aria-haspopup="menu"
+                onClick={() => setMenu((open) => !open)}
+              >
+                <PlusIcon />
+              </button>
+              {menu ? (
+                <div className="menu" role="menu">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setMenu(false);
+                      onAddConnector();
+                    }}
+                  >
+                    Add connector…
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           {busy ? (
             <span className="hint">{awaitingApproval ? "Needs approval" : "Responding"}</span>
           ) : null}
