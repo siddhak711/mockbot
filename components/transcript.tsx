@@ -44,6 +44,8 @@ export function Transcript({
   onSelectTool,
   onOpenTrace,
   spriteState = "idle",
+  reconnectFor,
+  onReconnect,
 }: {
   messages: Message[];
   streaming?: boolean;
@@ -54,6 +56,8 @@ export function Transcript({
   onDecide?: (id: string, decision: "approve" | "deny") => void;
   onSelectTool?: (id: string) => void;
   onOpenTrace?: () => void;
+  reconnectFor?: (activity: ToolActivity) => string | null;
+  onReconnect?: (activity: ToolActivity) => void;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
   const liveId = liveAssistantId(messages, streaming);
@@ -123,6 +127,8 @@ export function Transcript({
                   decidingId={decidingId}
                   onDecide={onDecide}
                   onSelect={onSelectTool}
+                  reconnectFor={reconnectFor}
+                  onReconnect={onReconnect}
                 />
                 <AssistantStream
                   message={message}

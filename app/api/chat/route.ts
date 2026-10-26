@@ -1,4 +1,5 @@
 import { streamChatTurn } from "../../../src/chat";
+import { noteConnectorOutcome } from "../../../src/connectors/runtime";
 import { getAppContext } from "../../../src/context";
 import { refreshMcpTools, withFreshTools } from "../../../src/mcp/sync";
 
@@ -25,6 +26,12 @@ export async function POST(request: Request): Promise<Response> {
       connectors,
       env: process.env,
       signal: request.signal,
+      onToolResult: (connectorId, result) => {
+        void noteConnectorOutcome(store, connectorId, result);
+      },
+      onTools: (connectorId, next) => {
+        void store.updateConnectorTools(connectorId, next);
+      },
     });
     return streamChatTurn({
       store,

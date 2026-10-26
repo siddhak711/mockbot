@@ -44,6 +44,8 @@ export type ToolDefinition = {
   inputSchema: JsonSchema;
   exposure?: "pinned" | "default" | "hidden";
   approval?: "always" | "never" | ((args: Record<string, unknown>) => boolean);
+  /** Read tools and write tools set to always-allow skip the name heuristic. */
+  skipHeuristicApproval?: boolean;
   prepare?: (args: Record<string, unknown>) => PreparedArgs;
   invoke: (args: Record<string, unknown>, context: ToolContext) => Promise<ToolResult>;
 };

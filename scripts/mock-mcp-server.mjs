@@ -23,7 +23,7 @@ function text(value) {
   return { content: [{ type: "text", text: value }] };
 }
 
-export function createMockServer(leak) {
+export function createMockServer(leak, extraTools = []) {
   const server = new McpServer({ name: "mock-mcp", version: "1.0.0" });
   const description = leak
     ? `Echo a message. Marker ${leak}`
@@ -52,9 +52,17 @@ export function createMockServer(leak) {
         JSON.stringify({
           llm: process.env.LLM_API_KEY ? "present" : "absent",
           demo: process.env.MCP_DEMO_TOKEN ? "present" : "absent",
+          probe: process.env.MCP_PROBE_KEY ? "present" : "absent",
         }),
       ),
   );
+  for (const name of extraTools) {
+    server.registerTool(
+      name,
+      { description: name, inputSchema: fromJsonSchema(probeSchema) },
+      async () => text("ok"),
+    );
+  }
   return server;
 }
 
@@ -85,17 +93,30 @@ async function readBody(req) {
   return Buffer.concat(chunks);
 }
 
+/**
+ * @param {{
+ *   port?: number,
+ *   leak?: string | null,
+ *   gate?: () => Promise<void>,
+ *   auth?: "none" | "apikey" | "oauth",
+ *   token?: string,
+ *   extraTools?: string[],
+ * }} [options]
+ */
 export async function startMockMcpServer(options = {}) {
   const leak = options.leak ?? null;
   const gate = options.gate;
+  const auth = options.auth ?? "none";
+  const token = options.token ?? "test-key";
+  const extraTools = options.extraTools ?? [];
   const authorizations = [];
   const activity = { inflight: 0, handled: 0 };
-  const handler = createMcpHandler(() => createMockServer(leak));
+  const handler = createMcpHandler(() => createMockServer(leak, extraTools));
   const httpServer = createServer(async (req, res) => {
     activity.inflight += 1;
     try {
       if (gate) await gate();
-      await handleHttp(req, res, handler, authorizations);
+      await handleHttp(req, res, handler, authorizations, auth, token);
       activity.handled += 1;
     } catch {
       if (!res.headersSent) res.statusCode = 500;
@@ -124,7 +145,7 @@ export async function startMockMcpServer(options = {}) {
   };
 }
 
-async function handleHttp(req, res, handler, authorizations) {
+async function handleHttp(req, res, handler, authorizations, auth = "none", token = "test-key") {
   const host = req.headers.host ?? "127.0.0.1";
   const url = new URL(req.url ?? "/", `http://${host}`);
   if (url.pathname !== "/mcp") {
@@ -134,6 +155,21 @@ async function handleHttp(req, res, handler, authorizations) {
   }
   const authorization = req.headers.authorization;
   if (typeof authorization === "string" && authorization) authorizations.push(authorization);
+  if (auth === "oauth") {
+    res.statusCode = 401;
+    res.setHeader(
+      "www-authenticate",
+      'Bearer realm="oauth", resource_metadata="https://example.com/.well-known/oauth-protected-resource"',
+    );
+    res.end("unauthorized");
+    return;
+  }
+  if (auth === "apikey" && authorization !== `Bearer ${token}`) {
+    res.statusCode = 401;
+    res.setHeader("www-authenticate", "Bearer");
+    res.end("unauthorized");
+    return;
+  }
   const body = await readBody(req);
   const method = req.method ?? "GET";
   const request = new Request(url, {
