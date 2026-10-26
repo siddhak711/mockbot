@@ -17,6 +17,7 @@ it("uses deterministic web, github, and calendar results when keys are missing",
   try {
     const tools = createDefaultTools({}, fetchImpl);
     const search = await tools.get("web_search")!.invoke({ query: "mockbot" }, {});
+    const again = await tools.get("web_search")!.invoke({ query: "mockbot again" }, {});
     const page = await tools.get("web_fetch")!.invoke({ url: "https://example.com/docs" }, {});
     const issues = await tools
       .get("github")!
@@ -33,6 +34,9 @@ it("uses deterministic web, github, and calendar results when keys are missing",
     expect(calendar.content).toContain("Calendar OAuth is not connected");
     expect(calendar.content).toContain("Mockbot planning");
     expect(calendar.content).toContain('"provider": "mock"');
+    expect(again.content).toContain('"provider": "mock"');
+    const searchWarnings = warn.mock.calls.filter((call) => String(call[0]).includes("web_search"));
+    expect(searchWarnings).toHaveLength(1);
     expect(warn).toHaveBeenCalledWith(
       "web_search is using a mock implementation because TAVILY_API_KEY is not set.",
     );

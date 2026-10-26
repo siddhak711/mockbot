@@ -18,8 +18,24 @@ export type ToolActivity = {
   kind: ToolActivityKind;
 };
 
-/** True when a tool result says it came from the mock provider. */
-export function isMockToolResult(result: string | null | undefined): boolean {
+/** Built-in tools that substitute a mock when their own configuration is missing. */
+const MOCK_BADGE_TOOLS = new Set([
+  "web_search",
+  "web_fetch",
+  "github",
+  "google_calendar",
+  "list",
+  "read",
+  "write",
+  "exec",
+]);
+
+/**
+ * True when a built-in tool result says it came from the mock provider.
+ * Connector tools are skipped even if their payload contains provider "mock".
+ */
+export function isMockToolResult(name: string, result: string | null | undefined): boolean {
+  if (!MOCK_BADGE_TOOLS.has(name)) return false;
   if (!result) return false;
   const trimmed = result.trim();
   if (providerOf(trimmed) === "mock") return true;

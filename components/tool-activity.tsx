@@ -32,7 +32,7 @@ export function ToolCallCard({ tool, pending }: { tool: ToolTrace; pending: bool
           ◦
         </span>
         <span className="tool-line-title">{title}</span>
-        {isMockToolResult(tool.result) ? <MockBadge /> : null}
+        {isMockToolResult(tool.name, tool.result) ? <MockBadge /> : null}
         {tool.id ? <span className="tool-line-meta">· {tool.id}</span> : null}
         <span className="sr-only">{pending ? "Running" : "Done"}</span>
       </button>
@@ -166,7 +166,7 @@ function ActivityRow({
           ◦
         </span>
         <span className="tool-line-title">{activity.title}</span>
-        {isMockToolResult(activity.output) ? <MockBadge /> : null}
+        {isMockToolResult(activity.name, activity.output) ? <MockBadge /> : null}
         {meta ? <span className="tool-line-meta">· {meta}</span> : null}
         <span className="sr-only">{statusLabel(activity.state)}</span>
       </button>

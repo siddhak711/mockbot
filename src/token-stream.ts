@@ -30,7 +30,7 @@ export function tokenStreamEntries(
     });
   }
   for (const tool of trace.tools) {
-    const mock = isMockToolResult(tool.result);
+    const mock = isMockToolResult(tool.name, tool.result);
     entries.push({
       kind: "tool",
       label: tool.name || "tool",
