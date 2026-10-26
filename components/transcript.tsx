@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { activityStaysInChat } from "../src/chat-activities";
 import { isPinnedToBottom } from "../src/chat-scroll";
 import type { SpriteState } from "../src/sprite";
 import { showThinkingRow } from "../src/token-stream";
@@ -26,14 +27,17 @@ export function liveAssistantId(messages: readonly Message[], streaming: boolean
   return null;
 }
 
-/** True when the assistant article would paint text or an approval decision. */
+/** True when the assistant article would paint text, an approval, or a reconnect. */
 export function assistantHasVisibleBody(
   message: Message,
   activities: readonly ToolActivity[] = [],
+  reconnectFor?: (activity: ToolActivity) => string | null,
 ): boolean {
   if (message.content.trim().length > 0) return true;
   return activities.some(
-    (activity) => activity.messageId === message.id && activity.state === "approval",
+    (activity) =>
+      activity.messageId === message.id &&
+      activityStaysInChat(activity, reconnectFor?.(activity) ?? null),
   );
 }
 
@@ -140,10 +144,12 @@ export function Transcript({
                   </article>
                 );
               }
-              const approvals = activities.filter(
-                (activity) => activity.messageId === message.id && activity.state === "approval",
+              const visibleActivities = activities.filter(
+                (activity) =>
+                  activity.messageId === message.id &&
+                  activityStaysInChat(activity, reconnectFor?.(activity) ?? null),
               );
-              if (!assistantHasVisibleBody(message, approvals)) {
+              if (!assistantHasVisibleBody(message, activities, reconnectFor)) {
                 return null;
               }
               return (
@@ -152,9 +158,9 @@ export function Transcript({
                   className="message assistant"
                   aria-label={live ? "Reply still streaming" : "Mockbot"}
                 >
-                  {approvals.length > 0 ? (
+                  {visibleActivities.length > 0 ? (
                     <ToolActivityCards
-                      activities={approvals}
+                      activities={visibleActivities}
                       decidingId={decidingId}
                       onDecide={onDecide}
                       onSelect={onSelectTool}
