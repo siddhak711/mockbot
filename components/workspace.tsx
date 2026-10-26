@@ -102,7 +102,6 @@ export function Workspace({
   const [pendingReconnectId, setPendingReconnectId] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [composerDraft, setComposerDraft] = useState("");
-  const [selectedToolId, setSelectedToolId] = useState<string | null>(null);
   const [decidingId, setDecidingId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const computerRequest = useRef(0);
@@ -147,7 +146,6 @@ export function Workspace({
         setActiveId(null);
         setMessages([]);
         setActivities([]);
-        setSelectedToolId(null);
         return;
       }
       const data = (await response.json()) as { conversation: Conversation; messages: Message[] };
@@ -156,13 +154,7 @@ export function Workspace({
       setActiveAgentId(data.conversation.agentId);
       setMessages(data.messages);
       releaseApprovalLock();
-      const nextActivities = activitiesFromMessages(data.messages);
-      setActivities(nextActivities);
-      setSelectedToolId((current) =>
-        current && nextActivities.some((item) => item.id === current)
-          ? current
-          : (nextActivities[nextActivities.length - 1]?.id ?? null),
-      );
+      setActivities(activitiesFromMessages(data.messages));
       setEditing(false);
       setConversations((prev) =>
         prev.map((item) => (item.id === data.conversation.id ? data.conversation : item)),
@@ -338,7 +330,6 @@ export function Workspace({
     setActiveId(null);
     setMessages([]);
     setActivities([]);
-    setSelectedToolId(null);
     setAlert(null);
     setEditing(false);
     const url = new URL(window.location.href);
@@ -402,7 +393,6 @@ export function Workspace({
       setActiveId(null);
       setMessages([]);
       setActivities([]);
-      setSelectedToolId(null);
       setEditing(false);
       const url = new URL(window.location.href);
       url.searchParams.delete("c");
@@ -600,7 +590,6 @@ export function Workspace({
                 ...described,
               },
             ]);
-            setSelectedToolId(id);
           } else if (event.event === "tool_args") {
             const id = String(payload.id ?? "");
             const raw = String(payload.arguments ?? "");
@@ -627,7 +616,6 @@ export function Workspace({
                 };
               }),
             );
-            setSelectedToolId(id);
           } else if (event.event === "tool_status") {
             const id = String(payload.id ?? "");
             const status = String(payload.status ?? "") as ToolCallStatus;
@@ -935,7 +923,6 @@ export function Workspace({
             activities={activities}
             decidingId={decidingId}
             onDecide={(id, decision) => void decide(id, decision)}
-            onSelectTool={setSelectedToolId}
             onOpenTrace={showTrace}
             reconnectFor={(activity) => {
               if (activity.state !== "error") return null;
@@ -979,8 +966,6 @@ export function Workspace({
             agentId={speakingId}
             onMemoriesChanged={refreshMemories}
             activities={activities}
-            selectedId={selectedToolId}
-            onSelect={setSelectedToolId}
             snapshot={computer}
             status={computerStatus}
             messages={messages}
@@ -997,8 +982,6 @@ export function Workspace({
           agentId={speakingId}
           onMemoriesChanged={refreshMemories}
           activities={activities}
-          selectedId={selectedToolId}
-          onSelect={setSelectedToolId}
           snapshot={computer}
           status={computerStatus}
           messages={messages}

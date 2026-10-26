@@ -20,8 +20,6 @@ export function SidePane({
   agentId,
   onMemoriesChanged,
   activities = [],
-  selectedId,
-  onSelect,
   snapshot = null,
   status = "ready",
   messages = [],
@@ -34,8 +32,6 @@ export function SidePane({
   agentId: string;
   onMemoriesChanged: () => Promise<void>;
   activities?: ToolActivity[];
-  selectedId?: string | null;
-  onSelect?: (id: string) => void;
   snapshot?: ComputerSnapshot | null;
   status?: "loading" | "ready" | "error";
   messages?: Message[];
@@ -97,14 +93,7 @@ export function SidePane({
       ) : tab === "trace" ? (
         <TokenStreamPanel messages={messages} activities={activities} />
       ) : (
-        <ComputerPane
-          embedded
-          activities={activities}
-          selectedId={selectedId}
-          onSelect={onSelect}
-          snapshot={snapshot}
-          status={status}
-        />
+        <ComputerPane embedded snapshot={snapshot} status={status} />
       )}
     </aside>
   );

@@ -1079,7 +1079,6 @@ summary:focus-visible {
 }
 
 .tool-block,
-.computer-detail pre,
 .markdown pre {
   margin: 6px 0 0;
   padding: 8px 10px;
@@ -1479,16 +1478,11 @@ summary:focus-visible {
   color: var(--ink);
 }
 
-.computer-empty p,
-.computer-note {
+.computer-empty p {
   margin: 0;
   color: var(--muted);
   font-size: 13px;
   line-height: 18px;
-}
-
-.computer-note {
-  margin-top: 8px;
 }
 
 .computer-body,
@@ -1593,9 +1587,7 @@ summary:focus-visible {
   color: var(--ink-2);
 }
 
-.computer-files h3,
-.sandbox-run h3,
-.computer-detail h4 {
+.computer-files h3 {
   margin: 12px 0 6px;
   font-size: 11px;
   line-height: 14px;
@@ -1605,23 +1597,19 @@ summary:focus-visible {
   color: var(--faint);
 }
 
-.computer-files h3:first-child,
-.sandbox-run h3:first-of-type,
-.computer-detail h4:first-of-type {
+.computer-files h3:first-child {
   margin-top: 0;
 }
 
 .computer-files p,
-.computer-files li,
-.computer-changes li {
+.computer-files li {
   margin: 0;
   color: var(--ink-2);
   font-size: 13px;
   line-height: 18px;
 }
 
-.computer-files ul,
-.computer-changes {
+.computer-files ul {
   margin: 0;
   padding: 0;
   list-style: none;
@@ -1645,70 +1633,11 @@ summary:focus-visible {
   margin-top: 6px;
 }
 
-.computer-explored-runs {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 2px 0 2px 12px;
-}
-
-.computer-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.computer-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-  padding: 6px 8px;
-  border-radius: var(--radius-md);
-  text-align: left;
-  font-size: 13px;
-  line-height: 18px;
-  color: var(--ink);
-}
-
-.computer-item span:first-child {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.computer-item.on,
-.computer-item:hover {
-  background: var(--selected);
-}
-
-.computer-status,
 .computer-kicker {
+  margin: 0 0 4px;
   color: var(--muted);
   font-size: 12px;
   line-height: 16px;
-}
-
-.computer-kicker {
-  margin: 0 0 4px;
-}
-
-.computer-exit {
-  margin: 0;
-  font-size: 15px;
-  line-height: 20px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  color: var(--ink);
-}
-
-.computer-detail h3 {
-  margin: 0;
-  font-size: 13px;
-  line-height: 18px;
-  font-weight: 600;
 }
 
 .icon-btn {

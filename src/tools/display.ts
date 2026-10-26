@@ -72,15 +72,6 @@ export function previewText(output: string, max = 160): string {
   return `${one.slice(0, max - 1)}…`;
 }
 
-export function formatToolPayload(raw: string): string {
-  if (!raw.trim()) return "";
-  try {
-    return JSON.stringify(JSON.parse(raw) as unknown, null, 2);
-  } catch {
-    return raw;
-  }
-}
-
 export const BLOCKED_MEMORY_OUTPUT = "Blocked. A secret was not stored.";
 
 export function toolKind(name: string, args: Record<string, unknown> | null): ToolActivityKind {
