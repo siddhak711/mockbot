@@ -30,7 +30,8 @@ export class MockSandboxRuntime implements SandboxRuntime {
     return { ok: true as const, entries: directChildren(paths, path) };
   }
 
-  async read(agentId: string, path: string) {
+  async read(agentId: string, path: string, signal?: AbortSignal) {
+    throwIfAborted(signal);
     const paths = await this.store.listPaths(agentId);
     if (paths.some((item) => item.startsWith(`${path}/`))) {
       return { ok: false as const, error: `Is a directory: ${path}` };

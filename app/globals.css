@@ -1627,6 +1627,31 @@ summary:focus-visible {
   list-style: none;
 }
 
+.computer-file-link {
+  display: block;
+  width: 100%;
+  text-align: left;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.computer-file-link:hover,
+.computer-file-link.on {
+  color: var(--ink);
+}
+
+.computer-expand {
+  margin-top: 6px;
+}
+
+.computer-explored-runs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 2px 0 2px 12px;
+}
+
 .computer-list {
   display: flex;
   flex-direction: column;
