@@ -840,9 +840,8 @@ export function Workspace({
   const speaking = agents.find((agent) => agent.id === speakingId) ?? null;
   const spriteColor = spriteColorForAgent(speaking);
   const spriteName = speaking?.name ?? "Mockbot";
-  const awaitingApproval = activities.some(
-    (activity) => activity.state === "approval" || activity.state === "ask",
-  );
+  const awaitingAsk = activities.some((activity) => activity.state === "ask");
+  const awaitingApproval = activities.some((activity) => activity.state === "approval");
   const error = alertMessageForView(alert, activeId);
   const sprite = useRunSprite({
     conversationId: activeId,
@@ -1046,7 +1045,8 @@ export function Workspace({
           ) : null}
           <Composer
             streaming={streaming}
-            awaitingApproval={awaitingApproval}
+            awaitingApproval={awaitingApproval || awaitingAsk}
+            busyHint={awaitingAsk ? "Waiting for an answer" : undefined}
             placeholder={speaking ? `Message ${speaking.name}` : "Message Mockbot"}
             value={composerDraft}
             onValueChange={setComposerDraft}

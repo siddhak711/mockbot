@@ -8,6 +8,7 @@ export function canSendMessage(streaming: boolean, awaitingApproval: boolean): b
 export function Composer({
   streaming,
   awaitingApproval = false,
+  busyHint,
   onSend,
   onStop,
   placeholder = "Message Mockbot",
@@ -17,6 +18,7 @@ export function Composer({
 }: {
   streaming: boolean;
   awaitingApproval?: boolean;
+  busyHint?: string;
   onSend: (text: string) => void;
   onStop: () => void;
   placeholder?: string;
@@ -95,7 +97,9 @@ export function Composer({
             </div>
           ) : null}
           {busy ? (
-            <span className="hint">{awaitingApproval ? "Needs approval" : "Responding"}</span>
+            <span className="hint">
+              {busyHint ?? (awaitingApproval ? "Needs approval" : "Responding")}
+            </span>
           ) : null}
           <span className="grow" />
           {busy ? (
