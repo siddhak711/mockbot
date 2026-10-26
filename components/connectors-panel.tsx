@@ -271,6 +271,13 @@ export function ConnectorsPanel({
     const base = catalogInCategory(category);
     return search.trim() ? searchCatalog(search, base) : base;
   }, [category, search]);
+  const availableEntries = useMemo(
+    () =>
+      entries.filter(
+        (entry) => !shownConnectors.some((connector) => connector.catalogId === entry.id),
+      ),
+    [entries, shownConnectors],
+  );
 
   async function probe(value: string, apiKey = "") {
     const detected = detectInput(value);
@@ -689,6 +696,83 @@ export function ConnectorsPanel({
     entries.length === 0;
   const visibleMode = noResults ? "no-results" : mode;
   const done = shownConnectors.find((connector) => connector.id === doneId) ?? shownConnectors[0];
+  const catalogSearching = Boolean(search.trim()) && detectInput(search).kind === "search";
+  const availableCatalog =
+    preview === "loading" || (!ready && !preview) ? (
+      <SkeletonGrid />
+    ) : (
+      <section className="connector-catalog" aria-label="Add a connector">
+        <h3 className="connector-section">Add a connector</h3>
+        <SearchField
+          value={search}
+          placeholder="Search connectors, or paste a URL / command"
+          inputRef={searchRef}
+          onChange={(value) => {
+            setSearch(value);
+            setHint("");
+            if (detectInput(value).kind !== "search") setMode("add");
+          }}
+          onSubmit={() => {
+            const detected = detectInput(search);
+            if (detected.kind !== "search" && !detected.valid) setMode("invalid");
+            else if (detected.kind !== "search") {
+              setMode("add");
+              void probe(search);
+            }
+          }}
+          onCancel={() => {
+            setSearch("");
+            setHint("");
+          }}
+        />
+        {hint ? <p className="connector-help">{hint}</p> : null}
+        {catalogSearching && availableEntries.length === 0 ? (
+          <div className="connector-empty inline">
+            <h3>
+              {entries.length > 0 ? "Already connected" : `No connectors match “${search.trim()}”`}
+            </h3>
+            <p className="t2">
+              {entries.length > 0
+                ? "Try another category, or paste a server URL above."
+                : "Have a server URL or command? Paste it above."}
+            </p>
+            {entries.length === 0 ? (
+              <div className="pair">
+                <button
+                  type="button"
+                  className="btn secondary"
+                  onClick={() => searchRef.current?.focus()}
+                >
+                  Add by URL
+                </button>
+                <button
+                  type="button"
+                  className="btn ghost"
+                  onClick={() => setNoted(`Noted “${search.trim()}”.`)}
+                >
+                  Request a connector
+                </button>
+              </div>
+            ) : null}
+            {noted ? <p role="status">{noted}</p> : null}
+          </div>
+        ) : null}
+        <CatalogBrowser
+          entries={availableEntries}
+          connectors={shownConnectors}
+          category={category}
+          tileIndex={tileIndex}
+          onCategory={setCategory}
+          onGridKey={onGridKey}
+          onConnect={(entry) => showOauth(entry, entry.name)}
+          onManage={openManage}
+          onPaste={() => {
+            setHint("Paste https://…, npx …, uvx …, or JSON config");
+            searchRef.current?.focus();
+          }}
+        />
+      </section>
+    );
 
   if (!open) return null;
 
@@ -753,7 +837,9 @@ export function ConnectorsPanel({
             </>
           ) : null}
 
-          {visibleMode === "list" && !ready && !preview ? <SkeletonGrid /> : null}
+          {visibleMode === "list" && !ready && !preview && shownConnectors.length === 0 ? (
+            <SkeletonGrid />
+          ) : null}
           {visibleMode === "list" && (ready || preview) && shownConnectors.length === 0 ? (
             <div className="connector-empty">
               <Mochi state="idle" size={64} label="Mochi, idle" />
@@ -768,20 +854,26 @@ export function ConnectorsPanel({
             </div>
           ) : null}
           {visibleMode === "list" && shownConnectors.length > 0 ? (
-            <div className="other-connectors">
-              {shownConnectors.map((connector) => (
-                <ConnectorCard
-                  key={connector.id}
-                  connector={connector}
-                  onManage={() => openManage(connector)}
-                  onReconnect={() => void reconnect(connector)}
-                  onDetails={() => {
-                    setManageId(connector.id);
-                    setMode("details");
-                  }}
-                />
-              ))}
-            </div>
+            <>
+              <section aria-label="Connected">
+                <h3 className="connector-section">Connected</h3>
+                <div className="connected-connectors">
+                  {shownConnectors.map((connector) => (
+                    <ConnectorCard
+                      key={connector.id}
+                      connector={connector}
+                      onManage={() => openManage(connector)}
+                      onReconnect={() => void reconnect(connector)}
+                      onDetails={() => {
+                        setManageId(connector.id);
+                        setMode("details");
+                      }}
+                    />
+                  ))}
+                </div>
+              </section>
+              {availableCatalog}
+            </>
           ) : null}
 
           {(visibleMode === "add" || visibleMode === "oauth") &&
@@ -791,94 +883,20 @@ export function ConnectorsPanel({
           {(visibleMode === "add" || visibleMode === "oauth") &&
           preview !== "loading" &&
           (ready || preview === "catalog" || preview === "oauth") ? (
-            <>
-              <div className="connector-pills" role="tablist" aria-label="Categories">
-                {CATALOG_CATEGORIES.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    className={item.id === category ? "pill on" : "pill"}
-                    aria-pressed={item.id === category}
-                    onClick={() => setCategory(item.id)}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-              <div
-                className="connector-grid"
-                role="list"
-                onKeyDown={(event) => onGridKey(event, entries.length + 1)}
-              >
-                {entries.map((entry, index) => {
-                  const connected = shownConnectors.some(
-                    (connector) => connector.catalogId === entry.id,
-                  );
-                  return (
-                    <article
-                      key={entry.id}
-                      className="connector-tile"
-                      role="listitem"
-                      tabIndex={index === tileIndex ? 0 : -1}
-                    >
-                      <div className="connector-tile-top">
-                        <Monogram label={entry.name} color={entry.color} ink={entry.inkMonogram} />
-                        <div>
-                          <div className="t1">{entry.name}</div>
-                          <div className="t2">{entry.description}</div>
-                        </div>
-                      </div>
-                      {connected ? (
-                        <button
-                          type="button"
-                          className="btn secondary"
-                          onClick={() => {
-                            const connector = shownConnectors.find(
-                              (item) => item.catalogId === entry.id,
-                            );
-                            if (connector) openManage(connector);
-                          }}
-                        >
-                          Manage
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          className="btn secondary"
-                          onClick={() => showOauth(entry, entry.name)}
-                        >
-                          Connect
-                        </button>
-                      )}
-                      {connected ? <span className="pill success">● Connected</span> : null}
-                    </article>
-                  );
-                })}
-                <article
-                  className="connector-tile"
-                  role="listitem"
-                  tabIndex={tileIndex === entries.length ? 0 : -1}
-                >
-                  <div className="connector-tile-top">
-                    <Monogram label="+" muted />
-                    <div>
-                      <div className="t1">Custom URL</div>
-                      <div className="t2">Paste any MCP server</div>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    className="btn secondary"
-                    onClick={() => {
-                      setHint("Paste https://…, npx …, uvx …, or JSON config");
-                      searchRef.current?.focus();
-                    }}
-                  >
-                    Paste URL
-                  </button>
-                </article>
-              </div>
-            </>
+            <CatalogBrowser
+              entries={entries}
+              connectors={shownConnectors}
+              category={category}
+              tileIndex={tileIndex}
+              onCategory={setCategory}
+              onGridKey={onGridKey}
+              onConnect={(entry) => showOauth(entry, entry.name)}
+              onManage={openManage}
+              onPaste={() => {
+                setHint("Paste https://…, npx …, uvx …, or JSON config");
+                searchRef.current?.focus();
+              }}
+            />
           ) : null}
 
           {visibleMode === "no-results" ? (
@@ -1072,6 +1090,7 @@ export function ConnectorsPanel({
                     ))}
                 </div>
               ) : null}
+              {availableCatalog}
             </>
           ) : null}
 
@@ -1164,6 +1183,106 @@ export function ConnectorsPanel({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function CatalogBrowser({
+  entries,
+  connectors,
+  category,
+  tileIndex,
+  onCategory,
+  onGridKey,
+  onConnect,
+  onManage,
+  onPaste,
+}: {
+  entries: CatalogEntry[];
+  connectors: ConnectorRecord[];
+  category: CatalogCategory;
+  tileIndex: number;
+  onCategory: (category: CatalogCategory) => void;
+  onGridKey: (event: ReactKeyboardEvent, count: number) => void;
+  onConnect: (entry: CatalogEntry) => void;
+  onManage: (connector: ConnectorRecord) => void;
+  onPaste: () => void;
+}) {
+  return (
+    <>
+      <div className="connector-pills" role="tablist" aria-label="Categories">
+        {CATALOG_CATEGORIES.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            className={item.id === category ? "pill on" : "pill"}
+            aria-pressed={item.id === category}
+            onClick={() => onCategory(item.id)}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+      <div
+        className="connector-grid"
+        role="list"
+        aria-label="Available connectors"
+        onKeyDown={(event) => onGridKey(event, entries.length + 1)}
+      >
+        {entries.map((entry, index) => {
+          const connected = connectors.some((connector) => connector.catalogId === entry.id);
+          return (
+            <article
+              key={entry.id}
+              className="connector-tile"
+              role="listitem"
+              data-catalog-id={entry.id}
+              tabIndex={index === tileIndex ? 0 : -1}
+            >
+              <div className="connector-tile-top">
+                <Monogram label={entry.name} color={entry.color} ink={entry.inkMonogram} />
+                <div>
+                  <div className="t1">{entry.name}</div>
+                  <div className="t2">{entry.description}</div>
+                </div>
+              </div>
+              {connected ? (
+                <button
+                  type="button"
+                  className="btn secondary"
+                  onClick={() => {
+                    const connector = connectors.find((item) => item.catalogId === entry.id);
+                    if (connector) onManage(connector);
+                  }}
+                >
+                  Manage
+                </button>
+              ) : (
+                <button type="button" className="btn secondary" onClick={() => onConnect(entry)}>
+                  Connect
+                </button>
+              )}
+              {connected ? <span className="pill success">● Connected</span> : null}
+            </article>
+          );
+        })}
+        <article
+          className="connector-tile"
+          role="listitem"
+          tabIndex={tileIndex === entries.length ? 0 : -1}
+        >
+          <div className="connector-tile-top">
+            <Monogram label="+" muted />
+            <div>
+              <div className="t1">Custom URL</div>
+              <div className="t2">Paste any MCP server</div>
+            </div>
+          </div>
+          <button type="button" className="btn secondary" onClick={onPaste}>
+            Paste URL
+          </button>
+        </article>
+      </div>
+    </>
   );
 }
 
