@@ -217,7 +217,7 @@ function settingsChanged(
   const before = previous ?? {};
   const beforeKeys = Object.keys(before);
   const nextKeys = Object.keys(next);
-  if (!beforeKeys.length) return false;
+  if (!beforeKeys.length) return nextKeys.length > 0;
   if (nextKeys.length < beforeKeys.length) return false;
   if (beforeKeys.some((name) => !next[name])) return false;
   if (beforeKeys.length !== nextKeys.length) return true;

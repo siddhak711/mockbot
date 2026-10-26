@@ -506,6 +506,20 @@ export function ConnectorsPanel({
       return;
     }
     if (entry?.oauth) {
+      // Open during the click. A popup opened after the start request is blocked.
+      const popup = window.open("about:blank", "mockbot-oauth", "popup,width=520,height=720");
+      if (!popup) {
+        setWaiting(false);
+        setAuthError(`Allow the ${name} sign-in window, then try again.`);
+        setMode("auth-failed");
+        return;
+      }
+      try {
+        popup.document.title = "Connecting";
+        popup.document.body.textContent = `Connecting to ${name}…`;
+      } catch {
+        // Navigation below still uses this window when the placeholder cannot be written.
+      }
       setWaiting(true);
       setAuthError(null);
       try {
@@ -521,14 +535,22 @@ export function ConnectorsPanel({
           authorizeUrl?: string;
           error?: string;
         } | null;
+        if (popup.closed) {
+          setWaiting(false);
+          setAuthError(`Allow the ${name} sign-in window, then try again.`);
+          setMode("auth-failed");
+          return;
+        }
         if (!response.ok || !body?.authorizeUrl) {
+          popup.close();
           setWaiting(false);
           setAuthError(body?.error ?? `Could not start ${name} sign-in.`);
           setMode("auth-failed");
           return;
         }
-        openOauthPopup(body.authorizeUrl, name, true, existingId);
+        openOauthPopup(body.authorizeUrl, name, true, existingId, popup);
       } catch {
+        if (!popup.closed) popup.close();
         setWaiting(false);
         setAuthError(`Could not start ${name} sign-in.`);
         setMode("auth-failed");
@@ -538,13 +560,30 @@ export function ConnectorsPanel({
     openOauthPopup(`/connectors/oauth?name=${encodeURIComponent(name)}`, name, false, existingId);
   }
 
-  function openOauthPopup(url: string, name: string, catalog: boolean, existingId: string | null) {
-    const popup = window.open(url, "mockbot-oauth", "popup,width=520,height=720");
-    if (!popup) {
+  function openOauthPopup(
+    url: string,
+    name: string,
+    catalog: boolean,
+    existingId: string | null,
+    existing?: Window,
+  ) {
+    const popup = existing ?? window.open(url, "mockbot-oauth", "popup,width=520,height=720");
+    if (!popup || popup.closed) {
       setWaiting(false);
       setAuthError(`Allow the ${name} sign-in window, then try again.`);
       setMode("auth-failed");
       return;
+    }
+    if (existing) {
+      try {
+        existing.location.href = url;
+      } catch {
+        if (!existing.closed) existing.close();
+        setWaiting(false);
+        setAuthError(`Could not start ${name} sign-in.`);
+        setMode("auth-failed");
+        return;
+      }
     }
     setWaiting(true);
     let settled = false;

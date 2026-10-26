@@ -191,7 +191,7 @@ async function saveCatalogConnector(options: {
     accountLabel: options.accountLabel,
   };
   const listed = await listCatalogTools(options.entry, draft, options.signal);
-  const settings = listed.tools.length
+  const discovered = listed.tools.length
     ? resolveToolSettings(
         listed.tools.map((tool) =>
           discoverTool(tool.name, tool.description, tool.inputSchema, {
@@ -199,10 +199,11 @@ async function saveCatalogConnector(options: {
             destructiveHint: tool.destructiveHint,
           }),
         ),
-        undefined,
+        current?.tools,
         "defaults",
       )
     : {};
+  const settings = current ? { ...(current.tools ?? {}), ...discovered } : discovered;
   const status = listed.error ? "error" : "connected";
   const statusDetail = listed.error;
   if (current) {

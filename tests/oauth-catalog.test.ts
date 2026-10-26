@@ -294,6 +294,167 @@ it("exchanges a GitHub code with PKCE and points the connector at the hosted MCP
   }
 });
 
+it("keeps enable and approval choices when a catalog connector reconnects", async () => {
+  withOAuthEnv();
+  const store = await ConversationStore.open();
+  setAppContext({
+    store,
+    provider: new MockProvider({ delayMs: 0 }),
+    tools: createDefaultTools({}),
+  });
+  const original = globalThis.fetch;
+  globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+    const url = requestUrl(input);
+    if (url !== "https://api.notion.com/v1/oauth/token") {
+      throw new Error(`unexpected fetch ${url}`);
+    }
+    return new Response(
+      JSON.stringify({
+        access_token: "ntn_access",
+        refresh_token: "ntn_refresh",
+        workspace_name: "Grove",
+        token_type: "bearer",
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }) as typeof fetch;
+  try {
+    const created = await store.createConnector({
+      name: "Notion",
+      transport: "http",
+      target: "https://api.notion.com/v1",
+      secretRef: null,
+      catalogId: "notion",
+      authType: "oauth",
+      secretCipher: await encryptSecret(
+        JSON.stringify({ v: 1, kind: "oauth", accessToken: "ntn_old" }),
+      ),
+      tools: {
+        search: {
+          enabled: false,
+          approval: "auto",
+          risk: "read",
+          description: "Search",
+          skipped: false,
+        },
+        create_page: {
+          enabled: true,
+          approval: "ask",
+          risk: "write",
+          description: "Create",
+          skipped: false,
+        },
+        custom_kept: {
+          enabled: true,
+          approval: "ask",
+          risk: "write",
+          description: "Kept while the provider list omits it",
+          skipped: false,
+        },
+      },
+    });
+    const start = await startOAuth(
+      jsonRequest({ catalogId: "notion", connectorId: created.id }),
+    );
+    const started = (await start.json()) as { authorizeUrl: string };
+    const state = new URL(started.authorizeUrl).searchParams.get("state");
+    const callback = await oauthCallback(
+      new Request(
+        `http://localhost:3000/connectors/oauth/callback?code=notion-code&state=${state}`,
+        { headers: { cookie: cookiePair(start) } },
+      ),
+    );
+    expect(callback.status, await callback.text()).toBe(200);
+    const connector = (await store.listConnectors()).find((item) => item.id === created.id);
+    expect(connector?.tools?.search).toMatchObject({ enabled: false, approval: "auto" });
+    expect(connector?.tools?.create_page).toMatchObject({ enabled: true, approval: "ask" });
+    expect(connector?.tools?.get_page).toMatchObject({ enabled: true, approval: "auto" });
+    expect(connector?.tools?.custom_kept).toMatchObject({ enabled: true, approval: "ask" });
+    expect(await store.listConnectors()).toHaveLength(1);
+  } finally {
+    globalThis.fetch = original;
+    clearOAuthEnv();
+  }
+});
+
+it("keeps saved tool settings when reconnect cannot list tools", async () => {
+  withOAuthEnv();
+  const store = await ConversationStore.open();
+  setAppContext({
+    store,
+    provider: new MockProvider({ delayMs: 0 }),
+    tools: createDefaultTools({}),
+  });
+  const original = globalThis.fetch;
+  let verifier = "";
+  globalThis.fetch = (async (
+    input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1],
+  ) => {
+    const url = requestUrl(input);
+    if (url === "https://github.com/login/oauth/access_token") {
+      const params = new URLSearchParams(String(init?.body));
+      expect(params.get("code_verifier")).toBe(verifier);
+      return new Response(JSON.stringify({ access_token: "gho_access", token_type: "bearer" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (url === "https://api.github.com/user") {
+      return new Response(JSON.stringify({ login: "octocat" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response("unauthorized", { status: 401 });
+  }) as typeof fetch;
+  try {
+    const created = await store.createConnector({
+      name: "GitHub",
+      transport: "http",
+      target: "https://api.githubcopilot.com/mcp/",
+      secretRef: null,
+      catalogId: "github",
+      authType: "oauth",
+      secretCipher: await encryptSecret(
+        JSON.stringify({ v: 1, kind: "oauth", accessToken: "gho_old" }),
+      ),
+      tools: {
+        echo: {
+          enabled: false,
+          approval: "ask",
+          risk: "write",
+          description: "Leave this disabled",
+          skipped: false,
+        },
+      },
+    });
+    const start = await startOAuth(
+      jsonRequest({ catalogId: "github", connectorId: created.id }),
+    );
+    const started = (await start.json()) as { authorizeUrl: string };
+    verifier = (await openPending(cookieValue(start)))?.verifier ?? "";
+    const state = new URL(started.authorizeUrl).searchParams.get("state");
+    const callback = await oauthCallback(
+      new Request(
+        `http://localhost:3000/connectors/oauth/callback?code=github-code&state=${state}`,
+        { headers: { cookie: cookiePair(start) } },
+      ),
+    );
+    expect(callback.status, await callback.text()).toBe(200);
+    const connector = (await store.listConnectors()).find((item) => item.id === created.id);
+    expect(connector?.status).toBe("error");
+    expect(connector?.tools?.echo).toMatchObject({
+      enabled: false,
+      approval: "ask",
+      description: "Leave this disabled",
+    });
+  } finally {
+    globalThis.fetch = original;
+    clearOAuthEnv();
+  }
+});
+
 it("refreshes an expired catalog token and keeps the rotated refresh token", async () => {
   withOAuthEnv();
   const fetched = await refreshStoredOAuthToken({
@@ -560,6 +721,43 @@ it("routes a GitHub catalog connector through the MCP client", async () => {
     expect(result?.content).toContain("from-github");
     expect(result?.content).toContain("mock-mcp");
     expect(result?.content).not.toContain('"connector":"GitHub"');
+  } finally {
+    await server.close();
+  }
+});
+
+it("saves a tool list that recovers after an empty settings map", async () => {
+  const server = await startMockMcpServer();
+  const store = await ConversationStore.open();
+  setAppContext({
+    store,
+    provider: new MockProvider({ delayMs: 0 }),
+    tools: createDefaultTools({}),
+  });
+  try {
+    await store.createConnector({
+      name: "GitHub",
+      transport: "http",
+      target: server.url,
+      secretRef: null,
+      catalogId: "github",
+      authType: "oauth",
+      secretCipher: await encryptSecret(
+        JSON.stringify({ v: 1, kind: "oauth", accessToken: "gho_test" }),
+      ),
+      tools: {},
+    });
+    let saved: Record<string, { enabled: boolean }> | undefined;
+    await refreshMcpTools({
+      registry: new ToolRegistry(),
+      connectors: await store.listConnectors(),
+      env: process.env,
+      onTools: (_id, tools) => {
+        saved = tools;
+      },
+    });
+    expect(saved?.echo).toMatchObject({ enabled: true });
+    expect(Object.keys(saved ?? {})).not.toHaveLength(0);
   } finally {
     await server.close();
   }
