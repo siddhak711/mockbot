@@ -200,6 +200,60 @@ it("shows the rest of the catalog after connecting from a search", async () => {
   expect(screen.getByRole("heading", { name: "Connectors" })).toBeTruthy();
 });
 
+it("filters the success-screen catalog when the search changes", async () => {
+  const slack = connected("slack", "c-slack");
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => Response.json({ connector: slack })),
+  );
+  vi.stubGlobal(
+    "open",
+    vi.fn(() => ({ closed: false })),
+  );
+
+  render(
+    createElement(
+      ThemeProvider,
+      null,
+      createElement(LivePanel, {
+        initial: [connected("notion")],
+        connectedNext: [connected("notion"), slack],
+      }),
+    ),
+  );
+
+  fireEvent.change(screen.getByRole("textbox", { name: "Search connectors" }), {
+    target: { value: "slack" },
+  });
+  const slackTile = document.querySelector('[data-catalog-id="slack"]');
+  expect(slackTile).not.toBeNull();
+  fireEvent.click(slackTile!.querySelector("button")!);
+  fireEvent.click(screen.getByRole("button", { name: "Continue to Slack ↗" }));
+  act(() => {
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        origin: window.location.origin,
+        data: { type: "mockbot-oauth", ok: true, account: "workspace" },
+      }),
+    );
+  });
+
+  await waitFor(() => {
+    expect(screen.getByRole("textbox", { name: "Search connectors" })).toHaveProperty("value", "");
+    expect(document.querySelector('[data-catalog-id="github"]')).not.toBeNull();
+  });
+
+  fireEvent.change(screen.getByRole("textbox", { name: "Search connectors" }), {
+    target: { value: "linear" },
+  });
+
+  expect(document.querySelector('[data-catalog-id="linear"]')).not.toBeNull();
+  expect(document.querySelector('[data-catalog-id="github"]')).toBeNull();
+  expect(document.querySelector('[data-catalog-id="jira"]')).toBeNull();
+  expect(screen.queryByRole("heading", { name: "Already connected" })).toBeNull();
+  expect(screen.getByRole("heading", { name: "Connectors" })).toBeTruthy();
+});
+
 it("returns to the connected list when a connect started there is cancelled", () => {
   render(
     createElement(

@@ -283,9 +283,8 @@ export function ConnectorsPanel({
 
   const entries = useMemo(() => {
     const base = catalogInCategory(category);
-    const query = mode === "done" ? "" : search;
-    return query.trim() ? searchCatalog(query, base) : base;
-  }, [category, mode, search]);
+    return search.trim() ? searchCatalog(search, base) : base;
+  }, [category, search]);
   const availableEntries = useMemo(
     () =>
       entries.filter(
@@ -718,8 +717,7 @@ export function ConnectorsPanel({
     entries.length === 0;
   const visibleMode = noResults ? "no-results" : mode;
   const done = shownConnectors.find((connector) => connector.id === doneId) ?? shownConnectors[0];
-  const catalogSearching =
-    mode !== "done" && Boolean(search.trim()) && detectInput(search).kind === "search";
+  const catalogSearching = Boolean(search.trim()) && detectInput(search).kind === "search";
   const availableCatalog =
     preview === "loading" || (!ready && !preview) ? (
       <SkeletonGrid />
