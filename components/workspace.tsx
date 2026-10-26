@@ -8,7 +8,7 @@ import { connectorForActivity, ConnectorsPanel } from "./connectors-panel";
 import { ConversationList } from "./conversation-list";
 import { MenuIcon, PlusIcon } from "./icons";
 import { ThreadActions } from "./thread-actions";
-import { Mochi } from "./mochi";
+import { BotSprite, botSpriteLabel } from "./bot-sprite";
 import { SidePane, type SideTab } from "./side-pane";
 import { Transcript } from "./transcript";
 import { useRunSprite } from "./use-run-sprite";
@@ -34,7 +34,7 @@ import {
 import {
   alertAfterConversationSwitch,
   alertMessageForView,
-  spriteLabel,
+  spriteColorForAgent,
   type SpriteAlert,
 } from "../src/sprite";
 import type { Conversation, LivePhase, Memory, Message, ToolCallStatus } from "../src/types";
@@ -753,6 +753,8 @@ export function Workspace({
   const computerStatus = computerReady ? (computer ? "ready" : "error") : "loading";
   const speakingId = active?.agentId ?? activeAgentId;
   const speaking = agents.find((agent) => agent.id === speakingId) ?? null;
+  const spriteColor = spriteColorForAgent(speaking);
+  const spriteName = speaking?.name ?? "Mockbot";
   const awaitingApproval = activities.some((activity) => activity.state === "approval");
   const error = alertMessageForView(alert, activeId);
   const sprite = useRunSprite({
@@ -894,7 +896,12 @@ export function Workspace({
           ) : (
             <>
               <h1>
-                <Mochi state={sprite} size={24} label={`Mochi, ${spriteLabel(sprite)}`} />
+                <BotSprite
+                  state={sprite}
+                  color={spriteColor}
+                  size={32}
+                  label={botSpriteLabel(spriteName, sprite)}
+                />
                 <span className="thread-title">{active?.title ?? "New chat"}</span>
               </h1>
               {speaking ? <span className="agent-chip">{speaking.name}</span> : null}
@@ -923,6 +930,8 @@ export function Workspace({
             streaming={streaming}
             livePhase={livePhase}
             spriteState={sprite}
+            spriteColor={spriteColor}
+            spriteName={spriteName}
             activities={activities}
             decidingId={decidingId}
             onDecide={(id, decision) => void decide(id, decision)}

@@ -5,7 +5,7 @@ import { formatRunTime } from "../src/routines/format";
 import type { Routine, RoutineRun, RoutineStatus } from "../src/routines/types";
 import type { SignedInUser } from "../src/auth/user";
 import { ChatIcon, ClockIcon, ComposeIcon, MenuIcon, TrafficLights } from "./icons";
-import { Mochi } from "./mochi";
+import { BotSprite } from "./bot-sprite";
 import { ThemeToggle } from "./theme";
 import { UserMenu } from "./user-menu";
 
@@ -183,7 +183,7 @@ export function RoutinesWorkspace({ user }: { user: SignedInUser }) {
         </header>
         <header className="thread-header">
           <h1>
-            <Mochi state="idle" size={24} label="Mochi, ready" />
+            <BotSprite state="idle" size={32} label="Mockbot, ready" />
             <span className="thread-title">Routines</span>
           </h1>
           <a className="ghost-text" href="/">
