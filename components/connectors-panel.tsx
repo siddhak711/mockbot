@@ -497,7 +497,7 @@ export function ConnectorsPanel({
 
   function showOauth(entry: CatalogEntry | null, name: string, existingId?: string) {
     if (mode === "list" || mode === "done") listReturn.current = mode;
-    else if (mode !== "oauth") listReturn.current = null;
+    else if (mode !== "oauth" && mode !== "auth-failed") listReturn.current = null;
     if (existingId) oauthExisting.current.start(existingId);
     else oauthExisting.current.clear();
     setDraft((current) => {

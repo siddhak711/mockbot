@@ -261,6 +261,40 @@ it("filters the success-screen catalog when the search changes", async () => {
   expect(screen.getByRole("heading", { name: "Connectors" })).toBeTruthy();
 });
 
+it("returns to the list when a failed sign-in is retried and then cancelled", async () => {
+  stubCatalogOauth(connected("github", "c-github"));
+  render(
+    createElement(
+      ThemeProvider,
+      null,
+      createElement(LivePanel, { initial: [connected("notion")] }),
+    ),
+  );
+
+  const githubTile = document.querySelector('[data-catalog-id="github"]');
+  expect(githubTile).not.toBeNull();
+  fireEvent.click(githubTile!.querySelector("button")!);
+  fireEvent.click(screen.getByRole("button", { name: "Continue to GitHub ↗" }));
+  await waitFor(() => {
+    expect(vi.mocked(window.open)).toHaveBeenCalled();
+  });
+  act(() => {
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        origin: window.location.origin,
+        data: { type: "mockbot-oauth", ok: false },
+      }),
+    );
+  });
+
+  fireEvent.click(await screen.findByRole("button", { name: "Try again" }));
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+  expect(document.querySelector('section[aria-label="Connected"]')).not.toBeNull();
+  expect(screen.getByRole("heading", { name: "Connectors" })).toBeTruthy();
+  expect(screen.queryByRole("heading", { name: "Add a connector", level: 2 })).toBeNull();
+});
+
 it("returns to the connected list when a connect started there is cancelled", () => {
   render(
     createElement(
