@@ -1,6 +1,8 @@
 import { expect, it } from "vitest";
 import {
   DONE_HOLD_MS,
+  alertAfterConversationSwitch,
+  alertMessageForView,
   doneHoldStillApplies,
   lastAssistantId,
   liveAssistantId,
@@ -191,6 +193,27 @@ it("ignores rename, delete, and expired-approval alerts when choosing Mochi's er
     spriteTurnErrorForView({ message: "Request failed", kind: "turn", ownerId: null }, "c1"),
   ).toBeNull();
   expect(spriteTurnErrorForView(null, null)).toBeNull();
+});
+
+it("a turn alert owned by chat A is hidden while chat B is open, and it reappears after switching back to A", () => {
+  const ownedByA = {
+    message: "The model request failed",
+    kind: "turn" as const,
+    ownerId: "A",
+  };
+  const whileAway = alertAfterConversationSwitch(ownedByA);
+  expect(whileAway).toBe(ownedByA);
+  expect(spriteTurnErrorForView(whileAway, "B")).toBeNull();
+  expect(alertMessageForView(whileAway, "B")).toBeNull();
+  expect(spriteTurnErrorForView(whileAway, "A")).toBe("The model request failed");
+  expect(alertMessageForView(whileAway, "A")).toBe("The model request failed");
+  expect(
+    alertAfterConversationSwitch({
+      message: "Could not rename conversation",
+      kind: "workspace",
+      ownerId: "A",
+    }),
+  ).toBeNull();
 });
 
 it("drops the done hold when the conversation or the turn changes", () => {

@@ -96,6 +96,25 @@ export function spriteTurnErrorForView(
   return alert.message;
 }
 
+/**
+ * Leaving a conversation drops rename, delete, and approval alerts.
+ * A failed turn stays stored, and the open chat decides whether it shows.
+ */
+export function alertAfterConversationSwitch(alert: SpriteAlert | null): SpriteAlert | null {
+  if (!alert || alert.kind === "workspace") return null;
+  return alert;
+}
+
+/** Banner text for the conversation on screen. A turn error stays with its owner. */
+export function alertMessageForView(
+  alert: SpriteAlert | null,
+  conversationId: string | null,
+): string | null {
+  if (!alert) return null;
+  if (alert.kind === "workspace") return alert.message;
+  return spriteTurnErrorForView(alert, conversationId);
+}
+
 export type DoneHoldKey = {
   conversationId: string | null;
   turnId: string | null;

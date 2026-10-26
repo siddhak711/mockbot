@@ -27,7 +27,12 @@ import {
   previewText,
   type ToolActivity,
 } from "../src/tools/display";
-import { spriteLabel, type SpriteAlert } from "../src/sprite";
+import {
+  alertAfterConversationSwitch,
+  alertMessageForView,
+  spriteLabel,
+  type SpriteAlert,
+} from "../src/sprite";
 import type { Conversation, LivePhase, Memory, Message, ToolCallStatus } from "../src/types";
 
 function isAbort(error: unknown): boolean {
@@ -720,7 +725,7 @@ export function Workspace() {
   const speakingId = active?.agentId ?? activeAgentId;
   const speaking = agents.find((agent) => agent.id === speakingId) ?? null;
   const awaitingApproval = activities.some((activity) => activity.state === "approval");
-  const error = alert?.message ?? null;
+  const error = alertMessageForView(alert, activeId);
   const sprite = useRunSprite({
     conversationId: activeId,
     streaming,
@@ -754,7 +759,7 @@ export function Workspace() {
           setNavOpen(false);
           setMobilePane("chat");
           if (!streaming) {
-            if (id !== activeId) setAlert(null);
+            if (id !== activeId) setAlert((current) => alertAfterConversationSwitch(current));
             void selectConversation(id);
           }
         }}
