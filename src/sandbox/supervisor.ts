@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { isAbortError, throwIfAborted } from "./abort";
 import {
   formatExecResult,
@@ -19,6 +20,7 @@ import {
 } from "./limits";
 import type { ExecOutcome, SandboxRuntime } from "./runtime";
 import type { SandboxStore } from "./store";
+import type { SandboxEntry } from "./runtime";
 import type {
   ComputerFile,
   ComputerSnapshot,
@@ -26,6 +28,28 @@ import type {
   ComputerToolResult,
   SandboxRun,
 } from "./types";
+
+/** Skip dependency and VCS trees when diffing a command. */
+const DIFF_SKIP_DIRS = new Set(["node_modules", ".git"]);
+
+/** Past this many files, record no diff instead of reading the tree. */
+export const DIFF_MAX_FILES = 200;
+
+/** Past this many bytes of file content or listed sizes, record no diff. */
+export const DIFF_MAX_BYTES = 1_000_000;
+
+const DIFF_READ_CONCURRENCY = 8;
+
+/** A read that failed. Comparison skips the path instead of treating it as new. */
+const UNKNOWN_STAMP = "unknown";
+
+type DiffEntry = {
+  path: string;
+  size?: number;
+  modifiedAt?: string;
+};
+
+type TreeStamp = Map<string, string> | "over" | null;
 
 export type ComputerInvocation = {
   result: ComputerToolResult;
@@ -165,11 +189,15 @@ export class ComputerSupervisor {
     if (command.length > MAX_COMMAND_CHARS) {
       return this.#fail(agentId, "exec", command, args, "Command is too long.", []);
     }
+    let before: TreeStamp = null;
+    let ran = false;
     let outcome: ExecOutcome;
     try {
       throwIfAborted(signal);
       await this.runtime.prepare(agentId, signal);
       throwIfAborted(signal);
+      before = await this.#readTree(agentId, signal);
+      ran = true;
       outcome = await deadline(
         this.runtime.exec(agentId, command, this.timeoutMs, signal),
         this.timeoutMs,
@@ -179,7 +207,8 @@ export class ComputerSupervisor {
       if (isAbortError(error) || signal?.aborted)
         throw isAbortError(error) ? error : abortFrom(signal);
       const message = error instanceof Error ? error.message : "Sandbox command failed";
-      return this.#fail(agentId, "exec", command, { command }, message, []);
+      const changed = ran ? await this.#changedSince(agentId, before, signal) : [];
+      return this.#fail(agentId, "exec", command, { command }, message, changed);
     }
     const finished: ExecOutcome = outcome.timedOut
       ? { stdout: killedMessage(this.timeoutMs), stderr: "", exitCode: null, timedOut: true }
@@ -189,6 +218,7 @@ export class ComputerSupervisor {
           exitCode: outcome.exitCode,
           timedOut: false,
         };
+    const changed = await this.#changedSince(agentId, before, signal);
     const run = await this.#record(
       agentId,
       "exec",
@@ -198,9 +228,145 @@ export class ComputerSupervisor {
       finished.stderr,
       finished.exitCode,
       finished.timedOut,
-      [],
+      changed,
     );
     return { result: this.#shown(formatExecResult(command, finished)), run };
+  }
+
+  async #readTree(agentId: string, signal?: AbortSignal): Promise<TreeStamp> {
+    throwIfAborted(signal);
+    const listed = await this.#diffEntries(agentId, signal);
+    if (listed === "over" || !listed) return listed;
+    if (listed.length > DIFF_MAX_FILES) return "over";
+    const knownBytes = listed.reduce(
+      (sum, file) => sum + (typeof file.size === "number" ? file.size : 0),
+      0,
+    );
+    if (knownBytes > DIFF_MAX_BYTES) return "over";
+    const stamps = new Map<string, string>();
+    const unread: DiffEntry[] = [];
+    for (const file of listed) {
+      if (typeof file.size === "number" && file.modifiedAt) {
+        stamps.set(file.path, `${file.size}:${file.modifiedAt}`);
+      } else unread.push(file);
+    }
+    if (unread.length === 0) return stamps;
+    const read = await this.#readStamps(agentId, unread, signal);
+    if (read === "over") return "over";
+    for (const [path, stamp] of read) stamps.set(path, stamp);
+    return stamps;
+  }
+
+  async #diffEntries(agentId: string, signal?: AbortSignal): Promise<DiffEntry[] | "over" | null> {
+    throwIfAborted(signal);
+    if (this.runtime.kind === "mock") {
+      try {
+        const paths = await this.store.listPaths(agentId);
+        const files = paths.filter((path) => !ignoredDiffPath(path));
+        if (files.length > DIFF_MAX_FILES) return "over";
+        return files.map((path) => ({ path }));
+      } catch (error) {
+        if (isAbortError(error) || signal?.aborted) {
+          throw isAbortError(error) ? error : abortFrom(signal);
+        }
+        return null;
+      }
+    }
+    const computer = await this.store.getComputer(agentId);
+    if (!computer?.sandboxId) return [];
+    return this.#walkDiff(agentId, "", 0, signal);
+  }
+
+  async #walkDiff(
+    agentId: string,
+    dir: string,
+    depth: number,
+    signal?: AbortSignal,
+  ): Promise<DiffEntry[] | "over" | null> {
+    throwIfAborted(signal);
+    if (depth > 16) return [];
+    let listed: { ok: true; entries: SandboxEntry[] } | { ok: false; error: string };
+    try {
+      listed = await this.runtime.list(agentId, dir);
+    } catch (error) {
+      if (isAbortError(error) || signal?.aborted) {
+        throw isAbortError(error) ? error : abortFrom(signal);
+      }
+      return null;
+    }
+    if (!listed.ok) return null;
+    const files: DiffEntry[] = [];
+    let bytes = 0;
+    for (const entry of listed.entries) {
+      throwIfAborted(signal);
+      if (DIFF_SKIP_DIRS.has(entry.name)) continue;
+      const path = dir ? `${dir}/${entry.name}` : entry.name;
+      if (ignoredDiffPath(path)) continue;
+      if (entry.kind === "dir") {
+        const nested = await this.#walkDiff(agentId, path, depth + 1, signal);
+        if (nested === "over" || !nested) return nested;
+        files.push(...nested);
+        bytes += nested.reduce(
+          (sum, file) => sum + (typeof file.size === "number" ? file.size : 0),
+          0,
+        );
+      } else {
+        files.push({ path, size: entry.size, modifiedAt: entry.modifiedAt });
+        if (typeof entry.size === "number") bytes += entry.size;
+      }
+      if (files.length > DIFF_MAX_FILES || bytes > DIFF_MAX_BYTES) return "over";
+    }
+    return files;
+  }
+
+  async #readStamps(
+    agentId: string,
+    files: DiffEntry[],
+    signal?: AbortSignal,
+  ): Promise<Map<string, string> | "over"> {
+    const stamps = new Map<string, string>();
+    let bytes = 0;
+    let over = false;
+    let cursor = 0;
+    const worker = async () => {
+      while (!over) {
+        throwIfAborted(signal);
+        const index = cursor;
+        cursor += 1;
+        if (index >= files.length) return;
+        const file = files[index];
+        if (!file) return;
+        try {
+          const read = await this.runtime.read(agentId, file.path, signal);
+          if (!read.ok) {
+            stamps.set(file.path, UNKNOWN_STAMP);
+            continue;
+          }
+          bytes += byteLength(read.content);
+          if (bytes > DIFF_MAX_BYTES) {
+            over = true;
+            return;
+          }
+          stamps.set(file.path, contentStamp(read.content));
+        } catch (error) {
+          if (isAbortError(error) || signal?.aborted) {
+            throw isAbortError(error) ? error : abortFrom(signal);
+          }
+          stamps.set(file.path, UNKNOWN_STAMP);
+        }
+      }
+    };
+    const workers = Math.min(DIFF_READ_CONCURRENCY, files.length);
+    if (workers > 0) await Promise.all(Array.from({ length: workers }, () => worker()));
+    if (over) return "over";
+    return stamps;
+  }
+
+  async #changedSince(agentId: string, before: TreeStamp, signal?: AbortSignal): Promise<string[]> {
+    if (!before || before === "over") return [];
+    const after = await this.#readTree(agentId, signal);
+    if (!after || after === "over") return [];
+    return addedOrModified(before, after);
   }
 
   async #fail(
@@ -273,6 +439,28 @@ function abortFrom(signal?: AbortSignal): Error {
   const reason = signal?.reason;
   if (reason instanceof Error && reason.name === "AbortError") return reason;
   return Object.assign(new Error("The operation was aborted"), { name: "AbortError" });
+}
+
+function ignoredDiffPath(path: string): boolean {
+  return path.split("/").some((part) => DIFF_SKIP_DIRS.has(part));
+}
+
+function contentStamp(content: string): string {
+  const size = byteLength(content);
+  const hash = createHash("sha256").update(content).digest("hex");
+  return `${size}:${hash}`;
+}
+
+function addedOrModified(before: Map<string, string>, after: Map<string, string>): string[] {
+  const changed: string[] = [];
+  for (const [path, content] of after) {
+    if (content === UNKNOWN_STAMP) continue;
+    const previous = before.get(path);
+    if (previous === UNKNOWN_STAMP) continue;
+    if (previous === undefined || previous !== content) changed.push(path);
+  }
+  changed.sort((left, right) => left.localeCompare(right));
+  return changed;
 }
 
 function stringArg(value: unknown, fallback: string): string {

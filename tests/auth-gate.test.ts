@@ -60,8 +60,8 @@ function request(path: string, cookie?: string): NextRequest {
 
 it("redirects anonymous app requests to login and leaves auth routes public", async () => {
   const home = proxy(request("/"));
-  expect(home.status).toBe(307);
-  expect(home.headers.get("location")).toBe("http://localhost:3000/login");
+  expect(home.status).toBe(200);
+  expect(home.headers.get("location")).toBeNull();
 
   const routines = proxy(request("/routines?tab=runs"));
   expect(routines.status).toBe(307);

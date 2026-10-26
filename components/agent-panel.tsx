@@ -3,9 +3,9 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Agent } from "../src/agents/types";
-import type { SpriteState } from "../src/sprite";
+import { spriteColorForAgent, type SpriteState } from "../src/sprite";
+import { BotSprite } from "./bot-sprite";
 import { CloseIcon, PlusIcon } from "./icons";
-import { Mochi } from "./mochi";
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -160,7 +160,11 @@ export function AgentPanel({
               onClick={() => onSelect(agent.id)}
               disabled={busy}
             >
-              <Mochi state={selected ? spriteState : "idle"} size={24} />
+              <BotSprite
+                state={selected ? spriteState : "idle"}
+                color={spriteColorForAgent(agent)}
+                size={32}
+              />
               <span className="item-label">{agent.name}</span>
             </button>
           );

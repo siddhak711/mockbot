@@ -88,6 +88,8 @@ it("renders the theme toggle in the sidebar header", () => {
   const logout = screen.getByRole("menuitem", { name: "Log out" });
   expect(footer?.contains(logout)).toBe(true);
   expect(logout.closest("form")?.getAttribute("action")).toBeTruthy();
+  expect(screen.queryByRole("menuitem", { name: "Connectors" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Settings" })).toBeNull();
 });
 
 it("opens a new-agent dialog and closes it from Escape, the backdrop, and the X", () => {

@@ -18,7 +18,7 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). With no API key, chat uses the built-in mock provider. Each mock turn streams a start token, a short reasoning trace, the answer, and an end token (`finish stop`). The live mock does not invent a connector tool call. Asking it to remember a fact calls `memory_write`. A message that asks for a handoff calls `delegate`. Tool-call cards still render when a stream includes them. The agent's thread and memories are stored in embedded Postgres (PGlite) under `.data/pglite`. A refresh restores that thread, memories, and every streamed phase. The token-by-token animation is live only. Stopping a turn keeps the partial reasoning and answer that have already been saved.
+Open [http://localhost:3000](http://localhost:3000). A visitor who is not signed in sees the Daylight landing page and can join the waitlist in the browser. The waitlist does not call a server. Sign in at [http://localhost:3000/login](http://localhost:3000/login) to open the workspace on the same address. With no API key, chat uses the built-in mock provider. Each mock turn streams a start token, a short reasoning trace, the answer, and an end token (`finish stop`). The live mock does not invent a connector tool call. Asking it to remember a fact calls `memory_write`. A message that asks for a handoff calls `delegate`. Tool-call cards still render when a stream includes them. The agent's thread and memories are stored in embedded Postgres (PGlite) under `.data/pglite`. A refresh restores that thread, memories, and every streamed phase. The token-by-token animation is live only. Stopping a turn keeps the partial reasoning and answer that have already been saved.
 
 The first agent is Mockbot, seeded with the original assistant prompt. Create another agent in the sidebar (name, instructions, an optional memory note, and optional computer or connector ids). Select an agent to open that agent's thread. From Mockbot, send:
 
@@ -32,7 +32,7 @@ The lead transcript shows the `delegate` call and the child result. Only Mockbot
 
 ## Accounts
 
-The workspace is signed in. A visitor with no session sees the login screen. Email and password accounts and Google sign-in share one user record. Sessions are opaque tokens in an httpOnly cookie (`authjs.session-token`, or `__Secure-authjs.session-token` on HTTPS). The token is stored in Postgres. Passwords are hashed with bcrypt at cost 12 and are never written to the database as plaintext.
+The workspace is signed in. A visitor with no session who opens the home page sees the Daylight landing page. Routines, settings, connectors, and the API still redirect that visitor to the login screen. Email and password accounts and Google sign-in share one user record. Sessions are opaque tokens in an httpOnly cookie (`authjs.session-token`, or `__Secure-authjs.session-token` on HTTPS). The token is stored in Postgres. Passwords are hashed with bcrypt at cost 12 and are never written to the database as plaintext.
 
 Auth.js (NextAuth v5) runs the Google OAuth flow and the `/api/auth/*` routes. The stock Postgres adapter is not used: local development is embedded PGlite and production is Neon's serverless driver, both behind the existing `Sql` connection. A small adapter implements the Auth.js user, account, session, and verification tables on that connection. Email and password does not use the Auth.js Credentials provider. That provider cannot persist database sessions. Sign-up and sign-in write the same `users` and `sessions` rows, then set the same cookie. Pages and the log-out action read that cookie directly. `AUTH_SECRET` is still required for `/api/auth/*` and Google sign-in.
 
@@ -212,6 +212,10 @@ Each agent has one computer. The current build has a single implicit agent, so e
 The Computer pane shows the command, the output, the exit code, and changed files. A command that runs longer than `SANDBOX_COMMAND_TIMEOUT_MS` (default 10 seconds) is killed and stored as a failed run.
 
 Daytona is used when a key is set. The same tools run inside a Daytona sandbox, one sandbox per agent. The sandbox id is reused on the next command. Host environment variables are not copied into it.
+
+Each new sandbox is built from `python:3.12-slim-bookworm`. The image installs `coreutils` (`ls`, `cat`, `wc`, `head`, `tail`), `grep`, `sed`, `git`, `python3`, `nodejs`, and `npm`, then fails the build unless `grep --version`, `node --version`, `npm --version`, `python3 --version`, and `git --version` succeed. Daytona caches that image. The first create waits for the build; later creates reuse it. The SDK's 60 second create timeout is disabled for that wait.
+
+A sandbox created before this image keeps its old filesystem. Before the first command, Mockbot runs the same version check inside the sandbox. If a tool is missing, it installs the packages with apt (as root, or with `sudo -n` when the sandbox user is not root). That install is not stored as a computer run. If the install fails, that command creates a new sandbox from the tool image instead. The old sandbox and its files are left in Daytona.
 
 ```bash
 DAYTONA_API_KEY=dtn_...

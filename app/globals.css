@@ -1627,6 +1627,31 @@ summary:focus-visible {
   list-style: none;
 }
 
+.computer-file-link {
+  display: block;
+  width: 100%;
+  text-align: left;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.computer-file-link:hover,
+.computer-file-link.on {
+  color: var(--ink);
+}
+
+.computer-expand {
+  margin-top: 6px;
+}
+
+.computer-explored-runs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 2px 0 2px 12px;
+}
+
 .computer-list {
   display: flex;
   flex-direction: column;
@@ -1877,28 +1902,37 @@ summary:focus-visible {
   background: var(--surface);
 }
 
-.mochi-slot {
+.bot-sprite-slot {
   position: relative;
   display: inline-grid;
   flex: none;
 }
 
-.mochi-slot .mochi {
+.bot-sprite-slot > .bot-sprite,
+.bot-sprite-slot > picture {
+  grid-area: 1 / 1;
+}
+
+.bot-sprite-slot picture {
+  display: grid;
+}
+
+.bot-sprite-slot .bot-sprite {
   grid-area: 1 / 1;
   width: 100%;
   height: 100%;
   display: block;
 }
 
-.mochi {
-  animation: mochi-in 150ms linear;
+.bot-sprite {
+  animation: bot-sprite-in 150ms linear;
 }
 
-.mochi-out {
-  animation: mochi-out 150ms linear forwards;
+.bot-sprite-out {
+  animation: bot-sprite-out 150ms linear forwards;
 }
 
-@keyframes mochi-in {
+@keyframes bot-sprite-in {
   from {
     opacity: 0;
   }
@@ -1907,7 +1941,7 @@ summary:focus-visible {
   }
 }
 
-@keyframes mochi-out {
+@keyframes bot-sprite-out {
   from {
     opacity: 1;
   }
@@ -2151,8 +2185,8 @@ a.icon-btn {
 @media (prefers-reduced-motion: reduce) {
   .spinner,
   .connector-spin,
-  .mochi,
-  .mochi-out,
+  .bot-sprite,
+  .bot-sprite-out,
   .thinking-label,
   .thinking-shimmer {
     animation: none;
@@ -2801,10 +2835,6 @@ a.icon-btn {
   font-weight: 600;
 }
 
-.settings-anchor {
-  position: relative;
-}
-
 .toast {
   position: fixed;
   left: 50%;
@@ -2839,13 +2869,6 @@ a.icon-btn {
   font-family: var(--mono);
   font-size: 12px;
   line-height: 20px;
-}
-
-.settings-pop {
-  position: absolute;
-  right: 8px;
-  bottom: 48px;
-  z-index: 5;
 }
 
 .back-btn {

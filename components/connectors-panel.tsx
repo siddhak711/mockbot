@@ -24,7 +24,7 @@ import {
   type ToolRisk,
 } from "../src/connectors/policy";
 import { ArrowLeftIcon, CloseIcon, PlugIcon, SearchIcon, SparkleIcon } from "./icons";
-import { Mochi } from "./mochi";
+import { BotSprite } from "./bot-sprite";
 import {
   Monogram,
   Notice,
@@ -938,7 +938,7 @@ export function ConnectorsPanel({
           ) : null}
           {visibleMode === "list" && (ready || preview) && shownConnectors.length === 0 ? (
             <div className="connector-empty">
-              <Mochi state="idle" size={64} label="Mochi, idle" />
+              <BotSprite state="idle" size={64} label="Mockbot, ready" />
               <h3>No connectors yet</h3>
               <p>Connect an app so mockbot can search, read, and act for you.</p>
               <button type="button" className="btn primary" onClick={() => setMode("add")}>
@@ -1705,7 +1705,7 @@ function OauthSheet({
   return (
     <div className="sheet" role="dialog" aria-labelledby="oauth-title">
       <div className="identity">
-        <Mochi state="idle" size={36} label="Mochi" />
+        <BotSprite state={waiting ? "thinking" : "idle"} size={36} label="Mockbot" />
         <span aria-hidden="true">⇄</span>
         <Monogram label={name} color={entry?.color} ink={entry?.inkMonogram ?? true} large />
       </div>
