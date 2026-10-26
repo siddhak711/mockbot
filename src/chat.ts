@@ -9,6 +9,7 @@ import { findSecrets } from "./memory/scrub";
 import { encodeSse, ssePadding } from "./sse";
 import { titleFromMessage, type ConversationStore } from "./store";
 import type { LlmProvider } from "./llm";
+import { ASK_USER_TOOL, type AskGate } from "./tools/ask-user";
 import { requiresApproval, type ApprovalGate } from "./tools/approval";
 import { runTool, type ToolRegistry } from "./tools/registry";
 import {
@@ -38,7 +39,7 @@ type PendingCall = {
   name: string;
   arguments: string;
   result: string | null;
-  status: "running" | "approval" | "done" | "denied" | "error";
+  status: "running" | "approval" | "ask" | "done" | "denied" | "error";
   output: string | null;
 };
 
@@ -114,6 +115,7 @@ export async function streamChatTurn(options: {
   provider: LlmProvider;
   tools: ToolRegistry;
   approvals: ApprovalGate;
+  asks: AskGate;
   message: string;
   conversationId?: string;
   agentId?: string;
@@ -159,6 +161,12 @@ export async function streamChatTurn(options: {
       { status: 409 },
     );
   }
+  if (options.asks.hasPending(conversation.id)) {
+    return Response.json(
+      { error: "A question is still waiting for an answer in this conversation." },
+      { status: 409 },
+    );
+  }
 
   const user = await options.store.addMessage(conversation.id, "user", message);
   const speaker = (await agents.get(conversation.agentId)) ?? (await agents.lead());
@@ -177,7 +185,7 @@ export async function streamChatTurn(options: {
   const history = prepared.messages;
   const memoryDeps = prepared.deps;
 
-  const { store, provider, approvals, signal } = options;
+  const { store, provider, approvals, asks, signal } = options;
   const tools = toolsForSpeaker(options.tools, speaker, {
     directory: agents,
     store,
@@ -210,6 +218,8 @@ export async function streamChatTurn(options: {
   let saved = "";
   let persistQueue = Promise.resolve();
   let userStopped = false;
+  let followRequest = true;
+  const clientCancelled = () => followRequest && Boolean(signal?.aborted);
   const liveCalls: PendingCall[] = [];
 
   const persist = (text: string, current: MessageTrace) => {
@@ -286,7 +296,9 @@ export async function streamChatTurn(options: {
 
       const stopOpenCalls = async () => {
         for (const call of liveCalls) {
-          if (call.status !== "running" && call.status !== "approval") continue;
+          if (call.status !== "running" && call.status !== "approval" && call.status !== "ask") {
+            continue;
+          }
           call.status = "error";
           call.output = "Stopped before the tool finished.";
           await saveCall(call);
@@ -305,7 +317,7 @@ export async function streamChatTurn(options: {
         let sawStart = false;
         let roundEnded = false;
         for (let round = 0; round < MAX_ROUNDS; round += 1) {
-          if (signal?.aborted || userStopped) break;
+          if (clientCancelled() || userStopped) break;
           const exposed = tools.exposed({ promoted });
           const roundCalls: PendingCall[] = [];
           let roundText = "";
@@ -318,8 +330,10 @@ export async function streamChatTurn(options: {
           };
           providerSignal.tools = exposed;
           const abortRound = () => roundAbort.abort(signal?.reason);
-          if (signal?.aborted) abortRound();
-          else signal?.addEventListener("abort", abortRound, { once: true });
+          if (followRequest) {
+            if (signal?.aborted) abortRound();
+            else signal?.addEventListener("abort", abortRound, { once: true });
+          }
 
           const modelEvents = provider.stream(history, providerSignal);
           const events = delegateTool
@@ -341,14 +355,14 @@ export async function streamChatTurn(options: {
 
           try {
             for await (const event of events) {
-              if (signal?.aborted || userStopped) break;
+              if (clientCancelled() || userStopped) break;
               if (!sawStart && event.type !== "start") {
                 sawStart = true;
                 await publish(applyStreamEvent(trace, { type: "start", role: "assistant" }), {
                   type: "start",
                   role: "assistant",
                 });
-                if (signal?.aborted || userStopped) break;
+                if (clientCancelled() || userStopped) break;
               }
               if (event.type === "start") sawStart = true;
               if (event.type === "text") roundText += event.text;
@@ -366,12 +380,12 @@ export async function streamChatTurn(options: {
               const published =
                 event.type === "tool_call" ? { ...event, index: indexBase + event.index } : event;
               await publish(applyStreamEvent(trace, published), published);
-              if (signal?.aborted || userStopped) break;
+              if (clientCancelled() || userStopped) break;
             }
           } finally {
             signal?.removeEventListener("abort", abortRound);
           }
-          if (signal?.aborted || userStopped) break;
+          if (clientCancelled() || userStopped) break;
 
           for (const call of roundCalls) {
             if (call.name !== DELEGATE_TOOL_NAME || call.result == null || call.output != null) {
@@ -397,23 +411,23 @@ export async function streamChatTurn(options: {
             tool_calls: pending.map(toLlmToolCall),
           });
           for (const call of pending) {
-            if (signal?.aborted || userStopped) break;
+            if (clientCancelled() || userStopped) break;
             liveCalls.push(call);
             const output = await executeCall(call);
             if (output === null) break;
             history.push({ role: "tool", tool_call_id: call.id, content: output });
           }
-          if (signal?.aborted || userStopped) break;
+          if (clientCancelled() || userStopped) break;
         }
 
-        if (!signal?.aborted && !userStopped && sawStart && !roundEnded) {
+        if (!clientCancelled() && !userStopped && sawStart && !roundEnded) {
           await publish(applyStreamEvent(trace, { type: "end", finishReason: "stop" }), {
             type: "end",
             finishReason: "stop",
           });
         }
         await persist(partial, trace);
-        if (signal?.aborted || userStopped) {
+        if (clientCancelled() || userStopped) {
           await stopOpenCalls();
         } else {
           enqueue("done", {
@@ -433,6 +447,59 @@ export async function streamChatTurn(options: {
       } finally {
         await persist(partial, trace);
         close();
+      }
+
+      async function askPerson(
+        call: PendingCall,
+        args: Record<string, unknown>,
+      ): Promise<string | null> {
+        const question = typeof args.question === "string" ? args.question : "";
+        const options = Array.isArray(args.options)
+          ? args.options.filter((option): option is string => typeof option === "string")
+          : [];
+        const allowCustom = args.allowCustom === true;
+        call.arguments = JSON.stringify({ question, options, allowCustom });
+        call.status = "ask";
+        await saveCall(call);
+        followRequest = false;
+        enqueue("ask_user", {
+          id: call.id,
+          name: call.name,
+          question,
+          options,
+          allowCustom,
+          arguments: call.arguments,
+          assistantMessageId: assistantId,
+        });
+        const outcome = await asks.wait(
+          call.id,
+          { question, options, allowCustom },
+          conversationSnapshot.id,
+        );
+        if (!signal?.aborted) followRequest = true;
+        if (outcome.reason === "stopped") {
+          userStopped = true;
+          call.status = "error";
+          call.output = STOPPED_TOOL_OUTPUT;
+          await saveCall(call);
+          await remember(
+            applyStreamEvent(trace, {
+              type: "tool_result",
+              id: call.id,
+              name: call.name,
+              content: call.output,
+            }),
+          );
+          return null;
+        }
+        if (outcome.reason === "timeout") {
+          return finish(
+            call,
+            "error",
+            "The user did not answer before the question timed out. Do not invent an answer.",
+          );
+        }
+        return finish(call, "done", outcome.answer);
       }
 
       async function executeCall(call: PendingCall): Promise<string | null> {
@@ -457,6 +524,9 @@ export async function streamChatTurn(options: {
         }
         const prepared = tool.prepare ? tool.prepare(parsed.args) : { args: parsed.args };
         if ("error" in prepared) return finish(call, "error", prepared.error);
+        if (call.name === ASK_USER_TOOL) {
+          return askPerson(call, prepared.args);
+        }
         if (requiresApproval(tool, prepared.args)) {
           call.status = "approval";
           await saveCall(call);
@@ -502,7 +572,7 @@ export async function streamChatTurn(options: {
         }
         const result = await runTool(tool, prepared.args, {
           ...toolContext,
-          signal: signal?.aborted ? undefined : toolContext.signal,
+          signal: followRequest && !signal?.aborted ? toolContext.signal : undefined,
         });
         if (!call.name.startsWith("memory_")) memoryDeps.toolOutputs.push(result.content);
         const blocked = result.blocked === "secret";

@@ -226,6 +226,7 @@ it("tells the model to search for unlisted tools and to wait for approval", () =
   expect(prompt).toContain(
     "Tools that send, post, delete, pay, or invite someone wait until the person approves them.",
   );
+  expect(prompt).toContain("call ask_user with a question, options, and allowCustom");
 });
 
 it("keeps profile memories inside the token budget in the system prompt", async () => {
@@ -306,6 +307,7 @@ it("applies migrations once and refuses embedded postgres in production", async 
       "004_connectors",
       "005_connector_tools",
       "006_auth",
+      "007_ask_user",
     ]);
     expect(first.driver).toBe("pglite");
     await first.close();
@@ -318,6 +320,7 @@ it("applies migrations once and refuses embedded postgres in production", async 
       "004_connectors",
       "005_connector_tools",
       "006_auth",
+      "007_ask_user",
     ]);
   } finally {
     await rm(dir, { recursive: true, force: true });

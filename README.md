@@ -269,6 +269,7 @@ The same form is on the Routines page.
   - `tool_start` — `{ "id", "name", "assistantMessageId" }` when the registry starts a tool
   - `tool_args` — `{ "id", "arguments" }` as a registry tool's arguments arrive
   - `approval_required` — `{ "id", "name", "arguments", "summary", "assistantMessageId" }` when a write needs approval
+  - `ask_user` — `{ "id", "name", "question", "options", "allowCustom", "arguments", "assistantMessageId" }` when the agent asks the person a question and the turn pauses
   - `tool_status` — `{ "id", "name", "status" }` when an approved tool starts running
   - `tool_result` — `{ "id", "name", "status", "output", "assistantMessageId" }` when a registry tool finishes
   - `done` — `{ "conversationId", "assistantMessageId" }` after the turn is saved
@@ -277,6 +278,7 @@ The same form is on the Routines page.
   The OpenAI-compatible provider forwards the model phases from a chat-completions stream when the upstream chunk includes them: `delta.role`, `delta.content`, `delta.reasoning` / `reasoning_content` / `thinking`, `delta.tool_calls` (and legacy `function_call`), `delta.refusal`, and `finish_reason`. `data: [DONE]` becomes an end token when the upstream never sent a finish reason. Each stored assistant message includes a `trace` with the reasoning, tool calls, answer text, and finish reason. Registered tools also stay in `tool_calls` on that message. A `finish_reason` of `tool_calls`, or a tool call with no provider result and no answer text, runs through the registry. The default mock omits `tool_call` and `tool_result`. Tests can construct `MockProvider` with `scriptToolCall: true` to emit a display-only `lookup_context` call and result, or `demoTools: true` to run the registry demo.
 
 - `POST /api/tools/approvals` with `{ "id": "...", "decision": "approve" | "deny" | "stop" }` approves, denies, or stops a pending write.
+- `POST /api/tools/asks` with `{ "id": "...", "answer": "..." }` resumes a paused `ask_user` call. The tool result is that answer. `{ "id", "decision": "stop" }` ends the question. The pending question is stored on the assistant message, so a reload shows the same card while the server process is still waiting.
 - `GET /api/connectors` lists connectors. Each row has `id`, `name`, `transport`, `target`, `secretRef`, `enabled`, `createdAt`, and `updatedAt`. `secretRef` is an environment variable name that starts with `MCP_`. The secret value is not included.
 - `POST /api/connectors` with `{ "name", "transport": "http" | "stdio", "target", "secretRef": "optional" }` checks that the server lists tools, then stores the connector.
 - `PATCH /api/connectors/:id` with `{ "enabled": true | false }` enables or disables it.

@@ -9,6 +9,7 @@ import type { ComputerSupervisor } from "./sandbox/supervisor";
 import { createComputerTools } from "./sandbox/tools";
 import { SandboxTurnProvider } from "./sandbox/turn";
 import { ConversationStore } from "./store";
+import { AskGate } from "./tools/ask-user";
 import { ApprovalGate } from "./tools/approval";
 import { createDefaultTools } from "./tools/builtins";
 import { registerMemoryTools, type ToolRegistry } from "./tools/registry";
@@ -18,6 +19,7 @@ export type AppContext = {
   provider: LlmProvider;
   tools: ToolRegistry;
   approvals: ApprovalGate;
+  asks: AskGate;
   sandbox?: ComputerSupervisor;
   routines?: RoutineStore;
   agents?: AgentDirectory;
@@ -57,6 +59,7 @@ export function setAppContext(context: {
   provider: LlmProvider;
   tools?: ToolRegistry;
   approvals?: ApprovalGate;
+  asks?: AskGate;
   sandbox?: ComputerSupervisor;
   routines?: RoutineStore;
   agents?: AgentDirectory;
@@ -72,6 +75,7 @@ export function setAppContext(context: {
     provider: context.provider,
     tools,
     approvals: context.approvals ?? new ApprovalGate(),
+    asks: context.asks ?? new AskGate(),
     sandbox: context.sandbox,
     routines: context.routines,
     agents: context.agents,
@@ -139,6 +143,7 @@ async function openApp(): Promise<AppContext> {
       sandbox,
       tools,
       approvals: new ApprovalGate(),
+      asks: new AskGate(),
       agents,
       memory: new NoteMemory(agents),
       computer: defaultComputer,

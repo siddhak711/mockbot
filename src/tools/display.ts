@@ -1,3 +1,4 @@
+import { readAskUser } from "./ask-user";
 import type { StoredToolCall } from "../types";
 
 export type ToolActivityState = StoredToolCall["status"];
@@ -114,6 +115,10 @@ export function toolTitle(name: string, args: Record<string, unknown> | null): s
   if (name === "read") return typeof args?.path === "string" ? `Read ${args.path}` : "Read a file";
   if (name === "list") return "List sandbox files";
   if (name === "exec") return typeof args?.command === "string" ? args.command : "Run a command";
+  if (name === "ask_user") {
+    const question = typeof args?.question === "string" ? args.question.trim() : "";
+    return question || "Question";
+  }
   return name.replaceAll("_", " ");
 }
 
@@ -141,6 +146,11 @@ export function toolDetail(name: string, args: Record<string, unknown> | null): 
     }
     return "Primary calendar";
   }
+  if (name === "ask_user") {
+    const request = readAskUser(JSON.stringify(args));
+    if (!request) return "";
+    return request.options.join(" · ");
+  }
   if (name.startsWith("memory_")) {
     if (typeof args.query === "string") return args.query;
     if (typeof args.key === "string") return args.key;
@@ -150,7 +160,15 @@ export function toolDetail(name: string, args: Record<string, unknown> | null): 
   return typeof first === "string" ? first : "";
 }
 
+export function isPausedActivity(state: ToolActivity["state"]): boolean {
+  return state === "approval" || state === "ask";
+}
+
 export function approvalSummary(name: string, args: Record<string, unknown> | null): string {
+  if (name === "ask_user") {
+    const question = typeof args?.question === "string" ? args.question.trim() : "";
+    return question;
+  }
   if (name === "memory_delete") {
     const key = typeof args?.key === "string" && args.key.trim() ? args.key.trim() : "this memory";
     return `Forget “${key}”? This removes it from later chats.`;
@@ -233,7 +251,7 @@ export const STOPPED_TOOL_OUTPUT = "Stopped before the tool ran.";
 
 export function activitiesAfterStop(activities: ToolActivity[]): ToolActivity[] {
   return activities.map((activity) =>
-    activity.state === "approval"
+    isPausedActivity(activity.state)
       ? {
           ...activity,
           state: "error",
@@ -253,8 +271,8 @@ export function activitiesAfterReconnect(
     const previous = local.find((entry) => entry.id === item.id);
     if (
       previous &&
-      item.state === "approval" &&
-      previous.state !== "approval" &&
+      isPausedActivity(item.state) &&
+      !isPausedActivity(previous.state) &&
       previous.output === STOPPED_TOOL_OUTPUT
     ) {
       return previous;

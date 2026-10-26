@@ -83,6 +83,17 @@ it("maps a running tool to working and keeps approval off that state", () => {
     spriteStateForRun(
       run({
         streaming: true,
+        livePhase: "tool",
+        liveMessageId: "a1",
+        activities: [{ messageId: "a1", state: "ask" }],
+      }),
+    ),
+  ).toBe("thinking");
+
+  expect(
+    spriteStateForRun(
+      run({
+        streaming: true,
         livePhase: "reasoning",
         liveMessageId: "a1",
         activities: [{ messageId: "older", state: "running" }],

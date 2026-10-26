@@ -201,4 +201,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS agents_name_unscoped_idx
   WHERE user_id IS NULL;
 `,
   },
+  {
+    id: "007_ask_user",
+    sql: `
+ALTER TABLE tool_calls DROP CONSTRAINT IF EXISTS tool_calls_status_check;
+ALTER TABLE tool_calls ADD CONSTRAINT tool_calls_status_check
+  CHECK (status IN ('running', 'approval', 'ask', 'done', 'denied', 'error'));
+`,
+  },
 ];

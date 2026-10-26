@@ -406,6 +406,7 @@ function exitLabel(run: SandboxRun): string {
 function statusLabel(state: ToolActivity["state"]): string {
   if (state === "running") return "Running";
   if (state === "approval") return "Needs approval";
+  if (state === "ask") return "Waiting for an answer";
   if (state === "denied") return "Denied";
   if (state === "error") return "Failed";
   return "Done";

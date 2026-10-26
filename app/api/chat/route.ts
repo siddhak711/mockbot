@@ -11,7 +11,7 @@ export async function POST(request: Request): Promise<Response> {
   const actor = await requireApiUser(request);
   if (!actor.ok) return actor.response;
   const context = await getAppContext();
-  const { store, provider, tools, approvals } = context;
+  const { store, provider, tools, approvals, asks } = context;
   let body: unknown;
   try {
     body = await request.json();
@@ -43,6 +43,7 @@ export async function POST(request: Request): Promise<Response> {
       provider,
       tools: tools.clone(),
       approvals,
+      asks,
       message: typeof record.message === "string" ? record.message : "",
       conversationId: typeof record.conversationId === "string" ? record.conversationId : undefined,
       agentId: typeof record.agentId === "string" ? record.agentId : undefined,
