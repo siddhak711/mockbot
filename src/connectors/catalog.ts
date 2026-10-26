@@ -12,9 +12,9 @@ export type CatalogPermission = {
 };
 
 /**
- * Provider OAuth and execution config. Credentials are read from the named
- * environment variables. A provider without this block is shown in the catalog
- * and cannot be connected.
+ * Deprecated native OAuth config. Catalog connects use Composio.
+ * This block runs only when NATIVE_CATALOG_OAUTH=1.
+ * Credentials are read from the named environment variables.
  */
 export type CatalogOAuth = {
   authorizeUrl: string;
@@ -41,6 +41,14 @@ export type CatalogOAuth = {
   redirectPath: string;
 };
 
+/** Composio toolkit used as the broker for this catalog app. */
+export type CatalogComposio = {
+  /** Composio toolkit slug, such as "notion" or "github". */
+  toolkit: string;
+  /** Connect and execute when true. False keeps the app as catalog config only. */
+  enabled: boolean;
+};
+
 export type CatalogEntry = {
   id: string;
   name: string;
@@ -53,8 +61,9 @@ export type CatalogEntry = {
   auth: "oauth";
   samplePrompt: string;
   permissions: CatalogPermission[];
-  /** Branding shown before connect. Live tools come from the MCP server or adapter. */
+  /** Branding shown before connect. Live tools come from Composio, or from the deprecated native adapter. */
   tools: CatalogTool[];
+  composio?: CatalogComposio;
   oauth?: CatalogOAuth;
 };
 
@@ -76,6 +85,7 @@ export const CATALOG: readonly CatalogEntry[] = [
     color: "#191919",
     inkMonogram: true,
     auth: "oauth",
+    composio: { toolkit: "notion", enabled: true },
     oauth: {
       authorizeUrl: "https://api.notion.com/v1/oauth/authorize",
       tokenUrl: "https://api.notion.com/v1/oauth/token",
@@ -113,6 +123,7 @@ export const CATALOG: readonly CatalogEntry[] = [
     color: "#24292f",
     inkMonogram: true,
     auth: "oauth",
+    composio: { toolkit: "github", enabled: true },
     oauth: {
       authorizeUrl: "https://github.com/login/oauth/authorize",
       tokenUrl: "https://github.com/login/oauth/access_token",
@@ -148,6 +159,7 @@ export const CATALOG: readonly CatalogEntry[] = [
     color: "#5e6ad2",
     inkMonogram: false,
     auth: "oauth",
+    composio: { toolkit: "linear", enabled: false },
     samplePrompt: "Show my Linear issues that are in progress",
     permissions: [
       { allowed: true, text: "Search and read issues you can see" },
@@ -170,6 +182,7 @@ export const CATALOG: readonly CatalogEntry[] = [
     color: "#e01e5a",
     inkMonogram: false,
     auth: "oauth",
+    composio: { toolkit: "slack", enabled: false },
     samplePrompt: "Summarize unread mentions in Slack",
     permissions: [
       { allowed: true, text: "Read channels and messages you can see" },
@@ -191,6 +204,7 @@ export const CATALOG: readonly CatalogEntry[] = [
     color: "#188038",
     inkMonogram: false,
     auth: "oauth",
+    composio: { toolkit: "googledrive", enabled: false },
     samplePrompt: "Find the Q2 planning doc in Google Drive",
     permissions: [
       { allowed: true, text: "Search and read files you share" },
@@ -214,6 +228,7 @@ export const CATALOG: readonly CatalogEntry[] = [
     color: "#336791",
     inkMonogram: false,
     auth: "oauth",
+    composio: { toolkit: "postgres", enabled: false },
     samplePrompt: "How many rows are in the users table?",
     permissions: [
       { allowed: true, text: "Run read-only queries you allow" },
@@ -236,6 +251,7 @@ export const CATALOG: readonly CatalogEntry[] = [
     color: "#9351e9",
     inkMonogram: false,
     auth: "oauth",
+    composio: { toolkit: "figma", enabled: false },
     samplePrompt: "List comments on the latest Figma file",
     permissions: [
       { allowed: true, text: "Read files and comments you can see" },
@@ -258,6 +274,7 @@ export const CATALOG: readonly CatalogEntry[] = [
     color: "#0c66e4",
     inkMonogram: false,
     auth: "oauth",
+    composio: { toolkit: "jira", enabled: false },
     samplePrompt: "Show my open Jira tickets",
     permissions: [
       { allowed: true, text: "Search and read tickets you can see" },
@@ -281,7 +298,14 @@ export function catalogById(id: string): CatalogEntry | undefined {
   return CATALOG.find((entry) => entry.id === id);
 }
 
+export const COMPOSIO_TARGET_PREFIX = "https://backend.composio.dev/v3/toolkits/";
+
+export function composioConnectorTarget(toolkit: string): string {
+  return `${COMPOSIO_TARGET_PREFIX}${encodeURIComponent(toolkit)}`;
+}
+
 export function catalogIsWired(entry: CatalogEntry): boolean {
+  if (entry.composio?.enabled) return true;
   return Boolean(
     entry.oauth && (entry.oauth.mcpUrl || (entry.oauth.adapterId && entry.oauth.apiBase)),
   );
