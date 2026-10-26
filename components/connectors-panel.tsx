@@ -846,6 +846,7 @@ export function ConnectorsPanel({
           onGridKey={onGridKey}
           onConnect={(entry) => showOauth(entry, entry.name)}
           onManage={openManage}
+          onReconnect={(connector) => void reconnect(connector)}
           onPaste={() => {
             setHint("Paste https://…, npx …, uvx …, or JSON config");
             searchRef.current?.focus();
@@ -972,6 +973,7 @@ export function ConnectorsPanel({
               onGridKey={onGridKey}
               onConnect={(entry) => showOauth(entry, entry.name)}
               onManage={openManage}
+              onReconnect={(connector) => void reconnect(connector)}
               onPaste={() => {
                 setHint("Paste https://…, npx …, uvx …, or JSON config");
                 searchRef.current?.focus();
@@ -1266,9 +1268,13 @@ export function ConnectorsPanel({
   );
 }
 
-/** The caller's own link. A shared catalog row is "not connected" until this user links it. */
+/** The caller's own healthy link. A shared catalog row stays unlinked until this user connects it. */
 function callerLinked(connector: ConnectorRecord | undefined, catalogId: string): boolean {
   return connector?.catalogId === catalogId && connector.status === "connected";
+}
+
+function callerNeedsReconnect(connector: ConnectorRecord | undefined, catalogId: string): boolean {
+  return connector?.catalogId === catalogId && connector.status === "reconnect";
 }
 
 function CatalogBrowser({
@@ -1280,6 +1286,7 @@ function CatalogBrowser({
   onGridKey,
   onConnect,
   onManage,
+  onReconnect,
   onPaste,
 }: {
   entries: CatalogEntry[];
@@ -1290,6 +1297,7 @@ function CatalogBrowser({
   onGridKey: (event: ReactKeyboardEvent, count: number) => void;
   onConnect: (entry: CatalogEntry) => void;
   onManage: (connector: ConnectorRecord) => void;
+  onReconnect: (connector: ConnectorRecord) => void;
   onPaste: () => void;
 }) {
   return (
@@ -1316,6 +1324,7 @@ function CatalogBrowser({
         {entries.map((entry, index) => {
           const link = connectors.find((connector) => connector.catalogId === entry.id);
           const connected = callerLinked(link, entry.id);
+          const needsReconnect = callerNeedsReconnect(link, entry.id);
           return (
             <article
               key={entry.id}
@@ -1335,6 +1344,10 @@ function CatalogBrowser({
                 <button type="button" className="btn secondary" onClick={() => onManage(link)}>
                   Manage
                 </button>
+              ) : needsReconnect && link ? (
+                <button type="button" className="btn primary" onClick={() => onReconnect(link)}>
+                  Reconnect
+                </button>
               ) : catalogIsWired(entry) ? (
                 <button type="button" className="btn secondary" onClick={() => onConnect(entry)}>
                   Connect
@@ -1349,6 +1362,8 @@ function CatalogBrowser({
               )}
               {connected ? (
                 <span className="pill success">● Connected</span>
+              ) : needsReconnect ? (
+                <span className="pill warn">● Reconnect needed</span>
               ) : (
                 <span className="pill">● Not connected</span>
               )}

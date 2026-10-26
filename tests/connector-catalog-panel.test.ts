@@ -514,3 +514,20 @@ it("shows every add-connector card from the caller's own link", () => {
   );
   expectEveryCatalogCard("notion");
 });
+
+it("shows a caller's reconnect link as reconnect needed in the grid", () => {
+  openCatalog([sharedCatalogRow("notion", "connected"), sharedCatalogRow("github", "reconnect")]);
+
+  const github = gridTile("github");
+  expect(github.textContent).toContain("● Reconnect needed");
+  expect(github.querySelector("button")?.textContent).toBe("Reconnect");
+  expect(github.textContent).not.toContain("Not connected");
+  expect(github.textContent).not.toContain("● Connected");
+
+  const notion = gridTile("notion");
+  expect(notion.textContent).toContain("● Connected");
+  expect(notion.querySelector("button")?.textContent).toBe("Manage");
+
+  fireEvent.click(github.querySelector("button")!);
+  expect(screen.getByRole("heading", { name: "Connect GitHub" })).toBeTruthy();
+});
