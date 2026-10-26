@@ -27,6 +27,16 @@ export function liveAssistantId(
   return null;
 }
 
+/** True when the assistant article would paint something besides an empty shell. */
+export function assistantHasVisibleBody(
+  message: Message,
+  activities: readonly ToolActivity[] = [],
+): boolean {
+  if (message.content.trim().length > 0) return true;
+  if (message.trace && message.trace.tools.length > 0) return true;
+  return activities.some((activity) => activity.messageId === message.id);
+}
+
 export function Transcript({
   messages,
   streaming = false,
@@ -97,6 +107,10 @@ export function Transcript({
             const messageActivities = activities.filter(
               (activity) => activity.messageId === message.id,
             );
+            // Keep thinking anchored: skip hollow live shells until tools/text arrive.
+            if (live && pendingThink && !assistantHasVisibleBody(message, messageActivities)) {
+              return null;
+            }
             return (
               <article
                 key={message.id}
