@@ -287,14 +287,6 @@ export function ConnectorsPanel({
     const base = catalogInCategory(category);
     return search.trim() ? searchCatalog(search, base) : base;
   }, [category, search]);
-  const availableEntries = useMemo(
-    () =>
-      entries.filter(
-        (entry) => !shownConnectors.some((connector) => connector.catalogId === entry.id),
-      ),
-    [entries, shownConnectors],
-  );
-
   async function probe(value: string, apiKey = "") {
     const detected = detectInput(value);
     if (
@@ -822,39 +814,31 @@ export function ConnectorsPanel({
           }}
         />
         {hint ? <p className="connector-help">{hint}</p> : null}
-        {catalogSearching && availableEntries.length === 0 ? (
+        {catalogSearching && entries.length === 0 ? (
           <div className="connector-empty inline">
-            <h3>
-              {entries.length > 0 ? "Already connected" : `No connectors match “${search.trim()}”`}
-            </h3>
-            <p className="t2">
-              {entries.length > 0
-                ? "Try another category, or paste a server URL above."
-                : "Have a server URL or command? Paste it above."}
-            </p>
-            {entries.length === 0 ? (
-              <div className="pair">
-                <button
-                  type="button"
-                  className="btn secondary"
-                  onClick={() => searchRef.current?.focus()}
-                >
-                  Add by URL
-                </button>
-                <button
-                  type="button"
-                  className="btn ghost"
-                  onClick={() => setNoted(`Noted “${search.trim()}”.`)}
-                >
-                  Request a connector
-                </button>
-              </div>
-            ) : null}
+            <h3>No connectors match “{search.trim()}”</h3>
+            <p className="t2">Have a server URL or command? Paste it above.</p>
+            <div className="pair">
+              <button
+                type="button"
+                className="btn secondary"
+                onClick={() => searchRef.current?.focus()}
+              >
+                Add by URL
+              </button>
+              <button
+                type="button"
+                className="btn ghost"
+                onClick={() => setNoted(`Noted “${search.trim()}”.`)}
+              >
+                Request a connector
+              </button>
+            </div>
             {noted ? <p role="status">{noted}</p> : null}
           </div>
         ) : null}
         <CatalogBrowser
-          entries={availableEntries}
+          entries={entries}
           connectors={shownConnectors}
           category={category}
           tileIndex={tileIndex}
@@ -1282,6 +1266,11 @@ export function ConnectorsPanel({
   );
 }
 
+/** The caller's own link. A shared catalog row is "not connected" until this user links it. */
+function callerLinked(connector: ConnectorRecord | undefined, catalogId: string): boolean {
+  return connector?.catalogId === catalogId && connector.status === "connected";
+}
+
 function CatalogBrowser({
   entries,
   connectors,
@@ -1325,7 +1314,8 @@ function CatalogBrowser({
         onKeyDown={(event) => onGridKey(event, entries.length + 1)}
       >
         {entries.map((entry, index) => {
-          const connected = connectors.some((connector) => connector.catalogId === entry.id);
+          const link = connectors.find((connector) => connector.catalogId === entry.id);
+          const connected = callerLinked(link, entry.id);
           return (
             <article
               key={entry.id}
@@ -1341,15 +1331,8 @@ function CatalogBrowser({
                   <div className="t2">{entry.description}</div>
                 </div>
               </div>
-              {connected ? (
-                <button
-                  type="button"
-                  className="btn secondary"
-                  onClick={() => {
-                    const connector = connectors.find((item) => item.catalogId === entry.id);
-                    if (connector) onManage(connector);
-                  }}
-                >
+              {connected && link ? (
+                <button type="button" className="btn secondary" onClick={() => onManage(link)}>
                   Manage
                 </button>
               ) : catalogIsWired(entry) ? (
@@ -1364,7 +1347,11 @@ function CatalogBrowser({
                   <span className="pill">Not available yet</span>
                 </>
               )}
-              {connected ? <span className="pill success">● Connected</span> : null}
+              {connected ? (
+                <span className="pill success">● Connected</span>
+              ) : (
+                <span className="pill">● Not connected</span>
+              )}
             </article>
           );
         })}
