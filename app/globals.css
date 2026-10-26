@@ -1528,9 +1528,152 @@ summary:focus-visible {
   flex: none;
 }
 
+.pane-tabs .icon-btn,
+.header-actions .icon-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+}
+
+.icon-btn.danger {
+  color: var(--danger);
+}
+
+.icon-btn.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+}
+
+.tip {
+  position: relative;
+}
+
+.tip-bubble {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  z-index: 20;
+  transform: translateX(-50%);
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--ink);
+  color: var(--window);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.tip:hover .tip-bubble,
+.tip:focus-visible .tip-bubble {
+  opacity: 1;
+}
+
+.header-actions .tip:last-child .tip-bubble,
+.pane-h > .tip:last-child .tip-bubble {
+  left: auto;
+  right: 0;
+  transform: none;
+}
+
+.tab-badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: var(--radius-pill);
+  background: var(--ink);
+  color: var(--window);
+  font-size: 9px;
+  line-height: 14px;
+  font-weight: 600;
+  text-align: center;
+}
+
 .agent-section {
   flex: none;
   padding-bottom: 4px;
+}
+
+.agent-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--scrim);
+}
+
+.agent-dialog {
+  width: min(1080px, calc(100vw - 48px));
+  height: min(860px, calc(100vh - 48px));
+  display: flex;
+  flex-direction: column;
+  background: var(--window);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-popover);
+  overflow: hidden;
+}
+
+.agent-dialog-head {
+  height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 0 24px;
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+
+.agent-dialog-head h2 {
+  margin: 0;
+  flex: 1;
+  font-size: 16px;
+  line-height: 22px;
+  font-weight: 600;
+}
+
+.agent-dialog .agent-form {
+  margin: 0;
+  padding: 24px 28px 28px;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  gap: 14px;
+}
+
+.agent-dialog .agent-form input,
+.agent-dialog .agent-form textarea {
+  padding: 10px 12px;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.agent-dialog .agent-instructions {
+  flex: 1;
+  min-height: 180px;
+}
+
+.agent-dialog .agent-instructions textarea {
+  flex: 1;
+  min-height: 160px;
+  height: 100%;
+}
+
+.agent-dialog .agent-error {
+  margin: 0;
+}
+
+.agent-dialog .primary-btn {
+  align-self: flex-start;
+  height: 36px;
+  padding: 0 16px;
+  font-size: 14px;
 }
 
 .agent-hint {
@@ -2506,9 +2649,16 @@ a.icon-btn {
 }
 
 @media (max-width: 760px) {
+  .agent-modal,
   .connector-modal,
   .command-modal {
     padding: 0;
+  }
+
+  .agent-dialog {
+    width: 100%;
+    height: 100%;
+    border-radius: 0;
   }
 
   .connector-window,
