@@ -1,5 +1,5 @@
 import { getAppContext } from "../context";
-import { readSessionToken } from "./cookies";
+import { readSessionToken, sessionTokenFromCookies } from "./cookies";
 import { prepareUser } from "./scope";
 import { readSessionUser } from "./sessions";
 import type { SignedInUser } from "./user";
@@ -38,25 +38,27 @@ export async function requireApiUser(request?: Request): Promise<ApiUser> {
   return { ok: true, user, scoped: true };
 }
 
+/**
+ * The password route stores the same database session Auth.js would.
+ * `auth()` reports no session when Auth.js itself is misconfigured, which
+ * bounced a valid cookie back to /login. Read the cookie here instead.
+ */
+export async function readSignedInUser(): Promise<SignedInUser | null> {
+  const { cookies } = await import("next/headers");
+  const token = sessionTokenFromCookies(await cookies());
+  if (!token) return null;
+  const { store } = await getAppContext();
+  return readSessionUser(store.connection, token);
+}
+
 export async function requirePageUser(): Promise<SignedInUser> {
-  const [{ auth }, { redirect }] = await Promise.all([
-    import("./index"),
-    import("next/navigation"),
-  ]);
-  const session = await auth();
-  const user = session?.user;
-  const id = user?.id;
-  const email = user?.email;
-  if (!id || !email) {
+  const { redirect } = await import("next/navigation");
+  const user = await readSignedInUser();
+  if (!user) {
     redirect("/login");
     throw new Error("Unauthenticated");
   }
   const { store } = await getAppContext();
-  await prepareUser(store.connection, id);
-  return {
-    id,
-    name: user.name ?? null,
-    email,
-    image: user.image ?? null,
-  };
+  await prepareUser(store.connection, user.id);
+  return user;
 }
