@@ -7,7 +7,7 @@ import { ConnectorsPanel } from "./connectors";
 import { ConversationList } from "./conversation-list";
 import { MenuIcon, PlusIcon } from "./icons";
 import { Mochi } from "./mochi";
-import { SidePane } from "./side-pane";
+import { SidePane, type SideTab } from "./side-pane";
 import { Transcript } from "./transcript";
 import { useRunSprite } from "./use-run-sprite";
 import type { AgentDraft } from "./agent-panel";
@@ -19,6 +19,7 @@ import { SseParser } from "../src/sse";
 import { applyClientEvent, emptyTrace, phaseFromEvent, streamedWeight } from "../src/trace";
 import { fetchComputerSnapshot } from "../src/sandbox/refresh";
 import type { ComputerSnapshot } from "../src/sandbox/types";
+import type { RuntimeStatus } from "../src/token-stream";
 import {
   activitiesAfterReconnect,
   activitiesAfterStop,
@@ -59,17 +60,21 @@ export function Workspace() {
   const [streaming, setStreaming] = useState(false);
   const [livePhase, setLivePhase] = useState<LivePhase | null>(null);
   const [alert, setAlert] = useState<SpriteAlert | null>(null);
-  const [providerLabel, setProviderLabel] = useState("Mock provider");
+  const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus>({
+    provider: "mock",
+    model: null,
+    database: "local",
+  });
   const [editing, setEditing] = useState(false);
   const [draftTitle, setDraftTitle] = useState("");
   const [computerOpen, setComputerOpen] = useState(true);
-  const [sideTab, setSideTab] = useState<"computer" | "memory">("computer");
+  const [sideTab, setSideTab] = useState<SideTab>("computer");
   const [memories, setMemories] = useState<Memory[] | null>(null);
   const [memoryError, setMemoryError] = useState<string | null>(null);
   const [computer, setComputer] = useState<ComputerSnapshot | null>(null);
   const [computerReady, setComputerReady] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
-  const [mobilePane, setMobilePane] = useState<"chat" | "computer" | "memory">("chat");
+  const [mobilePane, setMobilePane] = useState<"chat" | SideTab>("chat");
   const [activities, setActivities] = useState<ToolActivity[]>([]);
   const [connectors, setConnectors] = useState<ConnectorRecord[]>([]);
   const [connectorError, setConnectorError] = useState<string | null>(null);
@@ -220,12 +225,11 @@ export function Workspace() {
           model: string | null;
           database?: string;
         };
-        const providerName =
-          status.provider === "openai"
-            ? `OpenAI-compatible${status.model ? ` · ${status.model}` : ""}`
-            : "Mock provider";
-        const databaseName = status.database === "neon" ? "Neon" : "Local";
-        setProviderLabel(`${providerName} · ${databaseName}`);
+        setRuntimeStatus({
+          provider: status.provider,
+          model: status.model,
+          database: status.database === "neon" ? "neon" : "local",
+        });
       }
       if (agentResponse.ok) {
         const agentData = (await agentResponse.json()) as { agents: Agent[] };
@@ -252,6 +256,13 @@ export function Workspace() {
     setMobilePane("memory");
     setNavOpen(false);
     void refreshMemories();
+  }
+
+  function showTrace() {
+    setComputerOpen(true);
+    setSideTab("trace");
+    setMobilePane("trace");
+    setNavOpen(false);
   }
 
   useEffect(() => {
@@ -751,7 +762,7 @@ export function Workspace() {
         agents={agents}
         activeAgentId={speakingId}
         spriteState={sprite}
-        providerLabel={providerLabel}
+        runtimeStatus={runtimeStatus}
         busy={streaming}
         open={navOpen}
         onNew={newChat}
@@ -835,6 +846,15 @@ export function Workspace() {
           >
             Memory
           </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mobilePane === "trace"}
+            className={mobilePane === "trace" ? "on" : undefined}
+            onClick={() => showTrace()}
+          >
+            Trace
+          </button>
         </div>
         <header className="thread-header">
           {editing && active ? (
@@ -916,6 +936,7 @@ export function Workspace() {
             decidingId={decidingId}
             onDecide={(id, decision) => void decide(id, decision)}
             onSelectTool={setSelectedToolId}
+            onOpenTrace={showTrace}
           />
           {error ? (
             <p className="error" role="alert">
@@ -932,7 +953,7 @@ export function Workspace() {
         </div>
         <div className="computer-sheet">
           <SidePane
-            tab={mobilePane === "memory" ? "memory" : "computer"}
+            tab={mobilePane === "chat" ? sideTab : mobilePane}
             onTab={(tab) => {
               setSideTab(tab);
               setMobilePane(tab);
@@ -946,6 +967,8 @@ export function Workspace() {
             onSelect={setSelectedToolId}
             snapshot={computer}
             status={computerStatus}
+            messages={messages}
+            streaming={streaming}
           />
         </div>
       </main>
@@ -963,6 +986,8 @@ export function Workspace() {
           onSelect={setSelectedToolId}
           snapshot={computer}
           status={computerStatus}
+          messages={messages}
+          streaming={streaming}
         />
       ) : null}
     </div>
