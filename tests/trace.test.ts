@@ -3,6 +3,7 @@ import {
   applyClientEvent,
   applyStreamEvent,
   emptyTrace,
+  modelPromptParts,
   parseTrace,
   phaseFromEvent,
   streamedWeight,
@@ -59,6 +60,13 @@ it("folds start, reasoning, tool call, result, text, and end into one trace", ()
     text: "Answer",
     finishReason: "stop",
     ended: true,
+    system: "",
+    prefill: "",
+    segments: [
+      { type: "reasoning", text: "Look it up." },
+      { type: "tool", index: 0 },
+      { type: "text", text: "Answer" },
+    ],
   });
 });
 
@@ -119,5 +127,46 @@ it("parses a stored trace and drops garbage", () => {
     text: "",
     finishReason: "stop",
     ended: true,
+    system: "",
+    prefill: "",
+    segments: [],
   });
+});
+
+it("records the system prompt and a trailing assistant prefill", () => {
+  expect(
+    modelPromptParts([
+      { role: "system", content: "Be brief." },
+      { role: "system", content: "Use tools." },
+      { role: "user", content: "Hi" },
+      { role: "assistant", content: "Sure," },
+    ]),
+  ).toEqual({ system: "Be brief.\n\nUse tools.", prefill: "Sure," });
+  expect(
+    modelPromptParts([
+      { role: "system", content: "Be brief." },
+      { role: "user", content: "Hi" },
+    ]),
+  ).toEqual({ system: "Be brief.", prefill: "" });
+  expect(
+    modelPromptParts([
+      { role: "user", content: "Hi" },
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [
+          { id: "call_1", type: "function", function: { name: "lookup", arguments: "{}" } },
+        ],
+      },
+    ]),
+  ).toEqual({ system: "", prefill: "" });
+});
+
+it("stores a prompt event on the assistant trace", () => {
+  const message = applyClientEvent(blank(), "prompt", {
+    system: "You are Mockbot.",
+    prefill: "Answer:",
+  });
+  expect(message.trace?.system).toBe("You are Mockbot.");
+  expect(message.trace?.prefill).toBe("Answer:");
 });
