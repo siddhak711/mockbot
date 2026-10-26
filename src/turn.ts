@@ -1,5 +1,5 @@
 import { DEFAULT_AGENT_ID } from "./agent";
-import { compactIfNeeded } from "./memory/compact";
+import { compactIfNeeded, messagePromptText } from "./memory/compact";
 import { AGENT_RULES, BASE_SYSTEM_PROMPT, memorySections, SYSTEM_PROMPT } from "./memory/prompt";
 import { contextTokenLimit, SEARCH_TOP_K } from "./memory/tokens";
 import type { ConversationStore } from "./store";
@@ -71,19 +71,7 @@ export async function buildModelInput(options: {
 }
 
 function renderTurnMessage(message: Message): LlmMessage | null {
-  if (message.role === "user") {
-    if (message.content.length === 0) return null;
-    return { role: "user", content: message.content };
-  }
-  const activity = (message.tools ?? [])
-    .map((tool) => {
-      const output = tool.output ? tool.output.slice(0, 500) : tool.status;
-      return `${tool.name} (${tool.status}): ${output}`;
-    })
-    .join("\n");
-  const content = [message.content.trim(), activity ? `Previous tool activity:\n${activity}` : ""]
-    .filter(Boolean)
-    .join("\n\n");
+  const content = messagePromptText(message);
   if (!content) return null;
-  return { role: "assistant", content };
+  return { role: message.role === "user" ? "user" : "assistant", content };
 }

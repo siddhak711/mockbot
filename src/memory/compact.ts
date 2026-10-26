@@ -14,6 +14,27 @@ import {
 
 const PROMPT_OVERHEAD =
   estimateTokens(BASE_SYSTEM_PROMPT) + PROFILE_TOKEN_BUDGET + SEARCH_TOKEN_BUDGET + 32;
+const TOOL_RESULT_CHARS = 500;
+
+export function messagePromptText(message: Pick<Message, "role" | "content" | "tools">): string {
+  if (message.role === "user") {
+    if (message.content.length === 0) return "";
+    return message.content;
+  }
+  const activity = (message.tools ?? [])
+    .map((tool) => {
+      const output = tool.output ? tool.output.slice(0, TOOL_RESULT_CHARS) : tool.status;
+      return `${tool.name} (${tool.status}): ${output}`;
+    })
+    .join("\n");
+  return [message.content.trim(), activity ? `Previous tool activity:\n${activity}` : ""]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function messageTokens(message: Pick<Message, "role" | "content" | "tools">): number {
+  return estimateTokens(messagePromptText(message)) + 4;
+}
 
 export async function compactIfNeeded(
   store: ConversationStore,
@@ -28,14 +49,14 @@ export async function compactIfNeeded(
   const total =
     PROMPT_OVERHEAD +
     estimateTokens(summary?.summary ?? "") +
-    messages.reduce((sum, message) => sum + estimateTokens(message.content) + 4, 0);
+    messages.reduce((sum, message) => sum + messageTokens(message), 0);
   if (total <= Math.floor(contextTokens * COMPACT_RATIO)) return;
 
   const tailBudget = Math.max(64, Math.floor(contextTokens * VERBATIM_RATIO));
   let tailStart = messages.length - 1;
-  let used = estimateTokens(messages[tailStart]?.content ?? "") + 4;
+  let used = messageTokens(messages[tailStart] ?? { role: "user", content: "" });
   for (let index = messages.length - 2; index >= 0; index -= 1) {
-    const cost = estimateTokens(messages[index]?.content ?? "") + 4;
+    const cost = messageTokens(messages[index] ?? { role: "user", content: "" });
     if (used + cost > tailBudget) break;
     used += cost;
     tailStart = index;
@@ -81,7 +102,7 @@ function shrinkBullets(
   if (bulletsFit(full, budget)) return { lines: full, covered: messages.length };
 
   let bestChars = 0;
-  let lo = 0;
+  let lo = 1;
   let hi = 179;
   while (lo <= hi) {
     const mid = Math.floor((lo + hi) / 2);
@@ -92,16 +113,23 @@ function shrinkBullets(
       hi = mid - 1;
     }
   }
-  if (bulletsFit(bulletsAt(messages, bestChars), budget)) {
+  if (bestChars > 0 && bulletsFit(bulletsAt(messages, bestChars), budget)) {
     return { lines: bulletsAt(messages, bestChars), covered: messages.length };
   }
 
   let count = 0;
   for (let size = 1; size <= messages.length; size += 1) {
-    if (!bulletsFit(bulletsAt(messages.slice(0, size), 0), budget)) break;
+    const lines = bulletsAt(messages.slice(0, size), 1);
+    if (!bulletsFit(lines, budget)) break;
+    if (lines.some((line) => !bulletKeepsContent(line))) break;
     count = size;
   }
-  return { lines: bulletsAt(messages.slice(0, count), 0), covered: count };
+  if (count === 0) return { lines: [], covered: 0 };
+  return { lines: bulletsAt(messages.slice(0, count), 1), covered: count };
+}
+
+function bulletKeepsContent(line: string): boolean {
+  return /^- (?:User|Assistant): \S/.test(line);
 }
 
 export function summarizeMessages(
