@@ -112,8 +112,9 @@ export function Transcript({
             const messageActivities = activities.filter(
               (activity) => activity.messageId === message.id,
             );
-            // Keep thinking anchored: skip hollow live shells until tools/text arrive.
-            if (live && pendingThink && !assistantHasVisibleBody(message, messageActivities)) {
+            // Empty shells stay hidden after the live turn too: a stop or a finish
+            // with no text and no tools should not leave a blank article behind.
+            if (!assistantHasVisibleBody(message, messageActivities)) {
               return null;
             }
             return (

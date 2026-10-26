@@ -130,3 +130,24 @@ it("treats an empty live assistant as invisible until tools or text arrive", () 
     }),
   ).toBe(true);
 });
+
+it("hides an empty assistant after stop or a finish that produced nothing", () => {
+  const empty: Message = {
+    id: "a2",
+    conversationId: "c",
+    role: "assistant",
+    content: "  ",
+    createdAt: "t3",
+    trace: {
+      started: true,
+      role: "assistant",
+      reasoning: "planning",
+      tools: [],
+      text: "",
+      finishReason: "stop",
+      ended: true,
+    },
+  };
+  expect(assistantHasVisibleBody(empty)).toBe(false);
+  expect(assistantHasVisibleBody({ ...empty, content: "partial" })).toBe(true);
+});
