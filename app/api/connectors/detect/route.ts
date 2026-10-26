@@ -1,3 +1,4 @@
+import { requireApiUser } from "../../../../src/auth/guard";
 import { searchCatalog } from "../../../../src/connectors/catalog";
 import { detectInput, INVALID_TARGET_MESSAGE } from "../../../../src/connectors/policy";
 import { probeConnector } from "../../../../src/connectors/probe";
@@ -7,6 +8,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request): Promise<Response> {
+  const actor = await requireApiUser(request);
+  if (!actor.ok) return actor.response;
   let body: unknown;
   try {
     body = await request.json();

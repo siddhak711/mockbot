@@ -1,3 +1,4 @@
+import { requireApiUser } from "../../../src/auth/guard";
 import { streamChatTurn } from "../../../src/chat";
 import { noteConnectorOutcome } from "../../../src/connectors/runtime";
 import { getAppContext } from "../../../src/context";
@@ -7,6 +8,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request): Promise<Response> {
+  const actor = await requireApiUser(request);
+  if (!actor.ok) return actor.response;
   const context = await getAppContext();
   const { store, provider, tools, approvals } = context;
   let body: unknown;
@@ -33,6 +36,8 @@ export async function POST(request: Request): Promise<Response> {
         void store.updateConnectorTools(connectorId, next);
       },
     });
+    const agents =
+      context.agents && actor.scoped ? context.agents.forUser(actor.user.id) : context.agents;
     return streamChatTurn({
       store,
       provider,
@@ -42,10 +47,11 @@ export async function POST(request: Request): Promise<Response> {
       conversationId: typeof record.conversationId === "string" ? record.conversationId : undefined,
       agentId: typeof record.agentId === "string" ? record.agentId : undefined,
       signal: request.signal,
-      agents: context.agents,
+      agents,
       memory: context.memory,
       computer: context.computer,
       connector: context.connector,
+      userId: actor.scoped ? actor.user.id : undefined,
     });
   });
 }

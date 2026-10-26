@@ -122,6 +122,7 @@ export async function streamChatTurn(options: {
   memory?: AgentMemoryPort;
   computer?: ComputerPort;
   connector?: ConnectorPort;
+  userId?: string;
 }): Promise<Response> {
   const message = options.message.trim();
   if (!message) {
@@ -137,7 +138,7 @@ export async function streamChatTurn(options: {
   const connector = options.connector ?? defaultConnector;
   const conversationId = options.conversationId?.trim() || undefined;
   let conversation = conversationId
-    ? (await options.store.getConversation(conversationId))?.conversation
+    ? (await options.store.getConversation(conversationId, undefined, options.userId))?.conversation
     : undefined;
   if (conversationId && !conversation) {
     return Response.json({ error: "Conversation not found" }, { status: 404 });
@@ -146,7 +147,11 @@ export async function streamChatTurn(options: {
     const requested = options.agentId?.trim() || LEAD_AGENT_ID;
     const owner = await agents.get(requested);
     if (!owner) return Response.json({ error: "Agent not found" }, { status: 404 });
-    conversation = await options.store.createConversation(titleFromMessage(message), owner.id);
+    conversation = await options.store.createConversation(
+      titleFromMessage(message),
+      owner.id,
+      options.userId,
+    );
   }
   if (options.approvals.hasPending(conversation.id)) {
     return Response.json(
@@ -173,7 +178,7 @@ export async function streamChatTurn(options: {
   const memoryDeps = prepared.deps;
 
   const { store, provider, approvals, signal } = options;
-  const tools = toolsForSpeaker(options.tools, speaker.id, {
+  const tools = toolsForSpeaker(options.tools, speaker, {
     directory: agents,
     store,
     provider,
@@ -181,6 +186,7 @@ export async function streamChatTurn(options: {
     computer,
     connector,
     parentAgentId: speaker.id,
+    userId: options.userId,
   });
   const delegateTool = speaker.id === LEAD_AGENT_ID ? tools.get("delegate") : undefined;
   const conversationSnapshot = conversation;

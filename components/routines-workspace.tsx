@@ -3,9 +3,11 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { formatRunTime } from "../src/routines/format";
 import type { Routine, RoutineRun, RoutineStatus } from "../src/routines/types";
+import type { SignedInUser } from "../src/auth/user";
 import { ChatIcon, ClockIcon, ComposeIcon, MenuIcon, TrafficLights } from "./icons";
 import { Mochi } from "./mochi";
 import { ThemeToggle } from "./theme";
+import { UserMenu } from "./user-menu";
 
 type RoutineWithRuns = Routine & { runs: RoutineRun[] };
 
@@ -23,7 +25,7 @@ function statusLabel(status: RoutineStatus | RoutineRun["status"]): string {
   return "Active";
 }
 
-export function RoutinesWorkspace() {
+export function RoutinesWorkspace({ user }: { user: SignedInUser }) {
   const [routines, setRoutines] = useState<RoutineWithRuns[]>([]);
   const [navOpen, setNavOpen] = useState(false);
   const [name, setName] = useState("");
@@ -152,6 +154,9 @@ export function RoutinesWorkspace() {
           <ClockIcon />
           Routines
         </a>
+        <footer className="me">
+          <UserMenu user={user} />
+        </footer>
       </aside>
       <button
         type="button"

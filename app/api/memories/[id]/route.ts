@@ -1,3 +1,4 @@
+import { requireApiUser } from "../../../../src/auth/guard";
 import { getAppContext } from "../../../../src/context";
 import { memoryAgentFromRequest } from "../../../../src/memory/request-agent";
 import { isLiveMemory } from "../../../../src/memory/repository";
@@ -10,6 +11,8 @@ export const dynamic = "force-dynamic";
 type RouteContext = { params: Promise<{ id: string }> };
 
 export async function PATCH(request: Request, context: RouteContext): Promise<Response> {
+  const actor = await requireApiUser(request);
+  if (!actor.ok) return actor.response;
   const { id } = await context.params;
   let body: unknown;
   try {
@@ -25,7 +28,7 @@ export async function PATCH(request: Request, context: RouteContext): Promise<Re
     return Response.json({ error: "Memory text is too long" }, { status: 400 });
   }
   const kind = record.kind === "profile" || record.kind === "fact" ? record.kind : null;
-  const selected = await memoryAgentFromRequest(request);
+  const selected = await memoryAgentFromRequest(request, actor.scoped ? actor.user.id : undefined);
   if (!selected.ok) return selected.response;
   const { store } = await getAppContext();
   const existing = await store.memories.getById(selected.agentId, id);
@@ -52,8 +55,10 @@ export async function PATCH(request: Request, context: RouteContext): Promise<Re
 }
 
 export async function DELETE(request: Request, context: RouteContext): Promise<Response> {
+  const actor = await requireApiUser(request);
+  if (!actor.ok) return actor.response;
   const { id } = await context.params;
-  const selected = await memoryAgentFromRequest(request);
+  const selected = await memoryAgentFromRequest(request, actor.scoped ? actor.user.id : undefined);
   if (!selected.ok) return selected.response;
   const { store } = await getAppContext();
   const existing = await store.memories.getById(selected.agentId, id);

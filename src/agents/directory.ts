@@ -25,6 +25,7 @@ type AgentRow = {
   name: string;
   instructions: string;
   memory_note: string;
+  is_lead: boolean;
   created_at: Date | string;
 };
 
@@ -40,12 +41,15 @@ function asIso(value: Date | string): string {
   return date.toISOString();
 }
 
+const AGENT_COLUMNS = "id, name, instructions, memory_note, is_lead, created_at";
+
 function mapAgent(row: AgentRow): Agent {
   return {
     id: row.id,
     name: row.name,
     instructions: row.instructions,
     memoryNote: row.memory_note,
+    isLead: row.is_lead === true || row.id === LEAD_AGENT_ID,
     createdAt: asIso(row.created_at),
   };
 }
@@ -87,13 +91,21 @@ function validatedAgent(input: { name: string; instructions: string; memoryNote?
 }
 
 export class AgentDirectory {
-  private constructor(private readonly db: Sql) {}
+  private constructor(
+    private readonly db: Sql,
+    private readonly ownerId: string | null = null,
+  ) {}
 
   static async attach(store: ConversationStore): Promise<AgentDirectory> {
     await applyAgentSchema(store.connection);
     const directory = new AgentDirectory(store.connection);
     await directory.seedLead();
     return directory;
+  }
+
+  /** Same directory, limited to one account's agents. */
+  forUser(userId: string): AgentDirectory {
+    return new AgentDirectory(this.db, userId);
   }
 
   private async rows<T>(sql: string, params: unknown[] = []): Promise<T[]> {
@@ -103,26 +115,33 @@ export class AgentDirectory {
 
   private async seedLead(): Promise<void> {
     await this.db.query(
-      `INSERT INTO agents (id, name, instructions)
-       VALUES ($1, $2, $3)
+      `INSERT INTO agents (id, name, instructions, is_lead)
+       VALUES ($1, $2, $3, TRUE)
        ON CONFLICT (id) DO NOTHING`,
       [LEAD_AGENT_ID, LEAD_AGENT_NAME, SYSTEM_PROMPT],
     );
+    await this.db.query(`UPDATE agents SET is_lead = TRUE WHERE id = $1 AND is_lead = FALSE`, [
+      LEAD_AGENT_ID,
+    ]);
   }
 
   async list(): Promise<Agent[]> {
     const rows = await this.rows<AgentRow>(
-      `SELECT id, name, instructions, memory_note, created_at
+      `SELECT ${AGENT_COLUMNS}
        FROM agents
+       WHERE ($1::text IS NULL OR user_id = $1)
        ORDER BY created_at ASC, id ASC`,
+      [this.ownerId],
     );
     return rows.map(mapAgent);
   }
 
   async get(id: string): Promise<Agent | null> {
     const rows = await this.rows<AgentRow>(
-      `SELECT id, name, instructions, memory_note, created_at FROM agents WHERE id = $1`,
-      [id],
+      `SELECT ${AGENT_COLUMNS}
+       FROM agents
+       WHERE id = $1 AND ($2::text IS NULL OR user_id = $2)`,
+      [id, this.ownerId],
     );
     const row = rows[0];
     return row ? mapAgent(row) : null;
@@ -130,10 +149,11 @@ export class AgentDirectory {
 
   async findByName(name: string): Promise<Agent | null> {
     const rows = await this.rows<AgentRow>(
-      `SELECT id, name, instructions, memory_note, created_at
+      `SELECT ${AGENT_COLUMNS}
        FROM agents
-       WHERE lower(name) = lower($1)`,
-      [name.trim()],
+       WHERE lower(name) = lower($1)
+         AND ($2::text IS NULL OR user_id = $2)`,
+      [name.trim(), this.ownerId],
     );
     const row = rows[0];
     return row ? mapAgent(row) : null;
@@ -167,10 +187,10 @@ export class AgentDirectory {
     return this.db.transaction(async (tx) => {
       const id = crypto.randomUUID();
       const inserted = await tx.query<AgentRow>(
-        `INSERT INTO agents (id, name, instructions, memory_note)
-         VALUES ($1, $2, $3, $4)
-         RETURNING id, name, instructions, memory_note, created_at`,
-        [id, agentInput.name, agentInput.instructions, agentInput.memoryNote],
+        `INSERT INTO agents (id, name, instructions, memory_note, user_id, is_lead)
+         VALUES ($1, $2, $3, $4, $5, FALSE)
+         RETURNING ${AGENT_COLUMNS}`,
+        [id, agentInput.name, agentInput.instructions, agentInput.memoryNote, this.ownerId],
       );
       const row = inserted.rows[0];
       if (!row) throw new Error("Failed to create agent");
@@ -203,9 +223,12 @@ export class AgentDirectory {
 
   async listAllGrants(): Promise<AgentGrant[]> {
     const rows = await this.rows<GrantRow>(
-      `SELECT id, agent_id, resource_kind, resource_id
-       FROM agent_grants
-       ORDER BY agent_id ASC, resource_kind ASC, resource_id ASC`,
+      `SELECT g.id, g.agent_id, g.resource_kind, g.resource_id
+       FROM agent_grants g
+       JOIN agents a ON a.id = g.agent_id
+       WHERE ($1::text IS NULL OR a.user_id = $1)
+       ORDER BY g.agent_id ASC, g.resource_kind ASC, g.resource_id ASC`,
+      [this.ownerId],
     );
     return rows.map(mapGrant);
   }
