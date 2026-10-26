@@ -1,9 +1,12 @@
+import { requireApiUser } from "../../../../src/auth/guard";
 import { getAppContext } from "../../../../src/context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request): Promise<Response> {
+  const actor = await requireApiUser(request);
+  if (!actor.ok) return actor.response;
   let body: unknown;
   try {
     body = await request.json();
@@ -23,7 +26,16 @@ export async function POST(request: Request): Promise<Response> {
       { status: 400 },
     );
   }
-  const { approvals } = await getAppContext();
+  const { approvals, store } = await getAppContext();
+  if (actor.scoped) {
+    const conversationId = approvals.pendingConversation(id);
+    const owned = conversationId
+      ? await store.getConversation(conversationId, undefined, actor.user.id)
+      : null;
+    if (!owned) {
+      return Response.json({ error: "That approval is no longer pending" }, { status: 404 });
+    }
+  }
   const accepted = decision === "stop" ? approvals.stop(id) : approvals.decide(id, decision);
   if (!accepted)
     return Response.json({ error: "That approval is no longer pending" }, { status: 404 });

@@ -1,3 +1,4 @@
+import { requireApiUser } from "../../../../src/auth/guard";
 import { parseConnectorPatch, toPublicConnector } from "../../../../src/connectors";
 import { getAppContext } from "../../../../src/context";
 import { encryptSecret } from "../../../../src/mcp/vault";
@@ -8,6 +9,8 @@ export const dynamic = "force-dynamic";
 type RouteContext = { params: Promise<{ id: string }> };
 
 export async function PATCH(request: Request, context: RouteContext): Promise<Response> {
+  const actor = await requireApiUser(request);
+  if (!actor.ok) return actor.response;
   const { id } = await context.params;
   let body: unknown;
   try {
@@ -35,7 +38,9 @@ export async function PATCH(request: Request, context: RouteContext): Promise<Re
   return Response.json({ connector: toPublicConnector(connector) });
 }
 
-export async function DELETE(_request: Request, context: RouteContext): Promise<Response> {
+export async function DELETE(request: Request, context: RouteContext): Promise<Response> {
+  const actor = await requireApiUser(request);
+  if (!actor.ok) return actor.response;
   const { id } = await context.params;
   const { store } = await getAppContext();
   const deleted = await store.deleteConnector(id);

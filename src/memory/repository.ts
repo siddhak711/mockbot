@@ -74,7 +74,7 @@ export class MemoryRepository {
        ),
        inserted AS (
          INSERT INTO memories (
-           id, agent_id, kind, key, content, source_msg, supersedes, created_by
+           id, agent_id, kind, key, content, source_msg, supersedes, created_by, user_id
          )
          VALUES (
            $3,
@@ -87,7 +87,8 @@ export class MemoryRepository {
            $5,
            $6,
            (SELECT id FROM closed),
-           $7
+           $7,
+           (SELECT user_id FROM agents WHERE id = $1)
          )
          RETURNING ${MEMORY_COLUMNS}
        )
@@ -129,7 +130,7 @@ export class MemoryRepository {
        ),
        inserted AS (
          INSERT INTO memories (
-           id, agent_id, kind, key, content, source_msg, supersedes, created_by
+           id, agent_id, kind, key, content, source_msg, supersedes, created_by, user_id
          )
          SELECT
            $3,
@@ -139,7 +140,8 @@ export class MemoryRepository {
            $5,
            COALESCE($6, closed.source_msg),
            closed.id,
-           $7
+           $7,
+           (SELECT user_id FROM agents WHERE id = $1)
          FROM closed
          RETURNING ${MEMORY_COLUMNS}
        )

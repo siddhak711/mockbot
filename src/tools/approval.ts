@@ -61,6 +61,11 @@ export class ApprovalGate {
     });
   }
 
+  /** Conversation the pending call belongs to, or null when the id is not waiting. */
+  pendingConversation(id: string): string | null {
+    return this.#waiters.get(id)?.conversationId ?? null;
+  }
+
   hasPending(conversationId: string): boolean {
     for (const waiter of this.#waiters.values()) {
       if (waiter.conversationId === conversationId) return true;

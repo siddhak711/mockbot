@@ -1,4 +1,5 @@
 import { AgentInputError } from "../../../src/agents/directory";
+import { requireApiUser } from "../../../src/auth/guard";
 import { getAgents, getAppContext } from "../../../src/context";
 
 export const runtime = "nodejs";
@@ -8,9 +9,13 @@ function asString(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-export async function GET(): Promise<Response> {
+export async function GET(request?: Request): Promise<Response> {
+  const actor = await requireApiUser(request);
+  if (!actor.ok) return actor.response;
   const context = await getAppContext();
-  const directory = await getAgents(context);
+  const directory = actor.scoped
+    ? (await getAgents(context)).forUser(actor.user.id)
+    : await getAgents(context);
   const [agents, grants] = await Promise.all([directory.list(), directory.listAllGrants()]);
   return Response.json({
     agents: agents.map((agent) => ({
@@ -21,8 +26,12 @@ export async function GET(): Promise<Response> {
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const actor = await requireApiUser(request);
+  if (!actor.ok) return actor.response;
   const context = await getAppContext();
-  const directory = await getAgents(context);
+  const directory = actor.scoped
+    ? (await getAgents(context)).forUser(actor.user.id)
+    : await getAgents(context);
   let body: unknown;
   try {
     body = await request.json();

@@ -1,4 +1,4 @@
-import { DELEGATE_TOOL_NAME, LEAD_AGENT_ID } from "./agents/ids";
+import { DELEGATE_TOOL_NAME, isLeadAgent } from "./agents/ids";
 import { AgentDirectory } from "./agents/directory";
 import { NoteMemory, defaultComputer, defaultConnector } from "./agents/ports";
 import { buildAgentSystemPrompt } from "./agents/prompt";
@@ -122,6 +122,7 @@ export async function streamChatTurn(options: {
   memory?: AgentMemoryPort;
   computer?: ComputerPort;
   connector?: ConnectorPort;
+  userId?: string;
 }): Promise<Response> {
   const message = options.message.trim();
   if (!message) {
@@ -137,16 +138,20 @@ export async function streamChatTurn(options: {
   const connector = options.connector ?? defaultConnector;
   const conversationId = options.conversationId?.trim() || undefined;
   let conversation = conversationId
-    ? (await options.store.getConversation(conversationId))?.conversation
+    ? (await options.store.getConversation(conversationId, undefined, options.userId))?.conversation
     : undefined;
   if (conversationId && !conversation) {
     return Response.json({ error: "Conversation not found" }, { status: 404 });
   }
   if (!conversation) {
-    const requested = options.agentId?.trim() || LEAD_AGENT_ID;
-    const owner = await agents.get(requested);
+    const requested = options.agentId?.trim();
+    const owner = (requested ? await agents.get(requested) : null) ?? (await agents.lead());
     if (!owner) return Response.json({ error: "Agent not found" }, { status: 404 });
-    conversation = await options.store.createConversation(titleFromMessage(message), owner.id);
+    conversation = await options.store.createConversation(
+      titleFromMessage(message),
+      owner.id,
+      options.userId,
+    );
   }
   if (options.approvals.hasPending(conversation.id)) {
     return Response.json(
@@ -156,7 +161,7 @@ export async function streamChatTurn(options: {
   }
 
   const user = await options.store.addMessage(conversation.id, "user", message);
-  const speaker = (await agents.get(conversation.agentId)) ?? (await agents.get(LEAD_AGENT_ID));
+  const speaker = (await agents.get(conversation.agentId)) ?? (await agents.lead());
   if (!speaker) return Response.json({ error: "Agent not found" }, { status: 404 });
   const [memories, grants] = await Promise.all([
     memory.list(speaker.id),
@@ -173,7 +178,7 @@ export async function streamChatTurn(options: {
   const memoryDeps = prepared.deps;
 
   const { store, provider, approvals, signal } = options;
-  const tools = toolsForSpeaker(options.tools, speaker.id, {
+  const tools = toolsForSpeaker(options.tools, speaker, {
     directory: agents,
     store,
     provider,
@@ -181,8 +186,9 @@ export async function streamChatTurn(options: {
     computer,
     connector,
     parentAgentId: speaker.id,
+    userId: options.userId,
   });
-  const delegateTool = speaker.id === LEAD_AGENT_ID ? tools.get("delegate") : undefined;
+  const delegateTool = isLeadAgent(speaker) ? tools.get("delegate") : undefined;
   const conversationSnapshot = conversation;
   const promoted = new Set<string>();
   const toolContext: ToolContext = {

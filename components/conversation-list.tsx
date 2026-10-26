@@ -1,5 +1,7 @@
 import { useState, type ReactNode } from "react";
 import type { Agent } from "../src/agents/types";
+import type { SignedInUser } from "../src/auth/user";
+import { UserMenu } from "./user-menu";
 import type { SpriteState } from "../src/sprite";
 import { runtimeStatusLabel, type RuntimeStatus } from "../src/token-stream";
 import { AgentPanel, type AgentDraft } from "./agent-panel";
@@ -40,6 +42,7 @@ export function ConversationList({
   onSelectAgent,
   onCreateAgent,
   onOpenConnectors,
+  user,
 }: {
   conversations: Conversation[];
   activeId: string | null;
@@ -55,6 +58,7 @@ export function ConversationList({
   onSelectAgent: (id: string) => void;
   onCreateAgent: (draft: AgentDraft) => Promise<string | null>;
   onOpenConnectors?: () => void;
+  user: SignedInUser;
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const groups = groupsFor(conversations);
@@ -126,16 +130,7 @@ export function ConversationList({
         {children}
       </div>
       <footer className="me" title={status.full}>
-        <div className="me-identity">
-          <span className="ava" aria-hidden="true">
-            M
-          </span>
-          <div className="me-copy">
-            <span className="me-name">Mockbot</span>
-            <span className="me-model">{status.title}</span>
-            <span className="me-meta">{status.subtitle}</span>
-          </div>
-        </div>
+        <UserMenu user={user} detail={`${status.title} · ${status.subtitle}`} />
         {onOpenConnectors ? (
           <span className="settings-anchor">
             {settingsOpen ? (
