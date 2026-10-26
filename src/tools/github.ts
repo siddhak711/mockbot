@@ -1,4 +1,5 @@
 import { asRecord, jsonResult, present, readJson, toolFetchInit } from "./http";
+import { warnMockFallback } from "./mock-fallback";
 import type { FetchLike, ToolDefinition } from "./types";
 
 const ACTIONS = ["list_issues", "get_issue", "list_pulls", "get_pull", "get_file"] as const;
@@ -145,7 +146,10 @@ export function githubTool(
     async invoke(args, context) {
       const action = args.action as GithubAction;
       const token = present(env.GITHUB_TOKEN);
-      if (!token) return { content: jsonResult(mockResult(action, args)) };
+      if (!token) {
+        warnMockFallback("github", "GITHUB_TOKEN");
+        return { content: jsonResult(mockResult(action, args)) };
+      }
       const owner = String(args.owner);
       const repo = String(args.repo);
       const headers = {
