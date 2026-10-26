@@ -1875,28 +1875,28 @@ summary:focus-visible {
   background: var(--surface);
 }
 
-.mochi-slot {
+.bot-sprite-slot {
   position: relative;
   display: inline-grid;
   flex: none;
 }
 
-.mochi-slot .mochi {
+.bot-sprite-slot .bot-sprite {
   grid-area: 1 / 1;
   width: 100%;
   height: 100%;
   display: block;
 }
 
-.mochi {
-  animation: mochi-in 150ms linear;
+.bot-sprite {
+  animation: bot-sprite-in 150ms linear;
 }
 
-.mochi-out {
-  animation: mochi-out 150ms linear forwards;
+.bot-sprite-out {
+  animation: bot-sprite-out 150ms linear forwards;
 }
 
-@keyframes mochi-in {
+@keyframes bot-sprite-in {
   from {
     opacity: 0;
   }
@@ -1905,7 +1905,7 @@ summary:focus-visible {
   }
 }
 
-@keyframes mochi-out {
+@keyframes bot-sprite-out {
   from {
     opacity: 1;
   }
@@ -2149,8 +2149,8 @@ a.icon-btn {
 @media (prefers-reduced-motion: reduce) {
   .spinner,
   .connector-spin,
-  .mochi,
-  .mochi-out,
+  .bot-sprite,
+  .bot-sprite-out,
   .thinking-label,
   .thinking-shimmer {
     animation: none;
