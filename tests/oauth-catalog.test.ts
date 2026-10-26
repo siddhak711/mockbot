@@ -353,9 +353,7 @@ it("keeps enable and approval choices when a catalog connector reconnects", asyn
         },
       },
     });
-    const start = await startOAuth(
-      jsonRequest({ catalogId: "notion", connectorId: created.id }),
-    );
+    const start = await startOAuth(jsonRequest({ catalogId: "notion", connectorId: created.id }));
     const started = (await start.json()) as { authorizeUrl: string };
     const state = new URL(started.authorizeUrl).searchParams.get("state");
     const callback = await oauthCallback(
@@ -429,9 +427,7 @@ it("keeps saved tool settings when reconnect cannot list tools", async () => {
         },
       },
     });
-    const start = await startOAuth(
-      jsonRequest({ catalogId: "github", connectorId: created.id }),
-    );
+    const start = await startOAuth(jsonRequest({ catalogId: "github", connectorId: created.id }));
     const started = (await start.json()) as { authorizeUrl: string };
     verifier = (await openPending(cookieValue(start)))?.verifier ?? "";
     const state = new URL(started.authorizeUrl).searchParams.get("state");
