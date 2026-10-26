@@ -29,6 +29,12 @@ export type ToolTrace = {
   result: string | null;
 };
 
+/** Ordered pieces of one assistant turn, in the order the model produced them. */
+export type TraceSegment =
+  | { type: "reasoning"; text: string }
+  | { type: "text"; text: string }
+  | { type: "tool"; index: number };
+
 export type MessageTrace = {
   started: boolean;
   role: "assistant" | null;
@@ -37,6 +43,12 @@ export type MessageTrace = {
   text: string;
   finishReason: string | null;
   ended: boolean;
+  /** System prompt sent for this turn. Empty when the turn did not record one. */
+  system?: string;
+  /** Assistant prefill sent after the user message and before generation. */
+  prefill?: string;
+  /** Production order. Absent on traces stored before ordered segments existed. */
+  segments?: TraceSegment[];
 };
 
 export type Message = {
