@@ -52,6 +52,17 @@ describe("sandbox toolchain", () => {
     );
   });
 
+  it("passes DEBIAN_FRONTEND=noninteractive into the sudo apt script", () => {
+    const command = sandboxToolInstallCommand();
+    const script = command.match(/sudo -n sh -c '([^']*)'/)?.[1];
+    expect(script).toBeDefined();
+    expect(script).toContain("export DEBIAN_FRONTEND=noninteractive");
+    expect(script).toContain("apt-get install -y --no-install-recommends");
+    expect(script?.indexOf("DEBIAN_FRONTEND=noninteractive")).toBeLessThan(
+      script?.indexOf("apt-get ") ?? -1,
+    );
+  });
+
   it("reports a check that still fails after the packages are installed", async () => {
     let calls = 0;
     await expect(

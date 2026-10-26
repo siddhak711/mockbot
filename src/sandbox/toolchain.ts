@@ -62,11 +62,13 @@ export function sandboxToolCheckCommand(): string {
 /**
  * Installs the CLI as root, or with passwordless sudo when the sandbox user is not root.
  * One shell command so a single image layer (or one startup exec) either finishes or fails.
+ * `sudo` drops the caller's environment, so `DEBIAN_FRONTEND` is set inside the script
+ * that both branches run. Otherwise debconf can prompt and hang the repair.
  */
 export function sandboxToolInstallCommand(): string {
   const packages = SANDBOX_APT_PACKAGES.join(" ");
-  const install = `apt-get update && apt-get install -y --no-install-recommends ${packages} && rm -rf /var/lib/apt/lists/*`;
-  return `export DEBIAN_FRONTEND=noninteractive && if [ "$(id -u)" -eq 0 ]; then ${install}; else sudo -n sh -c '${install}'; fi`;
+  const install = `export DEBIAN_FRONTEND=noninteractive && apt-get update && apt-get install -y --no-install-recommends ${packages} && rm -rf /var/lib/apt/lists/*`;
+  return `if [ "$(id -u)" -eq 0 ]; then ${install}; else sudo -n sh -c '${install}'; fi`;
 }
 
 export function sandboxImage(): Image {
