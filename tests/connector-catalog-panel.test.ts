@@ -152,16 +152,58 @@ function LivePanel({
   });
 }
 
-it("shows the rest of the catalog after connecting from a search", async () => {
-  const slack = connected("slack", "c-slack");
+function oauthPopup() {
+  return {
+    closed: false,
+    document: { title: "", body: { textContent: "" } },
+    location: { href: "" },
+    close() {
+      this.closed = true;
+    },
+  };
+}
+
+function stubCatalogOauth(connector: ConnectorRecord) {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () => Response.json({ connector: slack })),
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/connectors/oauth/start")) {
+        return Response.json({ authorizeUrl: "https://example.com/oauth" });
+      }
+      return Response.json({ connector });
+    }),
   );
   vi.stubGlobal(
     "open",
-    vi.fn(() => ({ closed: false })),
+    vi.fn(() => oauthPopup()),
   );
+}
+
+async function connectFromSearch(query: string, catalogId: string, continueName: string) {
+  fireEvent.change(screen.getByRole("textbox", { name: "Search connectors" }), {
+    target: { value: query },
+  });
+  const tile = document.querySelector(`[data-catalog-id="${catalogId}"]`);
+  expect(tile).not.toBeNull();
+  fireEvent.click(tile!.querySelector("button")!);
+  fireEvent.click(screen.getByRole("button", { name: `Continue to ${continueName} ↗` }));
+  await waitFor(() => {
+    expect(vi.mocked(window.open)).toHaveBeenCalled();
+  });
+  act(() => {
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        origin: window.location.origin,
+        data: { type: "mockbot-oauth", ok: true, account: "workspace", connectorId: "c-github" },
+      }),
+    );
+  });
+}
+
+it("shows the rest of the catalog after connecting from a search", async () => {
+  const github = connected("github", "c-github");
+  stubCatalogOauth(github);
 
   render(
     createElement(
@@ -169,47 +211,26 @@ it("shows the rest of the catalog after connecting from a search", async () => {
       null,
       createElement(LivePanel, {
         initial: [connected("notion")],
-        connectedNext: [connected("notion"), slack],
+        connectedNext: [connected("notion"), github],
       }),
     ),
   );
 
-  fireEvent.change(screen.getByRole("textbox", { name: "Search connectors" }), {
-    target: { value: "slack" },
-  });
-  const slackTile = document.querySelector('[data-catalog-id="slack"]');
-  expect(slackTile).not.toBeNull();
-  fireEvent.click(slackTile!.querySelector("button")!);
-  fireEvent.click(screen.getByRole("button", { name: "Continue to Slack ↗" }));
-  act(() => {
-    window.dispatchEvent(
-      new MessageEvent("message", {
-        origin: window.location.origin,
-        data: { type: "mockbot-oauth", ok: true, account: "workspace" },
-      }),
-    );
-  });
+  await connectFromSearch("github", "github", "GitHub");
 
   await waitFor(() => {
     expect(screen.queryByRole("heading", { name: "Already connected" })).toBeNull();
-    expect(document.querySelector('[data-catalog-id="github"]')).not.toBeNull();
+    expect(document.querySelector('[data-catalog-id="slack"]')).not.toBeNull();
     expect(document.querySelector('[data-catalog-id="linear"]')).not.toBeNull();
   });
-  expect(document.querySelector('[data-catalog-id="slack"]')).toBeNull();
+  expect(document.querySelector('[data-catalog-id="github"]')).toBeNull();
   expect(screen.getByRole("textbox", { name: "Search connectors" })).toHaveProperty("value", "");
   expect(screen.getByRole("heading", { name: "Connectors" })).toBeTruthy();
 });
 
 it("filters the success-screen catalog when the search changes", async () => {
-  const slack = connected("slack", "c-slack");
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => Response.json({ connector: slack })),
-  );
-  vi.stubGlobal(
-    "open",
-    vi.fn(() => ({ closed: false })),
-  );
+  const github = connected("github", "c-github");
+  stubCatalogOauth(github);
 
   render(
     createElement(
@@ -217,30 +238,16 @@ it("filters the success-screen catalog when the search changes", async () => {
       null,
       createElement(LivePanel, {
         initial: [connected("notion")],
-        connectedNext: [connected("notion"), slack],
+        connectedNext: [connected("notion"), github],
       }),
     ),
   );
 
-  fireEvent.change(screen.getByRole("textbox", { name: "Search connectors" }), {
-    target: { value: "slack" },
-  });
-  const slackTile = document.querySelector('[data-catalog-id="slack"]');
-  expect(slackTile).not.toBeNull();
-  fireEvent.click(slackTile!.querySelector("button")!);
-  fireEvent.click(screen.getByRole("button", { name: "Continue to Slack ↗" }));
-  act(() => {
-    window.dispatchEvent(
-      new MessageEvent("message", {
-        origin: window.location.origin,
-        data: { type: "mockbot-oauth", ok: true, account: "workspace" },
-      }),
-    );
-  });
+  await connectFromSearch("github", "github", "GitHub");
 
   await waitFor(() => {
     expect(screen.getByRole("textbox", { name: "Search connectors" })).toHaveProperty("value", "");
-    expect(document.querySelector('[data-catalog-id="github"]')).not.toBeNull();
+    expect(document.querySelector('[data-catalog-id="linear"]')).not.toBeNull();
   });
 
   fireEvent.change(screen.getByRole("textbox", { name: "Search connectors" }), {
@@ -248,7 +255,7 @@ it("filters the success-screen catalog when the search changes", async () => {
   });
 
   expect(document.querySelector('[data-catalog-id="linear"]')).not.toBeNull();
-  expect(document.querySelector('[data-catalog-id="github"]')).toBeNull();
+  expect(document.querySelector('[data-catalog-id="slack"]')).toBeNull();
   expect(document.querySelector('[data-catalog-id="jira"]')).toBeNull();
   expect(screen.queryByRole("heading", { name: "Already connected" })).toBeNull();
   expect(screen.getByRole("heading", { name: "Connectors" })).toBeTruthy();

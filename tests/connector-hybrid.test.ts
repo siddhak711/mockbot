@@ -216,26 +216,6 @@ it("saves catalog defaults and keeps the api key off the client", async () => {
   });
   const server = await startMockMcpServer({ auth: "apikey", token: "connector-key" });
   try {
-    const catalog = await createConnector(
-      jsonRequest({ catalogId: "notion", accountLabel: "workspace" }),
-    );
-    const catalogText = await catalog.text();
-    expect(catalog.status, catalogText).toBe(201);
-    const created = JSON.parse(catalogText) as {
-      connector: {
-        id: string;
-        secretCipher?: string;
-        tools: Record<string, { enabled: boolean; approval: string }>;
-      };
-    };
-    expect(created.connector.secretCipher).toBeUndefined();
-    expect(created.connector.tools.search_pages).toMatchObject({ enabled: true, approval: "auto" });
-    expect(created.connector.tools.create_page).toMatchObject({ enabled: false, approval: "ask" });
-    expect(created.connector.tools.delete_page).toMatchObject({ enabled: false, approval: "ask" });
-    const stored = (await store.listConnectors()).find((item) => item.id === created.connector.id);
-    expect(stored?.secretCipher).toBeTruthy();
-    expect(await decryptSecret(stored?.secretCipher ?? "")).not.toBe("");
-
     const keyed = await createConnector(
       jsonRequest({
         name: "Acme",
@@ -267,11 +247,6 @@ it("saves catalog defaults and keeps the api key off the client", async () => {
     expect(echo?.skipHeuristicApproval).toBe(false);
     expect(echo ? requiresApproval(echo, { message: "ping" }) : false).toBe(true);
     expect(registry.get("acme_env_probe")).toBeUndefined();
-    const notionSearch = registry.get("notion_search_pages");
-    expect(notionSearch?.approval).toBe("never");
-    expect(notionSearch?.skipHeuristicApproval).toBe(true);
-    expect(notionSearch ? requiresApproval(notionSearch, {}) : true).toBe(false);
-    expect(registry.get("notion_create_page")).toBeUndefined();
 
     const id = JSON.parse(keyedText).connector.id as string;
     await store.updateConnectorTools(id, {
@@ -310,7 +285,7 @@ it("saves catalog defaults and keeps the api key off the client", async () => {
 
     const forced = await patchTools(
       jsonRequest({ tools: { delete_page: { enabled: true, approval: "auto" } } }),
-      { params: Promise.resolve({ id: created.connector.id }) },
+      { params: Promise.resolve({ id }) },
     );
     const forcedBody = (await forced.json()) as {
       connector: { tools: Record<string, { approval: string }> };
@@ -647,8 +622,9 @@ it("returns a JSON error when connector creation cannot encrypt a secret", async
     );
     expect(catalog.headers.get("content-type")).toContain("application/json");
     const catalogBody = (await catalog.json()) as { error?: string };
-    expect(catalog.status).toBe(500);
-    expect(catalogBody.error).toMatch(/CONNECTOR_SECRET_KEY/);
+    expect(catalog.status).toBe(400);
+    expect(catalogBody.error).toMatch(/OAuth/);
+    expect(catalogBody.error).not.toMatch(/CONNECTOR_SECRET_KEY/);
     expect(serverProvidedError(catalogBody)).toBe(catalogBody.error);
 
     const pastedOauth = await createConnector(

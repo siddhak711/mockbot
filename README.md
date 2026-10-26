@@ -153,6 +153,32 @@ GITHUB_TOKEN=github_pat_...
 
 The sidebar can register an MCP server. A connector stores a name, a transport (`http` or `stdio`), a target, and an optional secret reference. The reference is the name of an environment variable on the server and must start with `MCP_`, such as `MCP_DEMO_TOKEN`. The value stays on the server: it is sent as a bearer token for HTTP, or as that one variable in a stdio process, and it is not written into the prompt, the transcript, or API responses.
 
+### Catalog OAuth
+
+Notion and GitHub in the catalog use a real OAuth 2.0 authorization-code flow. The other catalog apps are shown as not available yet and do not create a connector. Client secrets are read from the environment. They are not stored in the repo.
+
+The redirect URI is `/connectors/oauth/callback` on the app origin:
+
+- Local: `http://localhost:3000/connectors/oauth/callback`
+- Production: `https://mockbot-jet.vercel.app/connectors/oauth/callback`
+
+Set `APP_ORIGIN` to that site's origin when the request host would be different, for example `APP_ORIGIN=https://mockbot-jet.vercel.app` on Vercel and `APP_ORIGIN=http://localhost:3000` locally. If it is unset, the redirect URI uses the incoming request origin. The value must match the redirect URI registered with the provider exactly.
+
+```bash
+NOTION_OAUTH_CLIENT_ID=
+NOTION_OAUTH_CLIENT_SECRET=
+GITHUB_OAUTH_CLIENT_ID=
+GITHUB_OAUTH_CLIENT_SECRET=
+```
+
+Notion is a public integration from [Notion's developer portal](https://www.notion.so/profile/integrations). Create it as public, add both redirect URIs on that one integration, and enable read content, update content, and insert content. Notion does not use PKCE. The token request uses HTTP Basic with the client id and secret. Notion's hosted MCP server at `https://mcp.notion.com/mcp` runs its own OAuth and does not accept this public-integration token, so Notion tools call `https://api.notion.com/v1` through the Notion adapter (`search`, `get_page`, `get_block_children`, `list_databases`, `create_page`).
+
+GitHub is an OAuth App from [GitHub developer settings](https://github.com/settings/developers). An OAuth App has one authorization callback URL, so use one app for `http://localhost:3000/connectors/oauth/callback` and another for `https://mockbot-jet.vercel.app/connectors/oauth/callback`, and put that app's client id and secret in the matching environment. The flow sends PKCE (`S256`) and requests the `repo`, `read:org`, and `read:user` scopes. Enable "Expire user authorization tokens" if you want refresh tokens. After sign-in, the connector uses the hosted GitHub MCP server at `https://api.githubcopilot.com/mcp/` and sends the access token as a bearer token. Tool names come from that server.
+
+Access and refresh tokens are encrypted with `CONNECTOR_SECRET_KEY` and stored on the connector. A token with `expires_in` is refreshed about a minute before it expires. A `401` refreshes once and retries when a refresh token is stored. Notion refresh tokens rotate: the new refresh token replaces the old one. If a provider's client id or secret is missing, connect fails with the variable names and does not create a connector.
+
+Adding another provider is a `oauth` block on its catalog entry plus, when that provider has no hosted MCP server that accepts the token, an adapter registered in `src/connectors/adapters`.
+
 HTTP targets are `http` or `https` URLs. Stdio targets are a program and arguments separated by spaces, run without a shell. Disabling or removing a connector drops its tools from the next turn. The built-in web, GitHub, and calendar tools stay registered.
 
 The mock provider does not invent a tool call for a normal message. To exercise a connector without an API key, name the tool:

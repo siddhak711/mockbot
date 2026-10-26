@@ -11,6 +11,36 @@ export type CatalogPermission = {
   text: string;
 };
 
+/**
+ * Provider OAuth and execution config. Credentials are read from the named
+ * environment variables. A provider without this block is shown in the catalog
+ * and cannot be connected.
+ */
+export type CatalogOAuth = {
+  authorizeUrl: string;
+  tokenUrl: string;
+  scopes: readonly string[];
+  /** S256 PKCE when the provider accepts it. Notion's public integration does not. */
+  pkce: boolean;
+  clientIdEnv: string;
+  clientSecretEnv: string;
+  /** "basic" is HTTP Basic plus a JSON body. "body" puts the client secret in a form body. */
+  tokenAuth: "basic" | "body";
+  authorizeParams?: Readonly<Record<string, string>>;
+  /** Hosted MCP server. Tools are listed and called with the MCP client. */
+  mcpUrl?: string;
+  /** REST adapter used when this OAuth token is not accepted by a hosted MCP server. */
+  adapterId?: string;
+  /** API root stored as the connector target for an adapter. */
+  apiBase?: string;
+  /** Token-response field used as the account label. */
+  accountField?: string;
+  /** Authorized GET whose JSON field is the account label. */
+  userInfoUrl?: string;
+  userInfoField?: string;
+  redirectPath: string;
+};
+
 export type CatalogEntry = {
   id: string;
   name: string;
@@ -23,7 +53,9 @@ export type CatalogEntry = {
   auth: "oauth";
   samplePrompt: string;
   permissions: CatalogPermission[];
+  /** Branding shown before connect. Live tools come from the MCP server or adapter. */
   tools: CatalogTool[];
+  oauth?: CatalogOAuth;
 };
 
 export const CATALOG_CATEGORIES: { id: CatalogCategory; label: string }[] = [
@@ -44,6 +76,20 @@ export const CATALOG: readonly CatalogEntry[] = [
     color: "#191919",
     inkMonogram: true,
     auth: "oauth",
+    oauth: {
+      authorizeUrl: "https://api.notion.com/v1/oauth/authorize",
+      tokenUrl: "https://api.notion.com/v1/oauth/token",
+      scopes: [],
+      pkce: false,
+      clientIdEnv: "NOTION_OAUTH_CLIENT_ID",
+      clientSecretEnv: "NOTION_OAUTH_CLIENT_SECRET",
+      tokenAuth: "basic",
+      authorizeParams: { owner: "user", response_type: "code" },
+      adapterId: "notion",
+      apiBase: "https://api.notion.com/v1",
+      accountField: "workspace_name",
+      redirectPath: "/connectors/oauth/callback",
+    },
     samplePrompt: "Find my Q2 planning page in Notion",
     permissions: [
       { allowed: true, text: "Search and read pages you share" },
@@ -67,6 +113,19 @@ export const CATALOG: readonly CatalogEntry[] = [
     color: "#24292f",
     inkMonogram: true,
     auth: "oauth",
+    oauth: {
+      authorizeUrl: "https://github.com/login/oauth/authorize",
+      tokenUrl: "https://github.com/login/oauth/access_token",
+      scopes: ["repo", "read:org", "read:user"],
+      pkce: true,
+      clientIdEnv: "GITHUB_OAUTH_CLIENT_ID",
+      clientSecretEnv: "GITHUB_OAUTH_CLIENT_SECRET",
+      tokenAuth: "body",
+      mcpUrl: "https://api.githubcopilot.com/mcp/",
+      userInfoUrl: "https://api.github.com/user",
+      userInfoField: "login",
+      redirectPath: "/connectors/oauth/callback",
+    },
     samplePrompt: "List open pull requests that mention me",
     permissions: [
       { allowed: true, text: "Read repos, issues, and pull requests you can see" },
@@ -214,8 +273,27 @@ export const CATALOG: readonly CatalogEntry[] = [
   },
 ];
 
+export const OAUTH_CALLBACK_PATH = "/connectors/oauth/callback";
+
+export const LEGACY_CATALOG_TARGET_PREFIX = "https://catalog.mockbot.local/";
+
 export function catalogById(id: string): CatalogEntry | undefined {
   return CATALOG.find((entry) => entry.id === id);
+}
+
+export function catalogIsWired(entry: CatalogEntry): boolean {
+  return Boolean(
+    entry.oauth && (entry.oauth.mcpUrl || (entry.oauth.adapterId && entry.oauth.apiBase)),
+  );
+}
+
+export function catalogTarget(entry: CatalogEntry): string | null {
+  if (!entry.oauth) return null;
+  return entry.oauth.mcpUrl ?? entry.oauth.apiBase ?? null;
+}
+
+export function isLegacyCatalogTarget(target: string): boolean {
+  return target.startsWith(LEGACY_CATALOG_TARGET_PREFIX);
 }
 
 export function catalogInCategory(category: CatalogCategory): CatalogEntry[] {

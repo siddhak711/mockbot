@@ -41,6 +41,13 @@ async function withClient<T>(
   if (signal?.aborted) throw abortError();
   const resolved = await resolveConnectorSecret(connector, env);
   if (!resolved.ok) throw new McpClientError(resolved.error);
+  if (resolved.secret && !secrets.includes(resolved.secret)) {
+    try {
+      (secrets as string[]).push(resolved.secret);
+    } catch {
+      // A frozen secret list still redacts the values it was given.
+    }
+  }
   const client = new Client({ name: "mockbot", version: "0.1.0" });
   const transport = createTransport(connector, resolved.secret);
   if (transport instanceof StdioClientTransport && transport.stderr) {
