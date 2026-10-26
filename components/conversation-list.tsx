@@ -1,6 +1,9 @@
 import type { ReactNode } from "react";
 import type { Agent } from "../src/agents/types";
+import type { SpriteState } from "../src/sprite";
 import { AgentPanel, type AgentDraft } from "./agent-panel";
+import { ClockIcon, ComposeIcon, TrafficLights } from "./icons";
+import { ThemeToggle } from "./theme";
 import type { Conversation } from "../src/types";
 
 function dayKey(iso: string): string {
@@ -26,6 +29,7 @@ export function ConversationList({
   activeId,
   agents,
   activeAgentId,
+  spriteState,
   providerLabel,
   busy,
   open,
@@ -39,6 +43,7 @@ export function ConversationList({
   activeId: string | null;
   agents: Agent[];
   activeAgentId: string;
+  spriteState: SpriteState;
   providerLabel: string;
   busy: boolean;
   open: boolean;
@@ -54,49 +59,21 @@ export function ConversationList({
   return (
     <aside className={open ? "sidebar open" : "sidebar"}>
       <div className="side-head">
-        <span className="logo" aria-hidden="true">
-          <svg width="16" height="16" viewBox="0 0 24 24">
-            <path
-              fill="currentColor"
-              d="M12 1.8 14.1 9.9 22.2 12 14.1 14.1 12 22.2 9.9 14.1 1.8 12 9.9 9.9Z"
-            />
-          </svg>
-        </span>
-        <span className="product">Mockbot</span>
+        <TrafficLights />
       </div>
-      <button type="button" className="new" onClick={onNew} disabled={busy}>
-        <svg
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.75"
-          aria-hidden="true"
-        >
-          <path d="M12 5v14M5 12h14" strokeLinecap="round" />
-        </svg>
+      <button type="button" className="nav-action" onClick={onNew} disabled={busy}>
+        <ComposeIcon />
         New chat
       </button>
-      <a className="new" href="/routines">
-        <svg
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.75"
-          aria-hidden="true"
-        >
-          <circle cx="12" cy="12" r="8" />
-          <path d="M12 8v5l3 2" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
+      <a className="nav-action" href="/routines">
+        <ClockIcon />
         Routines
       </a>
       <div className="sidebar-sections">
         <AgentPanel
           agents={agents}
           activeAgentId={activeAgentId}
+          spriteState={spriteState}
           busy={busy}
           onSelect={onSelectAgent}
           onCreate={onCreateAgent}
@@ -109,20 +86,25 @@ export function ConversationList({
               <div key={group.label}>
                 <div className="label">{group.label}</div>
                 <div className="list">
-                  {group.items.map((conversation) => (
-                    <button
-                      key={conversation.id}
-                      type="button"
-                      className={conversation.id === activeId ? "item on" : "item"}
-                      aria-current={conversation.id === activeId ? "true" : undefined}
-                      onClick={() => onSelect(conversation.id)}
-                      disabled={busy}
-                    >
-                      {names.get(conversation.agentId)
-                        ? `${names.get(conversation.agentId)} · ${conversation.title}`
-                        : conversation.title}
-                    </button>
-                  ))}
+                  {group.items.map((conversation) => {
+                    const selected = conversation.id === activeId;
+                    const title = names.get(conversation.agentId)
+                      ? `${names.get(conversation.agentId)} · ${conversation.title}`
+                      : conversation.title;
+                    return (
+                      <button
+                        key={conversation.id}
+                        type="button"
+                        className={selected ? "item on" : "item"}
+                        aria-current={selected ? "true" : undefined}
+                        onClick={() => onSelect(conversation.id)}
+                        disabled={busy}
+                      >
+                        <span className="item-dot" aria-hidden="true" />
+                        <span className="item-label">{title}</span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             ))}
@@ -135,6 +117,7 @@ export function ConversationList({
           M
         </span>
         <span className="me-label">{providerLabel}</span>
+        <ThemeToggle />
       </footer>
     </aside>
   );

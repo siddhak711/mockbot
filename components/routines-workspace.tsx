@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { formatRunTime } from "../src/routines/format";
 import type { Routine, RoutineRun, RoutineStatus } from "../src/routines/types";
+import { ChatIcon, ClockIcon, ComposeIcon, MenuIcon, TrafficLights } from "./icons";
+import { Mochi } from "./mochi";
+import { ThemeToggle } from "./theme";
 
 type RoutineWithRuns = Routine & { runs: RoutineRun[] };
 
@@ -137,20 +140,16 @@ export function RoutinesWorkspace() {
     <div className="app">
       <aside className={navOpen ? "sidebar open" : "sidebar"}>
         <div className="side-head">
-          <span className="logo" aria-hidden="true">
-            <svg width="16" height="16" viewBox="0 0 24 24">
-              <path
-                fill="currentColor"
-                d="M12 1.8 14.1 9.9 22.2 12 14.1 14.1 12 22.2 9.9 14.1 1.8 12 9.9 9.9Z"
-              />
-            </svg>
-          </span>
-          <span className="product">Mockbot</span>
+          <TrafficLights />
+          <span className="grow" />
+          <ThemeToggle />
         </div>
-        <a className="new" href="/">
+        <a className="nav-action" href="/">
+          <ComposeIcon />
           Chat
         </a>
-        <a className="new" href="/routines" aria-current="page">
+        <a className="nav-action" href="/routines" aria-current="page">
+          <ClockIcon />
           Routines
         </a>
       </aside>
@@ -178,7 +177,10 @@ export function RoutinesWorkspace() {
           </a>
         </header>
         <header className="thread-header">
-          <h1>Routines</h1>
+          <h1>
+            <Mochi state="idle" size={24} label="Mochi, ready" />
+            <span className="thread-title">Routines</span>
+          </h1>
           <a className="ghost-text" href="/">
             Chat
           </a>
@@ -381,37 +383,5 @@ export function RoutinesWorkspace() {
         </div>
       </main>
     </div>
-  );
-}
-
-function MenuIcon() {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      aria-hidden="true"
-    >
-      <path d="M4 7h16M4 12h16M4 17h10" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function ChatIcon() {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      aria-hidden="true"
-    >
-      <path d="M5 6h14v9H8l-3 3V6Z" strokeLinejoin="round" />
-    </svg>
   );
 }

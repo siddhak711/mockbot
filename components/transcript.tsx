@@ -1,7 +1,9 @@
 import { useEffect, useRef } from "react";
+import type { SpriteState } from "../src/sprite";
 import type { LivePhase, Message } from "../src/types";
 import type { ToolActivity } from "../src/tools/display";
 import { AssistantStream } from "./assistant-stream";
+import { Mochi } from "./mochi";
 import { ToolActivityCards } from "./tool-activity";
 
 export function Transcript({
@@ -12,10 +14,12 @@ export function Transcript({
   decidingId,
   onDecide,
   onSelectTool,
+  spriteState = "idle",
 }: {
   messages: Message[];
   streaming?: boolean;
   livePhase?: LivePhase | null;
+  spriteState?: SpriteState;
   activities?: ToolActivity[];
   decidingId?: string | null;
   onDecide?: (id: string, decision: "approve" | "deny") => void;
@@ -34,6 +38,7 @@ export function Transcript({
     return (
       <div className="transcript">
         <div className="transcript-empty">
+          <Mochi state="idle" size={64} label="Mochi, ready" />
           <h2>Start a conversation</h2>
           <p>
             Ask Mockbot to remember a fact. It can use that fact in a later chat. Replies stream in
@@ -73,7 +78,12 @@ export function Transcript({
                 onDecide={onDecide}
                 onSelect={onSelectTool}
               />
-              <AssistantStream message={message} live={live} livePhase={live ? livePhase : null} />
+              <AssistantStream
+                message={message}
+                live={live}
+                livePhase={live ? livePhase : null}
+                spriteState={live ? spriteState : "idle"}
+              />
             </article>
           );
         })}
