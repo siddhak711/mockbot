@@ -119,6 +119,7 @@ export function SearchField({
   onChange,
   onSubmit,
   onCancel,
+  onPaste,
 }: {
   value: string;
   placeholder: string;
@@ -129,6 +130,7 @@ export function SearchField({
   onChange: (value: string) => void;
   onSubmit: () => void;
   onCancel: () => void;
+  onPaste?: (text: string) => void;
 }) {
   return (
     <label className={invalid ? "connector-search invalid" : "connector-search"}>
@@ -143,6 +145,10 @@ export function SearchField({
         autoComplete="off"
         spellCheck={false}
         onChange={(event) => onChange(event.target.value)}
+        onPaste={(event) => {
+          const text = event.clipboardData?.getData("text") ?? "";
+          if (text) onPaste?.(text);
+        }}
         onKeyDown={(event) => {
           if (event.key === "Enter") {
             event.preventDefault();

@@ -202,7 +202,10 @@ export function ConnectorsPanel({
       ].filter((element) => !element.hasAttribute("disabled"));
     const timer = window.setTimeout(() => {
       if (mode === "add" || mode === "detecting" || mode === "invalid" || mode === "no-results") {
-        searchRef.current?.focus();
+        const field = searchRef.current;
+        field?.focus();
+        const caret = field?.value.length ?? 0;
+        field?.setSelectionRange(caret, caret);
       } else {
         focusable()[0]?.focus();
       }
@@ -710,7 +713,9 @@ export function ConnectorsPanel({
           onChange={(value) => {
             setSearch(value);
             setHint("");
-            if (detectInput(value).kind !== "search") setMode("add");
+          }}
+          onPaste={(text) => {
+            if (detectInput(text).kind !== "search") setMode("add");
           }}
           onSubmit={() => {
             const detected = detectInput(search);
