@@ -568,6 +568,7 @@ export function Workspace({
               ),
             );
           } else if (
+            event.event === "prompt" ||
             event.event === "start" ||
             event.event === "reasoning" ||
             event.event === "tool_call" ||
@@ -673,7 +674,9 @@ export function Workspace({
         }
       } else {
         if (!sawMeta) {
-          setMessages((prev) => prev.filter((item) => item.id !== localUserId));
+          setMessages((prev) =>
+            prev.filter((item) => item.id !== localUserId && item.id !== assistantLocalId),
+          );
         }
         setAlert({
           message: sendError instanceof Error ? sendError.message : "Something went wrong",
@@ -992,7 +995,6 @@ export function Workspace({
             snapshot={computer}
             status={computerStatus}
             messages={messages}
-            streaming={streaming}
           />
         </div>
       </main>
@@ -1011,7 +1013,6 @@ export function Workspace({
           snapshot={computer}
           status={computerStatus}
           messages={messages}
-          streaming={streaming}
         />
       ) : null}
       <ConnectorsPanel

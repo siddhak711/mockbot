@@ -1,9 +1,11 @@
+import { isMockToolResult } from "./tools/display";
 import type { Message, MessageTrace } from "./types";
 
 export type TokenStreamEntry = {
   kind: "start" | "reasoning" | "tool" | "text" | "end";
   label: string;
   detail?: string;
+  mock?: boolean;
 };
 
 /** Flatten a stored assistant trace into token-stream rows for the Trace pane. */
@@ -28,10 +30,12 @@ export function tokenStreamEntries(
     });
   }
   for (const tool of trace.tools) {
+    const mock = isMockToolResult(tool.name, tool.result);
     entries.push({
       kind: "tool",
       label: tool.name || "tool",
       detail: tool.result == null ? "pending" : "done",
+      ...(mock ? { mock: true } : {}),
     });
   }
   const text = content || trace.text;

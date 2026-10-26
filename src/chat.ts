@@ -19,7 +19,7 @@ import {
 } from "./tools/display";
 import type { ToolContext } from "./tools/types";
 import { buildModelInput } from "./turn";
-import { applyStreamEvent, emptyTrace, hasVisibleStream } from "./trace";
+import { applyStreamEvent, emptyTrace, hasVisibleStream, modelPromptParts } from "./trace";
 import type { LlmStreamEvent, LlmToolCall, MessageTrace } from "./types";
 
 const MAX_MESSAGE_LENGTH = 20_000;
@@ -200,7 +200,12 @@ export async function streamChatTurn(options: {
   };
 
   let partial = "";
-  let trace = emptyTrace();
+  const promptParts = modelPromptParts(history);
+  let trace: MessageTrace = {
+    ...emptyTrace(),
+    system: promptParts.system,
+    prefill: promptParts.prefill,
+  };
   let assistantId: string | null = null;
   let saved = "";
   let persistQueue = Promise.resolve();
@@ -295,6 +300,7 @@ export async function streamChatTurn(options: {
           title: conversationSnapshot.title,
           userMessageId: user.id,
         });
+        enqueue("prompt", { system: trace.system ?? "", prefill: trace.prefill ?? "" });
 
         let sawStart = false;
         let roundEnded = false;

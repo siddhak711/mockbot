@@ -1,8 +1,9 @@
 "use client";
 
-import { useLayoutEffect, useRef } from "react";
+import { useState } from "react";
+import { renderRawTranscript } from "../src/raw-transcript";
+import type { ToolActivity } from "../src/tools/display";
 import type { Message } from "../src/types";
-import { assistantMessagesWithTrace, tokenStreamEntries } from "../src/token-stream";
 import { liveAssistantId } from "./transcript";
 
 /** The live trace row is the in-flight assistant, not whichever turn was stored last. */
@@ -16,85 +17,43 @@ export function isLiveTraceTurn(
 
 export function TokenStreamPanel({
   messages,
-  streaming = false,
+  activities = [],
 }: {
   messages: Message[];
-  streaming?: boolean;
+  activities?: ToolActivity[];
 }) {
-  const assistants = assistantMessagesWithTrace(messages);
+  const text = renderRawTranscript(messages, activities);
+  const [copied, setCopied] = useState(false);
 
-  if (assistants.length === 0) {
+  async function copyTranscript() {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  if (!text) {
     return (
-      <div className="token-stream-panel">
+      <div className="raw-transcript">
         <div className="computer-empty">
-          <h3>No token stream yet</h3>
-          <p>
-            Start and end tokens, reasoning, and finish reasons land here. The chat stays clean
-            while you work.
-          </p>
+          <h3>No transcript yet</h3>
+          <p>The system prompt, every token, and every tool call land here in full.</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="token-stream-panel" aria-label="Token stream">
-      <p className="token-stream-lead">
-        The raw stream stays in this side panel. Open a turn to inspect it.
-      </p>
-      <div className="token-stream-list">
-        {assistants.map((message, index) => (
-          <TokenStreamTurn
-            key={message.id}
-            message={message}
-            latest={index === assistants.length - 1}
-            live={isLiveTraceTurn(message.id, messages, streaming)}
-          />
-        ))}
+    <div className="raw-transcript" aria-label="Raw transcript">
+      <div className="raw-transcript-bar">
+        <button type="button" className="raw-transcript-copy" onClick={() => void copyTranscript()}>
+          {copied ? "Copied" : "Copy"}
+        </button>
       </div>
+      <pre className="raw-transcript-body">{text}</pre>
     </div>
-  );
-}
-
-function TokenStreamTurn({
-  message,
-  latest,
-  live,
-}: {
-  message: Message;
-  latest: boolean;
-  live: boolean;
-}) {
-  const entries = tokenStreamEntries(message.trace, message.content);
-  const detailsRef = useRef<HTMLDetailsElement>(null);
-
-  // Leave the element uncontrolled. Opening it here stays put when `live` flips off;
-  // a controlled `open={latest && streaming}` prop collapses the turn at that moment.
-  useLayoutEffect(() => {
-    if (latest && detailsRef.current) detailsRef.current.open = true;
-  }, [latest]);
-
-  return (
-    <details ref={detailsRef} className="token-stream-turn" data-live={live ? "true" : undefined}>
-      <summary>
-        <span className="token-pill">{live ? "live" : "turn"}</span>
-        <span className="token-stream-summary">
-          {entries.map((entry) => entry.label).join(" · ") || "trace"}
-        </span>
-      </summary>
-      <ol className="token-stream-entries">
-        {entries.map((entry, entryIndex) => (
-          <li key={`${entry.kind}-${entryIndex}`} data-kind={entry.kind}>
-            <div className="stream-token" data-token={entry.kind}>
-              <span className="token-pill">{entry.label}</span>
-              {entry.detail && entry.kind !== "reasoning" ? <span>{entry.detail}</span> : null}
-            </div>
-            {entry.kind === "reasoning" && entry.detail ? (
-              <pre className="token-stream-reasoning">{entry.detail}</pre>
-            ) : null}
-          </li>
-        ))}
-      </ol>
-    </details>
   );
 }

@@ -440,11 +440,12 @@ export function ConnectorsPanel({
       }),
     });
     const body = (await response.json().catch(() => null)) as {
-      error?: string;
+      error?: unknown;
+      message?: unknown;
       connector?: ConnectorRecord;
     } | null;
     if (!response.ok || !body?.connector) {
-      setUnreachable(body?.error ?? "Could not add the connector.");
+      setUnreachable(serverProvidedError(body) ?? "Could not add the connector.");
       setMode("unreachable");
       return;
     }
@@ -551,8 +552,12 @@ export function ConnectorsPanel({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ reconnected: true }),
     });
+    const failed = (await response.json().catch(() => null)) as {
+      error?: unknown;
+      message?: unknown;
+    } | null;
     if (!response.ok) {
-      setAuthError("Could not reconnect.");
+      setAuthError(serverProvidedError(failed) ?? "Could not reconnect.");
       setMode("auth-failed");
       return;
     }
@@ -570,10 +575,11 @@ export function ConnectorsPanel({
     });
     const body = (await response.json().catch(() => null)) as {
       connector?: ConnectorRecord;
-      error?: string;
+      error?: unknown;
+      message?: unknown;
     } | null;
     if (!response.ok || !body?.connector) {
-      setAuthError(body?.error ?? `Could not connect ${entry.name}.`);
+      setAuthError(serverProvidedError(body) ?? `Could not connect ${entry.name}.`);
       setMode("auth-failed");
       return;
     }
@@ -598,11 +604,12 @@ export function ConnectorsPanel({
       }),
     });
     const body = (await response.json().catch(() => null)) as {
-      error?: string;
+      error?: unknown;
+      message?: unknown;
       connector?: ConnectorRecord;
     } | null;
     if (!response.ok || !body?.connector) {
-      setAuthError(body?.error ?? `Could not connect ${draft.name}.`);
+      setAuthError(serverProvidedError(body) ?? `Could not connect ${draft.name}.`);
       setMode("auth-failed");
       return;
     }
@@ -1720,6 +1727,16 @@ function fixture(
     seenTools: Object.keys(tools),
     failures: [],
   };
+}
+
+/** Prefer the API's error text over a generic client fallback. */
+export function serverProvidedError(
+  body: { error?: unknown; message?: unknown } | null,
+): string | null {
+  if (!body) return null;
+  if (typeof body.error === "string" && body.error.trim()) return body.error.trim();
+  if (typeof body.message === "string" && body.message.trim()) return body.message.trim();
+  return null;
 }
 
 export function connectorForActivity(

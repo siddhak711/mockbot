@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage } from "node:http";
 import { once } from "node:events";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, sep } from "node:path";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { POST } from "../app/api/chat/route";
 import { GET as readStatus } from "../app/api/status/route";
 import { resetAppContext, setAppContext } from "../src/context";
@@ -43,13 +43,24 @@ it("selects the mock provider unless openai and an API key are both set", () => 
   expect(aliased.id).toBe("openai");
   expect(aliased.model).toBe("deepseek/deepseek-v4.1-flash");
   expect(() => selectProvider({ LLM_PROVIDER: "nope" })).toThrow(/Unknown LLM_PROVIDER/);
-  expect(
-    selectProvider({
-      LLM_PROVIDER: "openrouter",
-      LLM_API_KEY: SECRET,
-      LLM_BASE_URL: "not a url",
-    }).id,
-  ).toBe("mock");
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    expect(
+      selectProvider({
+        LLM_PROVIDER: "openrouter",
+        LLM_API_KEY: SECRET,
+        LLM_BASE_URL: "not a url",
+      }).id,
+    ).toBe("mock");
+    expect(warn).toHaveBeenCalledWith(
+      "LLM is using a mock implementation because LLM_BASE_URL is not a valid http(s) URL.",
+    );
+    warn.mockClear();
+    expect(selectProvider({}).id).toBe("mock");
+    expect(warn).not.toHaveBeenCalled();
+  } finally {
+    warn.mockRestore();
+  }
 });
 
 it("sends the turn to the configured base URL and keeps the key off the client response", async () => {

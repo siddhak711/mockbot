@@ -23,7 +23,6 @@ export function SidePane({
   snapshot = null,
   status = "ready",
   messages = [],
-  streaming = false,
 }: {
   tab: SideTab;
   onTab: (tab: SideTab) => void;
@@ -38,7 +37,6 @@ export function SidePane({
   snapshot?: ComputerSnapshot | null;
   status?: "loading" | "ready" | "error";
   messages?: Message[];
-  streaming?: boolean;
 }) {
   return (
     <aside
@@ -89,7 +87,7 @@ export function SidePane({
           onChanged={onMemoriesChanged}
         />
       ) : tab === "trace" ? (
-        <TokenStreamPanel messages={messages} streaming={streaming} />
+        <TokenStreamPanel messages={messages} activities={activities} />
       ) : (
         <ComputerPane
           embedded

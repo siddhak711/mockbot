@@ -5,7 +5,7 @@ import { PATCH as patchConnector } from "../app/api/connectors/[id]/route";
 import { PATCH as patchTools } from "../app/api/connectors/[id]/tools/route";
 import { POST as detectConnector } from "../app/api/connectors/detect/route";
 import { GET as getConnectors, POST as createConnector } from "../app/api/connectors/route";
-import { connectorForActivity } from "../components/connectors-panel";
+import { connectorForActivity, serverProvidedError } from "../components/connectors-panel";
 import { searchCatalog } from "../src/connectors/catalog";
 import { probeConnector } from "../src/connectors/probe";
 import { ReconnectAttempt } from "../src/connectors/reconnect";
@@ -622,6 +622,82 @@ function sampleConnector(id: string, name: string): ConnectorRecord {
     updatedAt: new Date(0).toISOString(),
   };
 }
+
+it("returns a JSON error when connector creation cannot encrypt a secret", async () => {
+  const previousKey = process.env.CONNECTOR_SECRET_KEY;
+  const previousDemo = process.env.MCP_DEMO_TOKEN;
+  process.env.CONNECTOR_SECRET_KEY = "not-a-valid-key";
+  process.env.MCP_DEMO_TOKEN = "demo-token";
+  const store = await ConversationStore.open();
+  setAppContext({
+    store,
+    provider: new MockProvider({ delayMs: 0 }),
+    tools: createDefaultTools({}),
+  });
+  const oauth = await startMockMcpServer({ auth: "oauth" });
+  const keyed = await startMockMcpServer({ auth: "apikey", token: "connector-key" });
+  const open = await startMockMcpServer();
+  try {
+    const unknown = await createConnector(jsonRequest({ catalogId: "nope" }));
+    expect(unknown.status).toBe(400);
+    expect(await unknown.json()).toEqual({ error: "Unknown connector." });
+
+    const catalog = await createConnector(
+      jsonRequest({ catalogId: "notion", accountLabel: "workspace" }),
+    );
+    expect(catalog.headers.get("content-type")).toContain("application/json");
+    const catalogBody = (await catalog.json()) as { error?: string };
+    expect(catalog.status).toBe(500);
+    expect(catalogBody.error).toMatch(/CONNECTOR_SECRET_KEY/);
+    expect(serverProvidedError(catalogBody)).toBe(catalogBody.error);
+
+    const pastedOauth = await createConnector(
+      jsonRequest({ name: "Acme", transport: "http", target: oauth.url, oauth: true }),
+    );
+    const oauthBody = (await pastedOauth.json()) as { error?: string };
+    expect(pastedOauth.status).toBe(500);
+    expect(oauthBody.error).toMatch(/CONNECTOR_SECRET_KEY/);
+
+    const pastedKey = await createConnector(
+      jsonRequest({
+        name: "Acme",
+        transport: "http",
+        target: keyed.url,
+        apiKey: "connector-key",
+        tools: { echo: { enabled: true, approval: "ask" } },
+      }),
+    );
+    const keyBody = (await pastedKey.json()) as { error?: string };
+    expect(pastedKey.status).toBe(500);
+    expect(keyBody.error).toMatch(/CONNECTOR_SECRET_KEY/);
+
+    store.createConnector = async () => {
+      throw new Error("connector store failed");
+    };
+    const secretRef = await createConnector(
+      jsonRequest({
+        name: "Acme",
+        transport: "http",
+        target: open.url,
+        secretRef: "MCP_DEMO_TOKEN",
+      }),
+    );
+    const secretBody = (await secretRef.json()) as { error?: string };
+    expect(secretRef.status).toBe(500);
+    expect(secretBody.error).toBe("connector store failed");
+    expect(serverProvidedError(secretBody)).toBe("connector store failed");
+    expect(serverProvidedError(null)).toBeNull();
+    expect(serverProvidedError({ message: "from message" })).toBe("from message");
+  } finally {
+    await oauth.close();
+    await keyed.close();
+    await open.close();
+    if (previousKey == null) delete process.env.CONNECTOR_SECRET_KEY;
+    else process.env.CONNECTOR_SECRET_KEY = previousKey;
+    if (previousDemo == null) delete process.env.MCP_DEMO_TOKEN;
+    else process.env.MCP_DEMO_TOKEN = previousDemo;
+  }
+});
 
 function jsonRequest(body: unknown): Request {
   return new Request("http://localhost/api/connectors", {
