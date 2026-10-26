@@ -355,6 +355,7 @@ export async function streamChatTurn(options: {
               })
             : modelEvents;
 
+          runLog.holdWrites();
           try {
             for await (const event of events) {
               captureModelEvent(capture, event);
@@ -387,14 +388,19 @@ export async function streamChatTurn(options: {
             }
           } finally {
             signal?.removeEventListener("abort", abortRound);
-            await ignoreRunLog(
-              runLog.recordModel({
-                model: provider.model,
-                messages: modelInput,
-                capture,
-                ms: elapsedMs(modelStarted),
-              }),
-            );
+            const deferred = runLog.drainHeld();
+            try {
+              await ignoreRunLog(
+                runLog.recordModel({
+                  model: provider.model,
+                  messages: modelInput,
+                  capture,
+                  ms: elapsedMs(modelStarted),
+                }),
+              );
+            } finally {
+              await ignoreRunLog(runLog.appendHeld(deferred));
+            }
           }
           if (signal?.aborted || userStopped) break;
 

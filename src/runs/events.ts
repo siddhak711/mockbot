@@ -222,10 +222,21 @@ export async function ignoreRunLog(write: Promise<void> | undefined): Promise<vo
   }
 }
 
+type AppendRow = {
+  type: RunEventType;
+  input: string | null;
+  output: string | null;
+  tokens: number | null;
+  costUsd: number | null;
+  ms: number | null;
+};
+
 export class RunLog {
   readonly id: string;
   #seq = 0;
   #tail: Promise<void> = Promise.resolve();
+  /** When set, append queues here instead of inserting, so a parent model row can land first. */
+  #held: AppendRow[] | null = null;
 
   constructor(
     private readonly db: Sql,
@@ -235,17 +246,34 @@ export class RunLog {
   }
 
   /**
+   * Queue appends until `drainHeld`. A delegate that runs inside the parent
+   * model stream writes child and tool rows before that stream's `finally`.
+   * Holding those rows lets the parent model row take the earlier seq.
+   */
+  holdWrites(): void {
+    this.#held ??= [];
+  }
+
+  /** Stop queueing and return the rows that were waiting, in call order. */
+  drainHeld(): AppendRow[] {
+    const held = this.#held ?? [];
+    this.#held = null;
+    return held;
+  }
+
+  async appendHeld(rows: readonly AppendRow[]): Promise<void> {
+    for (const row of rows) await this.append(row);
+  }
+
+  /**
    * Insert one row. A failed insert is logged and does not reject, so a chat
    * turn, routine, or delegation can finish and close its stream.
    */
-  append(row: {
-    type: RunEventType;
-    input: string | null;
-    output: string | null;
-    tokens: number | null;
-    costUsd: number | null;
-    ms: number | null;
-  }): Promise<void> {
+  append(row: AppendRow): Promise<void> {
+    if (this.#held) {
+      this.#held.push(row);
+      return Promise.resolve();
+    }
     const task = this.#tail.then(async () => {
       try {
         this.#seq += 1;

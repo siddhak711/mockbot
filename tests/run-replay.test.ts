@@ -1,13 +1,16 @@
 import { createServer, type IncomingMessage } from "node:http";
 import { once } from "node:events";
 import { afterEach, expect, it, vi } from "vitest";
+import { POST as createAgent } from "../app/api/agents/route";
 import { POST as postChat } from "../app/api/chat/route";
 import { GET as readRun } from "../app/api/runs/[id]/route";
 import { resetAppContext, setAppContext } from "../src/context";
-import { selectProvider } from "../src/llm";
+import { MockProvider, selectProvider, type LlmProvider } from "../src/llm";
+import { runRoutineTurn } from "../src/routines/turn";
 import { RunLog, listRunEvents, runTotals } from "../src/runs/events";
 import { redactSecrets } from "../src/runs/redact";
 import { ConversationStore } from "../src/store";
+import type { LlmMessage, LlmStreamEvent } from "../src/types";
 import { deltas, readSse } from "./helpers";
 
 afterEach(async () => {
@@ -278,4 +281,120 @@ it("appends a model-route event with run_id and seq, and does not reject when th
   } finally {
     logged.mockRestore();
   }
+});
+
+it("records the model row when a routine stream throws", async () => {
+  const store = await ConversationStore.open();
+  const conversation = await store.createConversation("Routine");
+  const provider: LlmProvider = {
+    id: "mock",
+    model: "gpt-4o-mini",
+    async *stream(): AsyncIterable<LlmStreamEvent> {
+      yield { type: "text", text: "partial" };
+      throw new Error("upstream unavailable");
+    },
+  };
+
+  await expect(
+    runRoutineTurn({
+      store,
+      provider,
+      conversationId: conversation.id,
+      prompt: "Summarize today",
+      runId: "run_routine_fail",
+    }),
+  ).rejects.toThrow("upstream unavailable");
+
+  const rows = await listRunEvents(store.connection, "run_routine_fail");
+  const model = rows.find((row) => row.type === "model");
+  expect(rows.map((row) => row.type)).toEqual(["event", "model", "error", "event"]);
+  expect(model?.input).toContain("Summarize today");
+  expect(model?.output).toContain("partial");
+  expect(model?.tokens).toBeGreaterThan(0);
+  expect(model?.costUsd).toEqual(expect.any(Number));
+  expect(model?.costUsd).toBeGreaterThan(0);
+  expect(model?.ms).toEqual(expect.any(Number));
+});
+
+it("writes the parent model row before delegate rows", async () => {
+  const store = await ConversationStore.open();
+  setAppContext({
+    store,
+    computer: {
+      async read() {
+        return "desk-file";
+      },
+    },
+    provider: new MockProvider({
+      delayMs: 0,
+      chunkSize: 80,
+      tools: (messages: LlmMessage[]) => {
+        const system = messages.find((message) => message.role === "system")?.content ?? "";
+        if (system.includes("delegation: child")) {
+          return [
+            {
+              id: "call_computer",
+              name: "use_computer",
+              arguments: JSON.stringify({ computerId: "desk", path: "notes.txt" }),
+            },
+          ];
+        }
+        return [
+          {
+            id: "call_delegate",
+            name: "delegate",
+            arguments: JSON.stringify({ agent: "Researcher", task: "Read the notes" }),
+          },
+        ];
+      },
+      reply: (messages: LlmMessage[]) => {
+        const system = messages.find((message) => message.role === "system")?.content ?? "";
+        if (system.includes("delegation: child")) return "Notes received";
+        return undefined;
+      },
+    }),
+  });
+  await createAgent(
+    new Request("http://localhost/api/agents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Researcher",
+        instructions: "You read notes.",
+        computerId: "desk",
+      }),
+    }),
+  );
+
+  const response = await postChat(
+    new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Ask the researcher" }),
+    }),
+  );
+  const events = await readSse(response);
+  expect(events.some((event) => event.event === "error")).toBe(false);
+  const runId = (events.find((event) => event.event === "meta")?.data as { runId?: string }).runId;
+  expect(runId).toBeTruthy();
+
+  const rows = await listRunEvents(store.connection, runId!);
+  const parent = rows.find(
+    (row) => row.type === "model" && row.input?.includes("Ask the researcher"),
+  );
+  const child = rows.find((row) => row.type === "model" && row.input?.includes("Read the notes"));
+  const delegate = rows.find(
+    (row) => row.type === "tool" && row.input?.includes('"name":"delegate"'),
+  );
+  const computer = rows.find(
+    (row) => row.type === "tool" && row.input?.includes('"name":"use_computer"'),
+  );
+  expect(parent?.seq).toEqual(expect.any(Number));
+  expect(child?.seq).toEqual(expect.any(Number));
+  expect(delegate?.seq).toEqual(expect.any(Number));
+  expect(computer?.seq).toEqual(expect.any(Number));
+  expect(parent!.seq).toBeLessThan(child!.seq);
+  expect(parent!.seq).toBeLessThan(computer!.seq);
+  expect(parent!.seq).toBeLessThan(delegate!.seq);
+  expect(rows.find((row) => row.type === "model")?.seq).toBe(parent!.seq);
 });

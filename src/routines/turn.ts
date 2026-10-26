@@ -55,18 +55,21 @@ export async function runRoutineTurn(options: {
     let trace = emptyTrace();
     const capture = emptyModelCapture();
     const started = performance.now();
-    for await (const event of options.provider.stream(history)) {
-      captureModelEvent(capture, event);
-      trace = applyStreamEvent(trace, event);
+    try {
+      for await (const event of options.provider.stream(history)) {
+        captureModelEvent(capture, event);
+        trace = applyStreamEvent(trace, event);
+      }
+    } finally {
+      await ignoreRunLog(
+        log.recordModel({
+          model: options.provider.model,
+          messages: history,
+          capture,
+          ms: elapsedMs(started),
+        }),
+      );
     }
-    await ignoreRunLog(
-      log.recordModel({
-        model: options.provider.model,
-        messages: history,
-        capture,
-        ms: elapsedMs(started),
-      }),
-    );
     const assistant = await options.store.addMessage(
       options.conversationId,
       "assistant",
