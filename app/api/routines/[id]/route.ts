@@ -1,3 +1,4 @@
+import { requireApiUser } from "../../../../src/auth/guard";
 import { getAppContext } from "../../../../src/context";
 import type { RoutineStatus } from "../../../../src/routines/types";
 
@@ -7,6 +8,8 @@ export const dynamic = "force-dynamic";
 type RouteContext = { params: Promise<{ id: string }> };
 
 export async function PATCH(request: Request, context: RouteContext): Promise<Response> {
+  const actor = await requireApiUser(request);
+  if (!actor.ok) return actor.response;
   const { id } = await context.params;
   let body: unknown;
   try {

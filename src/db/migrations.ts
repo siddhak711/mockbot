@@ -116,4 +116,89 @@ ALTER TABLE connectors ADD COLUMN IF NOT EXISTS failures JSONB NOT NULL DEFAULT 
 ALTER TABLE connectors ADD COLUMN IF NOT EXISTS secret_cipher TEXT;
 `,
   },
+  {
+    id: "006_auth",
+    sql: `
+CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY,
+  name TEXT,
+  email TEXT NOT NULL,
+  email_verified TIMESTAMPTZ,
+  image TEXT,
+  password_hash TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_idx ON users (lower(email));
+
+CREATE TABLE IF NOT EXISTS accounts (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  type TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  provider_account_id TEXT NOT NULL,
+  refresh_token TEXT,
+  access_token TEXT,
+  expires_at BIGINT,
+  token_type TEXT,
+  scope TEXT,
+  id_token TEXT,
+  session_state TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (provider, provider_account_id)
+);
+
+CREATE INDEX IF NOT EXISTS accounts_user_idx ON accounts (user_id);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  id TEXT PRIMARY KEY,
+  session_token TEXT NOT NULL UNIQUE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions (user_id);
+
+CREATE TABLE IF NOT EXISTS verification_tokens (
+  identifier TEXT NOT NULL,
+  token TEXT NOT NULL,
+  expires TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (identifier, token)
+);
+
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS user_id TEXT REFERENCES users(id) ON DELETE CASCADE;
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS user_id TEXT REFERENCES users(id) ON DELETE CASCADE;
+
+CREATE INDEX IF NOT EXISTS conversations_user_updated_idx ON conversations (user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS memories_user_idx ON memories (user_id, agent_id);
+
+CREATE TABLE IF NOT EXISTS agents (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  instructions TEXT NOT NULL,
+  memory_note TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+  is_lead BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS user_id TEXT REFERENCES users(id) ON DELETE CASCADE;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS is_lead BOOLEAN NOT NULL DEFAULT FALSE;
+
+UPDATE agents SET is_lead = TRUE WHERE id = 'agent_default' AND is_lead = FALSE;
+
+CREATE INDEX IF NOT EXISTS agents_user_idx ON agents (user_id, created_at ASC);
+
+DROP INDEX IF EXISTS agents_name_lower_idx;
+
+CREATE UNIQUE INDEX IF NOT EXISTS agents_name_per_user_idx
+  ON agents (user_id, lower(name))
+  WHERE user_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS agents_name_unscoped_idx
+  ON agents (lower(name))
+  WHERE user_id IS NULL;
+`,
+  },
 ];

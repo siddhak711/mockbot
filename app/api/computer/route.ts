@@ -1,3 +1,4 @@
+import { requireApiUser } from "../../../src/auth/guard";
 import { getAppContext } from "../../../src/context";
 import { normalizeAgentId } from "../../../src/sandbox/limits";
 import type { ComputerToolName } from "../../../src/sandbox/types";
@@ -8,6 +9,8 @@ export const dynamic = "force-dynamic";
 const TOOLS = new Set<ComputerToolName>(["list", "read", "write", "exec"]);
 
 export async function GET(request: Request): Promise<Response> {
+  const actor = await requireApiUser(request);
+  if (!actor.ok) return actor.response;
   const { sandbox } = await getAppContext();
   if (!sandbox) return Response.json({ error: "Sandbox is not available" }, { status: 503 });
   const requested = new URL(request.url).searchParams.get("agentId") ?? undefined;
@@ -17,6 +20,8 @@ export async function GET(request: Request): Promise<Response> {
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const actor = await requireApiUser(request);
+  if (!actor.ok) return actor.response;
   const { sandbox } = await getAppContext();
   if (!sandbox) return Response.json({ error: "Sandbox is not available" }, { status: 503 });
   let body: unknown;

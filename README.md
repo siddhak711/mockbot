@@ -30,6 +30,53 @@ The lead transcript shows the `delegate` call and the child result. Only Mockbot
 
 `npm run build` then `npm start` runs the production server. Production and Vercel require `DATABASE_URL`. Use the pooled Neon connection string from the Vercel Marketplace Neon integration (`-pooler` in the host). Mockbot uses Neon's HTTP serverless driver there. It does not open PGlite, a `/tmp` database, or a blob snapshot in production. A hosted runtime without `DATABASE_URL` refuses to start.
 
+## Accounts
+
+The workspace is signed in. A visitor with no session sees the login screen. Email and password accounts and Google sign-in share one user record. Sessions are opaque tokens in an httpOnly cookie (`authjs.session-token`, or `__Secure-authjs.session-token` on HTTPS). The token is stored in Postgres. Passwords are hashed with bcrypt at cost 12 and are never written to the database as plaintext.
+
+Auth.js (NextAuth v5) runs the App Router session and the Google OAuth flow. The stock Postgres adapter is not used: local development is embedded PGlite and production is Neon's serverless driver, both behind the existing `Sql` connection. A small adapter implements the Auth.js user, account, session, and verification tables on that connection. Email and password does not use the Auth.js Credentials provider. That provider cannot persist database sessions. Sign-up and sign-in write the same `users` and `sessions` rows, then set the same cookie, so `auth()` loads either kind of session.
+
+### Environment variables
+
+Set these in `.env.local` for local development and in the Vercel project for production. Do not commit the values.
+
+| Variable               | Required             | Format                                                                                             |
+| ---------------------- | -------------------- | -------------------------------------------------------------------------------------------------- |
+| `AUTH_SECRET`          | Yes                  | Long random string. `openssl rand -base64 32`                                                      |
+| `AUTH_URL`             | Yes, per environment | Origin only, no path. Local: `http://localhost:3000`. Production: `https://mockbot-jet.vercel.app` |
+| `GOOGLE_CLIENT_ID`     | For Google sign-in   | OAuth client id from Google Cloud Console                                                          |
+| `GOOGLE_CLIENT_SECRET` | For Google sign-in   | OAuth client secret from the same client                                                           |
+
+`NEXTAUTH_SECRET` is read only when `AUTH_SECRET` is unset. `NEXTAUTH_URL` is read only when `AUTH_URL` is unset. Prefer the `AUTH_*` names.
+
+`AUTH_URL` decides whether the session cookie is marked Secure. Use the http URL locally and the https URL in the Vercel Production environment. Leave `AUTH_URL` unset on Preview deployments if those hosts are not registered as Google redirect URIs. Password sign-in still works there. Google sign-in follows `AUTH_URL` when it is set, so a Production value on a Preview deployment sends the OAuth callback to production.
+
+Restart `npm run dev` after changing these. The dev server reads them at startup.
+
+### Google Cloud Console
+
+1. Open [Google Cloud Console](https://console.cloud.google.com/apis/credentials) and create an OAuth client ID of type **Web application**.
+2. Under **Authorized JavaScript origins**, add both of these:
+   - `http://localhost:3000`
+   - `https://mockbot-jet.vercel.app`
+3. Under **Authorized redirect URIs**, add both of these exactly:
+   - `http://localhost:3000/api/auth/callback/google`
+   - `https://mockbot-jet.vercel.app/api/auth/callback/google`
+4. Copy the client id and secret into `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
+5. In the Vercel project, set `AUTH_SECRET`, `AUTH_URL=https://mockbot-jet.vercel.app`, `GOOGLE_CLIENT_ID`, and `GOOGLE_CLIENT_SECRET` for Production. Redeploy after saving them.
+
+The same names are listed in `.env.example`. If the Google variables are missing, the button stays on the login screen and explains what to set. It does not start an OAuth redirect until both values exist.
+
+### Existing rows
+
+Migration `006_auth` adds `users`, `accounts`, `sessions`, and `verification_tokens`, and nullable `user_id` on `conversations`, `agents`, and `memories`. It does not assign existing rows and it does not edit production by hand. The app migrator applies it on startup, the same way as the earlier migrations.
+
+Rows with `user_id` still null are orphans from before accounts, or from a path that does not know the caller (the routines worker). The **earliest account**, ordered by `users.created_at` then `id`, adopts those rows the next time that account loads the app. Later accounts do not see them. Each account also gets its own lead agent named Mockbot. The legacy lead id `agent_default` stays the lead for the account that adopted it. Another account's lead has its own id and can still delegate.
+
+Connectors, routines, and the sandbox computer stay workspace-wide. They require a session, and they are not split per account in this change.
+
+Signing in with Google does not attach to an email/password user with the same address. Google verifies the address, but the password account has not, so linking them automatically would let someone register the address first. The login screen asks for the original method instead.
+
 ## Memory
 
 Ask the agent to remember a fact, for example "Remember that my favorite color is blue". The mock provider calls `memory_write`. Open a new conversation and ask for the fact again. Profile memories are injected into the system prompt, and matching facts are recalled the same way. They are not inserted as a fake user message.

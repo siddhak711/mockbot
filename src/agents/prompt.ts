@@ -1,4 +1,4 @@
-import { LEAD_AGENT_ID } from "./ids";
+import { isLeadAgent } from "./ids";
 import type { Agent, AgentGrant, AgentMemoryFact } from "./types";
 
 export function buildAgentSystemPrompt(input: {
@@ -15,7 +15,7 @@ export function buildAgentSystemPrompt(input: {
     .map((grant) => grant.resourceId);
   const scoped =
     input.child ||
-    input.agent.id !== LEAD_AGENT_ID ||
+    !isLeadAgent(input.agent) ||
     input.memories.length > 0 ||
     computers.length > 0 ||
     connectors.length > 0;
