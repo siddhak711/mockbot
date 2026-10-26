@@ -1705,6 +1705,7 @@ a.icon-btn {
 
 .connector-window,
 .command-window {
+  position: relative;
   width: min(700px, 100%);
   height: min(520px, 100%);
   display: flex;
@@ -2232,6 +2233,61 @@ a.icon-btn {
 }
 
 .composer-plus {
+  position: relative;
+}
+
+.composer-plus .icon-btn,
+.connector-window .icon-btn {
+  width: 28px;
+  height: 28px;
+}
+
+.composer-plus .menu {
+  left: 0;
+  bottom: 36px;
+}
+
+.command-search {
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  line-height: 22px;
+}
+
+.command-list {
+  margin-top: 8px;
+}
+
+.tool-reconnect {
+  margin: 0 0 8px 22px;
+  min-height: 28px;
+}
+
+.oauth-page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 12px;
+  max-width: 420px;
+  margin: 0 auto;
+  padding: 24px;
+  background: var(--window);
+  color: var(--ink);
+}
+
+.oauth-page h1 {
+  margin: 0;
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 600;
+}
+
+.settings-anchor {
   position: relative;
 }
 

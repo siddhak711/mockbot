@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ConnectorRecord, ConnectorTransport } from "../src/connectors";
+import type { ConnectorRecord } from "../src/connectors";
+import { CommandPalette } from "./command-palette";
 import { Composer } from "./composer";
-import { ConnectorsPanel } from "./connectors";
+import { connectorForActivity, ConnectorsPanel } from "./connectors-panel";
 import { ConversationList } from "./conversation-list";
 import { MenuIcon, PlusIcon } from "./icons";
 import { Mochi } from "./mochi";
@@ -45,7 +46,11 @@ function preferRicherAssistant(local: Message[], remote: Message[]): Message[] {
   return remote;
 }
 
-export function Workspace() {
+export function Workspace({
+  connectorLaunch,
+}: {
+  connectorLaunch?: { query?: string; preview?: string; intent?: "list" | "add" };
+} = {}) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [activeAgentId, setActiveAgentId] = useState(LEAD_AGENT_ID);
@@ -67,7 +72,16 @@ export function Workspace() {
   const [mobilePane, setMobilePane] = useState<"chat" | "computer" | "memory">("chat");
   const [activities, setActivities] = useState<ToolActivity[]>([]);
   const [connectors, setConnectors] = useState<ConnectorRecord[]>([]);
-  const [connectorError, setConnectorError] = useState<string | null>(null);
+  const [connectorsReady, setConnectorsReady] = useState(false);
+  const [connectorOpen, setConnectorOpen] = useState(Boolean(connectorLaunch));
+  const [connectorIntent, setConnectorIntent] = useState<"list" | "add">(
+    connectorLaunch?.intent ?? "list",
+  );
+  const [connectorQuery, setConnectorQuery] = useState(connectorLaunch?.query ?? "");
+  const [connectorPreview] = useState(connectorLaunch?.preview);
+  const [pendingReconnectId, setPendingReconnectId] = useState<string | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [composerDraft, setComposerDraft] = useState("");
   const [selectedToolId, setSelectedToolId] = useState<string | null>(null);
   const [decidingId, setDecidingId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -169,10 +183,14 @@ export function Workspace() {
   }, []);
 
   const refreshConnectors = useCallback(async () => {
-    const response = await fetch("/api/connectors");
-    if (!response.ok) return;
-    const data = (await response.json()) as { connectors: ConnectorRecord[] };
-    setConnectors(data.connectors);
+    try {
+      const response = await fetch("/api/connectors");
+      if (!response.ok) return;
+      const data = (await response.json()) as { connectors: ConnectorRecord[] };
+      setConnectors(data.connectors);
+    } finally {
+      setConnectorsReady(true);
+    }
   }, []);
 
   const refreshComputer = useCallback(async () => {
@@ -240,6 +258,34 @@ export function Workspace() {
       cancelled = true;
     };
   }, [refreshConnectors, selectConversation]);
+
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      const meta = event.metaKey || event.ctrlKey;
+      if (!meta) return;
+      if (event.shiftKey && event.key.toLowerCase() === "c") {
+        event.preventDefault();
+        setConnectorIntent("add");
+        setConnectorQuery("");
+        setConnectorOpen(true);
+        return;
+      }
+      if (!event.shiftKey && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setPaletteOpen(true);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  function openConnectors(intent: "list" | "add") {
+    setConnectorIntent(intent);
+    setConnectorQuery("");
+    setConnectorOpen(true);
+    setNavOpen(false);
+    setPaletteOpen(false);
+  }
 
   function showMemory() {
     setComputerOpen(true);
@@ -593,6 +639,7 @@ export function Workspace() {
       setLivePhase(null);
       abortRef.current = null;
       void refreshComputer();
+      void refreshConnectors();
     }
   }
 
@@ -631,54 +678,6 @@ export function Workspace() {
     } catch {
       setDecidingId((current) => (current === id ? null : current));
     }
-  }
-
-  async function createConnector(input: {
-    name: string;
-    transport: ConnectorTransport;
-    target: string;
-    secretRef: string;
-  }): Promise<string | null> {
-    setConnectorError(null);
-    const response = await fetch("/api/connectors", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(input),
-    });
-    const body = (await response.json().catch(() => null)) as { error?: string } | null;
-    if (!response.ok) {
-      const message = body?.error ?? "Could not add the connector";
-      setConnectorError(message);
-      return message;
-    }
-    await refreshConnectors();
-    return null;
-  }
-
-  async function toggleConnector(id: string, enabled: boolean) {
-    setConnectorError(null);
-    const response = await fetch(`/api/connectors/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ enabled }),
-    });
-    if (!response.ok) {
-      const body = (await response.json().catch(() => null)) as { error?: string } | null;
-      setConnectorError(body?.error ?? "Could not update the connector");
-      return;
-    }
-    await refreshConnectors();
-  }
-
-  async function removeConnector(id: string) {
-    setConnectorError(null);
-    const response = await fetch(`/api/connectors/${id}`, { method: "DELETE" });
-    if (!response.ok && response.status !== 204) {
-      const body = (await response.json().catch(() => null)) as { error?: string } | null;
-      setConnectorError(body?.error ?? "Could not remove the connector");
-      return;
-    }
-    await refreshConnectors();
   }
 
   function stopTurn() {
@@ -730,15 +729,8 @@ export function Workspace() {
         }}
         onSelectAgent={selectAgent}
         onCreateAgent={createAgent}
+        onOpenConnectors={() => openConnectors("list")}
       >
-        <ConnectorsPanel
-          connectors={connectors}
-          error={connectorError}
-          busy={streaming}
-          onCreate={createConnector}
-          onToggle={toggleConnector}
-          onRemove={removeConnector}
-        />
       </ConversationList>
       <button
         type="button"
@@ -881,6 +873,19 @@ export function Workspace() {
             decidingId={decidingId}
             onDecide={(id, decision) => void decide(id, decision)}
             onSelectTool={setSelectedToolId}
+            reconnectFor={(activity) => {
+              if (activity.state !== "error") return null;
+              const connector = connectorForActivity(connectors, activity.name);
+              if (!connector || connector.status !== "reconnect") return null;
+              return connector.name;
+            }}
+            onReconnect={(activity) => {
+              const connector = connectorForActivity(connectors, activity.name);
+              if (!connector) return;
+              setPendingReconnectId(connector.id);
+              setConnectorIntent("list");
+              setConnectorOpen(true);
+            }}
           />
           {error ? (
             <p className="error" role="alert">
@@ -891,6 +896,9 @@ export function Workspace() {
             streaming={streaming}
             awaitingApproval={awaitingApproval}
             placeholder={speaking ? `Message ${speaking.name}` : "Message Mockbot"}
+            value={composerDraft}
+            onValueChange={setComposerDraft}
+            onAddConnector={() => openConnectors("add")}
             onSend={(text) => void send(text)}
             onStop={stopTurn}
           />
@@ -930,6 +938,43 @@ export function Workspace() {
           status={computerStatus}
         />
       ) : null}
+      <ConnectorsPanel
+        open={connectorOpen}
+        intent={connectorIntent}
+        connectors={connectors}
+        ready={connectorsReady}
+        initialQuery={connectorQuery}
+        preview={connectorPreview}
+        pendingReconnectId={pendingReconnectId}
+        onReconnectStarted={() => setPendingReconnectId(null)}
+        onClose={() => setConnectorOpen(false)}
+        onChanged={refreshConnectors}
+        onInsertPrompt={(text) => setComposerDraft(text)}
+        onStop={stopTurn}
+      />
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        commands={[
+          { id: "connectors", label: "Connectors", run: () => openConnectors("list") },
+          { id: "add-connector", label: "Add connector", run: () => openConnectors("add") },
+          {
+            id: "new-chat",
+            label: "New chat",
+            run: () => {
+              setPaletteOpen(false);
+              newChat();
+            },
+          },
+          {
+            id: "routines",
+            label: "Routines",
+            run: () => {
+              window.location.assign("/routines");
+            },
+          },
+        ]}
+      />
     </div>
   );
 }

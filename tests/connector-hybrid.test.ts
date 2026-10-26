@@ -1,0 +1,367 @@
+import { readFileSync } from "node:fs";
+import { afterEach, expect, it } from "vitest";
+import { PATCH as patchConnector } from "../app/api/connectors/[id]/route";
+import { PATCH as patchTools } from "../app/api/connectors/[id]/tools/route";
+import { POST as detectConnector } from "../app/api/connectors/detect/route";
+import { GET as getConnectors, POST as createConnector } from "../app/api/connectors/route";
+import { searchCatalog } from "../src/connectors/catalog";
+import {
+  applyBulk,
+  classifyToolRisk,
+  defaultToolSetting,
+  detectInput,
+  discoverTool,
+  resolveToolSettings,
+} from "../src/connectors/policy";
+import { noteConnectorOutcome } from "../src/connectors/runtime";
+import { resetAppContext, setAppContext } from "../src/context";
+import { MockProvider } from "../src/llm";
+import { refreshMcpTools } from "../src/mcp/sync";
+import { decryptSecret } from "../src/mcp/vault";
+import { ConversationStore } from "../src/store";
+import { requiresApproval } from "../src/tools/approval";
+import { createDefaultTools } from "../src/tools/builtins";
+import { ToolRegistry } from "../src/tools/registry";
+import { startMockMcpServer } from "../scripts/mock-mcp-server.mjs";
+
+afterEach(async () => {
+  await resetAppContext();
+});
+
+it("classifies pasted input, catalog search, and tool risk", () => {
+  expect(detectInput("notion").kind).toBe("search");
+  expect(detectInput("https://").valid).toBe(false);
+  expect(detectInput("https://mcp.acme.dev/mcp")).toMatchObject({
+    kind: "url",
+    valid: true,
+    target: "https://mcp.acme.dev/mcp",
+  });
+  expect(detectInput("npx @acme/mcp")).toMatchObject({ kind: "command", valid: true });
+  expect(detectInput("npx").kind).toBe("search");
+  expect(detectInput("{")).toMatchObject({ kind: "config", valid: false });
+  const config = detectInput(
+    JSON.stringify({ mcpServers: { demo: { command: "npx", args: ["@acme/mcp"] } } }),
+  );
+  expect(config).toMatchObject({
+    kind: "config",
+    valid: true,
+    name: "demo",
+    transport: "stdio",
+    target: "npx @acme/mcp",
+  });
+
+  expect(searchCatalog("notion").map((entry) => entry.id)).toContain("notion");
+  expect(searchCatalog("acme crm")).toEqual([]);
+
+  expect(classifyToolRisk("search_pages")).toBe("read");
+  expect(classifyToolRisk("delete_page")).toBe("destructive");
+  expect(classifyToolRisk("export_pdf")).toBe("write");
+  expect(classifyToolRisk("mystery", {})).toBe("write");
+  expect(classifyToolRisk("delete_page", { readOnlyHint: true })).toBe("destructive");
+  expect(defaultToolSetting("read")).toEqual({ enabled: true, approval: "auto" });
+  expect(defaultToolSetting("write")).toEqual({ enabled: false, approval: "ask" });
+  expect(defaultToolSetting("destructive")).toEqual({ enabled: false, approval: "ask" });
+
+  const discovered = [
+    discoverTool("search_pages", "Search", { type: "object" }, { readOnlyHint: true }),
+    discoverTool("create_page", "Create", { type: "object" }),
+    discoverTool("delete_page", "Delete", { type: "object" }, { destructiveHint: true }),
+    discoverTool("export_pdf", "Export", { type: "string" }),
+  ];
+  const settings = resolveToolSettings(
+    discovered,
+    { delete_page: { enabled: true, approval: "auto" }, create_page: { enabled: true, approval: "auto" } },
+    "defaults",
+  );
+  expect(settings.search_pages).toMatchObject({ enabled: true, approval: "auto", risk: "read" });
+  expect(settings.create_page).toMatchObject({ enabled: true, approval: "auto", risk: "write" });
+  expect(settings.delete_page).toMatchObject({ enabled: true, approval: "ask", risk: "destructive" });
+  expect(settings.export_pdf).toMatchObject({ enabled: false, skipped: true });
+
+  const bulk = applyBulk(
+    [
+      { name: "search_pages", description: "", risk: "read", enabled: false, approval: "auto", skipped: false },
+      { name: "create_page", description: "", risk: "write", enabled: false, approval: "ask", skipped: false },
+      { name: "export_pdf", description: "", risk: "write", enabled: false, approval: "ask", skipped: true },
+    ],
+    "read-on",
+  );
+  expect(bulk.find((tool) => tool.name === "search_pages")?.enabled).toBe(true);
+  expect(bulk.find((tool) => tool.name === "create_page")?.enabled).toBe(false);
+  expect(bulk.find((tool) => tool.name === "export_pdf")?.skipped).toBe(true);
+  const allOn = applyBulk(bulk, "all-on");
+  expect(allOn.find((tool) => tool.name === "create_page")?.enabled).toBe(true);
+  expect(allOn.find((tool) => tool.name === "export_pdf")?.enabled).toBe(false);
+});
+
+it("keeps muted text and status colors at 4.5:1 in both themes", () => {
+  const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
+  const light = variables(css, ":root {");
+  const dark = variables(css, ':root[data-theme="dark"]');
+  for (const theme of [light, dark]) {
+    const surface = parseColor(theme.surface);
+    const windowColor = parseColor(theme.window);
+    const hover = parseColor(theme.hover);
+    const ink = parseColor(theme.ink);
+    expect(contrast(paint(theme.muted, surface), surface)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(paint(theme.muted, windowColor), windowColor)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(paint(theme.faint, windowColor), windowColor)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(paint(theme["ink-2"], surface), surface)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(paint(theme["ink-2"], hover), hover)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(ink, windowColor)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(windowColor, ink)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(paint(theme.link, surface), surface)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(paint(theme.danger, surface), surface)).toBeGreaterThanOrEqual(4.5);
+    expect(
+      contrast(paint(theme["on-danger"], parseColor(theme["danger-fill"])), parseColor(theme["danger-fill"])),
+    ).toBeGreaterThanOrEqual(4.5);
+    for (const [name, amount] of [
+      ["success", 0.14],
+      ["warn", 0.14],
+      ["danger", 0.12],
+      ["warn", 0.12],
+    ] as const) {
+      const tone = paint(theme[name], surface);
+      const fill = blend(tone, surface, amount);
+      expect(contrast(tone, fill), `${name} on ${amount} tint`).toBeGreaterThanOrEqual(4.5);
+    }
+  }
+});
+
+it("detects search, invalid input, oauth, api keys, and unreachable servers", async () => {
+  const search = await detectConnector(jsonRequest({ input: "notion" }));
+  const searchBody = (await search.json()) as { matches: Array<{ id: string }> };
+  expect(search.status).toBe(200);
+  expect(searchBody.matches.some((match) => match.id === "notion")).toBe(true);
+
+  const invalid = await detectConnector(jsonRequest({ input: "https://" }));
+  expect(invalid.status).toBe(400);
+  expect(await invalid.text()).toContain("valid URL");
+
+  const down = await detectConnector(jsonRequest({ input: "http://127.0.0.1:1/mcp" }));
+  expect(down.status).toBe(400);
+  expect(await down.text()).toContain("Couldn't reach");
+
+  const oauth = await startMockMcpServer({ auth: "oauth" });
+  const keyed = await startMockMcpServer({ auth: "apikey", token: "connector-key" });
+  try {
+    const oauthResponse = await detectConnector(jsonRequest({ input: oauth.url }));
+    expect(oauthResponse.status).toBe(200);
+    expect(await oauthResponse.json()).toMatchObject({ auth: "oauth", tools: [] });
+
+    const missing = await detectConnector(jsonRequest({ input: keyed.url }));
+    expect(missing.status).toBe(200);
+    expect(await missing.json()).toMatchObject({ auth: "apikey" });
+
+    const rejected = await detectConnector(jsonRequest({ input: keyed.url, apiKey: "wrong-key" }));
+    expect(rejected.status).toBe(400);
+    expect(await rejected.text()).toContain("That key was rejected.");
+
+    const accepted = await detectConnector(
+      jsonRequest({ input: keyed.url, apiKey: "connector-key" }),
+    );
+    const acceptedBody = (await accepted.json()) as { auth: string; tools: Array<{ name: string; risk: string }> };
+    expect(accepted.status).toBe(200);
+    expect(acceptedBody.auth).toBe("apikey");
+    expect(acceptedBody.tools.map((tool) => tool.name).sort()).toEqual(["echo", "env_probe"]);
+    expect(acceptedBody.tools.every((tool) => tool.risk === "write")).toBe(true);
+    expect(JSON.stringify(acceptedBody)).not.toContain("connector-key");
+  } finally {
+    await oauth.close();
+    await keyed.close();
+  }
+});
+
+it("saves catalog defaults and keeps the api key off the client", async () => {
+  const store = await ConversationStore.open();
+  setAppContext({ store, provider: new MockProvider({ delayMs: 0 }), tools: createDefaultTools({}) });
+  const server = await startMockMcpServer({ auth: "apikey", token: "connector-key" });
+  try {
+    const catalog = await createConnector(
+      jsonRequest({ catalogId: "notion", accountLabel: "workspace" }),
+    );
+    const catalogText = await catalog.text();
+    expect(catalog.status, catalogText).toBe(201);
+    const created = JSON.parse(catalogText) as {
+      connector: {
+        id: string;
+        secretCipher?: string;
+        tools: Record<string, { enabled: boolean; approval: string }>;
+      };
+    };
+    expect(created.connector.secretCipher).toBeUndefined();
+    expect(created.connector.tools.search_pages).toMatchObject({ enabled: true, approval: "auto" });
+    expect(created.connector.tools.create_page).toMatchObject({ enabled: false, approval: "ask" });
+    expect(created.connector.tools.delete_page).toMatchObject({ enabled: false, approval: "ask" });
+    const stored = (await store.listConnectors()).find((item) => item.id === created.connector.id);
+    expect(stored?.secretCipher).toBeTruthy();
+    expect(await decryptSecret(stored?.secretCipher ?? "")).not.toBe("");
+
+    const keyed = await createConnector(
+      jsonRequest({
+        name: "Acme",
+        transport: "http",
+        target: server.url,
+        apiKey: "connector-key",
+        tools: { echo: { enabled: true, approval: "ask" }, env_probe: { enabled: false, approval: "ask" } },
+      }),
+    );
+    const keyedText = await keyed.text();
+    expect(keyed.status, keyedText).toBe(201);
+    expect(keyedText).not.toContain("connector-key");
+    expect(keyedText).not.toContain("secretCipher");
+    const listed = await (await getConnectors()).text();
+    expect(listed).not.toContain("connector-key");
+    expect(listed).not.toContain("secretCipher");
+
+    const registry = new ToolRegistry();
+    for (const tool of createDefaultTools({})) registry.register(tool);
+    await refreshMcpTools({
+      registry,
+      connectors: await store.listConnectors(),
+      env: process.env,
+    });
+    const echo = registry.get("acme_echo");
+    expect(echo?.approval).toBe("always");
+    expect(echo?.skipHeuristicApproval).toBe(false);
+    expect(echo ? requiresApproval(echo, { message: "ping" }) : false).toBe(true);
+    expect(registry.get("acme_env_probe")).toBeUndefined();
+    const notionSearch = registry.get("notion_search_pages");
+    expect(notionSearch?.approval).toBe("never");
+    expect(notionSearch?.skipHeuristicApproval).toBe(true);
+    expect(notionSearch ? requiresApproval(notionSearch, {}) : true).toBe(false);
+    expect(registry.get("notion_create_page")).toBeUndefined();
+
+    const id = JSON.parse(keyedText).connector.id as string;
+    await store.updateConnectorTools(id, {
+      echo: {
+        enabled: true,
+        approval: "ask",
+        risk: "write",
+        description: "Echo a message",
+        skipped: false,
+      },
+    });
+    let appeared: { enabled: boolean; approval: string; risk?: string } | undefined;
+    await refreshMcpTools({
+      registry: new ToolRegistry(),
+      connectors: await store.listConnectors(),
+      env: process.env,
+      onTools: (_connectorId, tools) => {
+        appeared = tools.env_probe;
+      },
+    });
+    expect(appeared).toMatchObject({ enabled: false, approval: "ask", risk: "write" });
+    const disabled = await patchTools(jsonRequest({ tools: { echo: { enabled: false, approval: "ask" } } }), {
+      params: Promise.resolve({ id }),
+    });
+    expect(disabled.status).toBe(200);
+    const next = new ToolRegistry();
+    for (const tool of createDefaultTools({})) next.register(tool);
+    await refreshMcpTools({ registry: next, connectors: await store.listConnectors(), env: process.env });
+    expect(next.get("acme_echo")).toBeUndefined();
+
+    const forced = await patchTools(
+      jsonRequest({ tools: { delete_page: { enabled: true, approval: "auto" } } }),
+      { params: Promise.resolve({ id: created.connector.id }) },
+    );
+    const forcedBody = (await forced.json()) as {
+      connector: { tools: Record<string, { approval: string }> };
+    };
+    expect(forcedBody.connector.tools.delete_page.approval).toBe("ask");
+
+    await noteConnectorOutcome(store, id, { isError: true, content: "401 unauthorized" });
+    expect((await store.listConnectors()).find((item) => item.id === id)?.status).toBe("reconnect");
+    const paused = new ToolRegistry();
+    await refreshMcpTools({
+      registry: paused,
+      connectors: await store.listConnectors(),
+      env: process.env,
+    });
+    expect(paused.get("acme_echo")).toBeUndefined();
+
+    const reconnected = await patchConnector(
+      jsonRequest({ reconnected: true, apiKey: "connector-key" }),
+      { params: Promise.resolve({ id }) },
+    );
+    const reconnectedText = await reconnected.text();
+    expect(reconnected.status, reconnectedText).toBe(200);
+    expect(reconnectedText).not.toContain("connector-key");
+    const again = (await store.listConnectors()).find((item) => item.id === id);
+    expect(again?.status).toBe("connected");
+    expect(await decryptSecret(again?.secretCipher ?? "")).toBe("connector-key");
+  } finally {
+    await server.close();
+  }
+});
+
+function jsonRequest(body: unknown): Request {
+  return new Request("http://localhost/api/connectors", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+type RGB = { r: number; g: number; b: number };
+
+function variables(css: string, header: string): Record<string, string> {
+  const start = css.indexOf(header);
+  if (start < 0) throw new Error(`Missing ${header}`);
+  const open = css.indexOf("{", start);
+  const close = css.indexOf("}", open);
+  const vars: Record<string, string> = {};
+  for (const match of css.slice(open + 1, close).matchAll(/--([a-z0-9-]+):\s*([^;]+);/g)) {
+    vars[match[1] ?? ""] = match[2]?.trim() ?? "";
+  }
+  return vars;
+}
+
+function paint(value: string, background: RGB): RGB {
+  return parseColor(value, background);
+}
+
+function parseColor(value: string, background?: RGB): RGB {
+  const text = value.trim();
+  if (text.startsWith("#")) {
+    const raw = text.slice(1);
+    const full = raw.length === 3 ? raw.split("").map((part) => part + part).join("") : raw;
+    return {
+      r: Number.parseInt(full.slice(0, 2), 16),
+      g: Number.parseInt(full.slice(2, 4), 16),
+      b: Number.parseInt(full.slice(4, 6), 16),
+    };
+  }
+  const match = text.match(/rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)/);
+  if (!match) throw new Error(`Unparsed color ${value}`);
+  const alpha = match[4] == null ? 1 : Number(match[4]);
+  const fg = { r: Number(match[1]), g: Number(match[2]), b: Number(match[3]) };
+  const bg = background ?? { r: 0, g: 0, b: 0 };
+  return {
+    r: fg.r * alpha + bg.r * (1 - alpha),
+    g: fg.g * alpha + bg.g * (1 - alpha),
+    b: fg.b * alpha + bg.b * (1 - alpha),
+  };
+}
+
+function blend(foreground: RGB, background: RGB, amount: number): RGB {
+  return {
+    r: foreground.r * amount + background.r * (1 - amount),
+    g: foreground.g * amount + background.g * (1 - amount),
+    b: foreground.b * amount + background.b * (1 - amount),
+  };
+}
+
+function contrast(foreground: RGB, background: RGB): number {
+  const lighter = Math.max(luminance(foreground), luminance(background));
+  const darker = Math.min(luminance(foreground), luminance(background));
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+function luminance(color: RGB): number {
+  const channel = (value: number) => {
+    const scaled = value / 255;
+    return scaled <= 0.04045 ? scaled / 12.92 : ((scaled + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b);
+}

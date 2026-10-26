@@ -459,6 +459,18 @@ export class ConversationStore {
     return mapConnector(row);
   }
 
+  async setConnectorSecret(id: string, secretCipher: string): Promise<ConnectorRecord | null> {
+    const result = await this.db.query<ConnectorRow>(
+      `UPDATE connectors
+       SET secret_cipher = $2, secret_ref = NULL, updated_at = NOW()
+       WHERE id = $1
+       RETURNING ${CONNECTOR_COLUMNS}`,
+      [id, secretCipher],
+    );
+    const row = result.rows[0];
+    return row ? mapConnector(row) : null;
+  }
+
   async setConnectorEnabled(id: string, enabled: boolean): Promise<ConnectorRecord | null> {
     const result = await this.db.query<ConnectorRow>(
       `UPDATE connectors

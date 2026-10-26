@@ -117,10 +117,10 @@ export function parseConnectorInput(
 export function parseConnectorPatch(
   body: unknown,
 ):
-  | { ok: true; enabled?: boolean; reconnected?: boolean }
+  | { ok: true; enabled?: boolean; reconnected?: boolean; apiKey?: string }
   | { ok: false; error: string } {
   if (!body || typeof body !== "object") return { ok: false, error: "Expected a JSON object." };
-  const record = body as { enabled?: unknown; reconnected?: unknown };
+  const record = body as { enabled?: unknown; reconnected?: unknown; apiKey?: unknown };
   const hasEnabled = "enabled" in record;
   const hasReconnected = record.reconnected === true;
   if (!hasEnabled && !hasReconnected) {
@@ -129,10 +129,17 @@ export function parseConnectorPatch(
   if (hasEnabled && typeof record.enabled !== "boolean") {
     return { ok: false, error: "enabled must be true or false." };
   }
+  if ("apiKey" in record && record.apiKey != null && typeof record.apiKey !== "string") {
+    return { ok: false, error: "API key is invalid." };
+  }
+  if (typeof record.apiKey === "string" && record.apiKey.length > 2_000) {
+    return { ok: false, error: "API key is too long." };
+  }
   return {
     ok: true,
     ...(hasEnabled ? { enabled: record.enabled as boolean } : {}),
     ...(hasReconnected ? { reconnected: true } : {}),
+    ...(typeof record.apiKey === "string" && record.apiKey ? { apiKey: record.apiKey } : {}),
   };
 }
 

@@ -47,11 +47,15 @@ export function ToolActivityCards({
   decidingId,
   onDecide,
   onSelect,
+  reconnectFor,
+  onReconnect,
 }: {
   activities: ToolActivity[];
   decidingId?: string | null;
   onDecide?: (id: string, decision: "approve" | "deny") => void;
   onSelect?: (id: string) => void;
+  reconnectFor?: (activity: ToolActivity) => string | null;
+  onReconnect?: (activity: ToolActivity) => void;
 }) {
   if (activities.length === 0) return null;
 
@@ -64,6 +68,8 @@ export function ToolActivityCards({
           decidingId={decidingId}
           onDecide={onDecide}
           onSelect={onSelect}
+          reconnectLabel={reconnectFor?.(activity) ?? null}
+          onReconnect={onReconnect ? () => onReconnect(activity) : undefined}
         />
       ))}
     </div>
@@ -75,11 +81,15 @@ function ActivityRow({
   decidingId,
   onDecide,
   onSelect,
+  reconnectLabel,
+  onReconnect,
 }: {
   activity: ToolActivity;
   decidingId?: string | null;
   onDecide?: (id: string, decision: "approve" | "deny") => void;
   onSelect?: (id: string) => void;
+  reconnectLabel?: string | null;
+  onReconnect?: () => void;
 }) {
   const [open, setOpen] = useState(activity.state === "running");
   const meta =
@@ -145,6 +155,11 @@ function ActivityRow({
         {meta ? <span className="tool-line-meta">· {meta}</span> : null}
         <span className="sr-only">{statusLabel(activity.state)}</span>
       </button>
+      {reconnectLabel && onReconnect ? (
+        <button type="button" className="text-link tool-reconnect" onClick={onReconnect}>
+          Reconnect {reconnectLabel}
+        </button>
+      ) : null}
       {open ? (
         <div className="tool-expanded">
           {activity.arguments ? (

@@ -1,5 +1,6 @@
 import { parseConnectorPatch, toPublicConnector } from "../../../../src/connectors";
 import { getAppContext } from "../../../../src/context";
+import { encryptSecret } from "../../../../src/mcp/vault";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,8 +21,12 @@ export async function PATCH(request: Request, context: RouteContext): Promise<Re
   let connector = (await store.listConnectors()).find((item) => item.id === id) ?? null;
   if (!connector) return Response.json({ error: "Connector not found" }, { status: 404 });
   if (parsed.reconnected) {
-    connector = await store.setConnectorStatus(id, "connected", null);
+    connector = await store.setConnectorStatus(id, "connected", null, []);
     if (!connector) return Response.json({ error: "Connector not found" }, { status: 404 });
+    if (parsed.apiKey) {
+      connector = await store.setConnectorSecret(id, await encryptSecret(parsed.apiKey));
+      if (!connector) return Response.json({ error: "Connector not found" }, { status: 404 });
+    }
   }
   if (typeof parsed.enabled === "boolean") {
     connector = await store.setConnectorEnabled(id, parsed.enabled);

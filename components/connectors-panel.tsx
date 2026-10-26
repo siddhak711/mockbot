@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import type { ConnectorRecord, ConnectorToolSetting } from "../src/connectors";
 import { connectorSlug } from "../src/connectors";
 import {
@@ -55,6 +56,8 @@ export function ConnectorsPanel({
   onChanged,
   onInsertPrompt,
   onStop,
+  pendingReconnectId,
+  onReconnectStarted,
 }: {
   open: boolean;
   intent: "list" | "add";
@@ -66,11 +69,16 @@ export function ConnectorsPanel({
   onChanged: () => Promise<void>;
   onInsertPrompt: (text: string) => void;
   onStop: () => void;
+  pendingReconnectId?: string | null;
+  onReconnectStarted?: () => void;
 }) {
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const oauthExisting = useRef<string | null>(null);
+  const popupWatch = useRef<ReturnType<typeof window.setInterval> | null>(null);
+  const returnFocus = useRef<HTMLElement | null>(null);
   const [search, setSearch] = useState(initialQuery);
   const [category, setCategory] = useState<CatalogCategory>("popular");
   const [hint, setHint] = useState("");
@@ -109,6 +117,29 @@ export function ConnectorsPanel({
     }
     setMode(intent === "add" || initialQuery ? "add" : "list");
   }, [open, intent, initialQuery, preview]);
+
+  useEffect(() => {
+    if (!open) return;
+    const active = document.activeElement;
+    if (active instanceof HTMLElement) returnFocus.current = active;
+    return () => {
+      const node = returnFocus.current;
+      if (node && document.contains(node)) node.focus();
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || preview || !pendingReconnectId) return;
+    const connector = connectors.find((item) => item.id === pendingReconnectId);
+    onReconnectStarted?.();
+    if (connector) void reconnect(connector);
+  }, [open, pendingReconnectId, preview]);
+
+  useEffect(() => {
+    return () => {
+      if (popupWatch.current != null) window.clearInterval(popupWatch.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (!open || preview || mode !== "add") return;
@@ -270,6 +301,25 @@ export function ConnectorsPanel({
       };
       setDraft(next);
       setSteps(doneSteps(body.transportLabel || "Streamable HTTP", body.auth ?? "none", body.elapsedMs ?? 0));
+      if (oauthExisting.current) {
+        const id = oauthExisting.current;
+        oauthExisting.current = null;
+        const saved = await fetch(`/api/connectors/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reconnected: true, ...(apiKey ? { apiKey } : {}) }),
+        });
+        if (!saved.ok) {
+          const failed = (await saved.json().catch(() => null)) as { error?: string } | null;
+          setAuthError(failed?.error ?? "Could not reconnect.");
+          setMode("auth-failed");
+          return;
+        }
+        await onChanged();
+        setToast(`${next.name} reconnected`);
+        setMode("list");
+        return;
+      }
       if (body.auth === "oauth") setMode("oauth");
       else if (body.auth === "apikey" && !apiKey) setMode("apikey");
       else if (transport === "stdio" && body.auth === "none") setMode("none");
@@ -363,30 +413,40 @@ export function ConnectorsPanel({
     setMode("done");
   }
 
-  function beginOAuth(entry: CatalogEntry | null, name: string) {
-    setDraft(
-      entry
-        ? {
-            name: entry.name,
-            transport: "http",
-            target: `https://catalog.mockbot.local/${entry.id}`,
-            auth: "oauth",
-            apiKey: "",
-            tools: entry.tools.map((tool) => ({
-              name: tool.name,
-              description: tool.description,
-              risk: tool.risk,
-              enabled: tool.risk === "read",
-              approval: tool.risk === "read" ? "auto" : "ask",
-              skipped: false,
-            })),
-            catalogId: entry.id,
-          }
-        : draft,
-    );
+  function showOauth(entry: CatalogEntry | null, name: string, existingId?: string) {
+    oauthExisting.current = existingId ?? null;
+    setDraft((current) => {
+      if (entry) {
+        return {
+          name: entry.name,
+          transport: "http",
+          target: `https://catalog.mockbot.local/${entry.id}`,
+          auth: "oauth",
+          apiKey: "",
+          tools: entry.tools.map((tool) => ({
+            name: tool.name,
+            description: tool.description,
+            risk: tool.risk,
+            enabled: tool.risk === "read",
+            approval: tool.risk === "read" ? "auto" : "ask",
+            skipped: false,
+          })),
+          catalogId: entry.id,
+        };
+      }
+      if (current) return { ...current, name, auth: "oauth" };
+      return { name, transport: "http", target: "", auth: "oauth", apiKey: "", tools: [] };
+    });
     setAuthError(null);
+    setWaiting(false);
     setMode("oauth");
+  }
+
+  function continueOauth() {
     if (preview) return;
+    const name = draft?.name ?? "Connector";
+    const entry = draft?.catalogId ? (catalogById(draft.catalogId) ?? null) : null;
+    const existingId = oauthExisting.current;
     const popup = window.open(
       `/connectors/oauth?name=${encodeURIComponent(name)}`,
       "mockbot-oauth",
@@ -403,11 +463,16 @@ export function ConnectorsPanel({
       if (settled) return;
       settled = true;
       window.removeEventListener("message", onMessage);
-      window.clearInterval(watch);
+      if (popupWatch.current != null) window.clearInterval(popupWatch.current);
+      popupWatch.current = null;
       setWaiting(false);
       if (!ok) {
         setAuthError(`${name} returned "access_denied". You may have closed the window or declined access.`);
         setMode("auth-failed");
+        return;
+      }
+      if (existingId) {
+        void markReconnected(existingId, name);
         return;
       }
       if (entry) void finishCatalog(entry, account || "workspace");
@@ -420,9 +485,26 @@ export function ConnectorsPanel({
       finish(Boolean(data.ok), data.account);
     };
     window.addEventListener("message", onMessage);
-    const watch = window.setInterval(() => {
+    if (popupWatch.current != null) window.clearInterval(popupWatch.current);
+    popupWatch.current = window.setInterval(() => {
       if (popup.closed) finish(false);
     }, 400);
+  }
+
+  async function markReconnected(id: string, name: string) {
+    const response = await fetch(`/api/connectors/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reconnected: true }),
+    });
+    if (!response.ok) {
+      setAuthError("Could not reconnect.");
+      setMode("auth-failed");
+      return;
+    }
+    await onChanged();
+    setToast(`${name} reconnected`);
+    setMode("list");
   }
 
   async function finishCatalog(entry: CatalogEntry, account: string) {
@@ -459,8 +541,22 @@ export function ConnectorsPanel({
   async function reconnect(connector: ConnectorRecord) {
     setManageId(connector.id);
     if (connector.catalogId || connector.authType === "oauth") {
-      const entry = connector.catalogId ? catalogById(connector.catalogId) ?? null : null;
-      beginOAuth(entry, connector.name);
+      const entry = connector.catalogId ? (catalogById(connector.catalogId) ?? null) : null;
+      showOauth(entry, connector.name, connector.id);
+      return;
+    }
+    if (connector.authType === "apikey") {
+      oauthExisting.current = connector.id;
+      setDraft({
+        name: connector.name,
+        transport: connector.transport,
+        target: connector.target,
+        auth: "apikey",
+        apiKey: "",
+        tools: [],
+      });
+      setKeyError(null);
+      setMode("apikey");
       return;
     }
     const response = await fetch(`/api/connectors/${connector.id}`, {
@@ -475,7 +571,7 @@ export function ConnectorsPanel({
     }
   }
 
-  function onGridKey(event: React.KeyboardEvent, count: number) {
+  function onGridKey(event: ReactKeyboardEvent, count: number) {
     const columns = window.innerWidth <= 760 ? 1 : 3;
     if (event.key === "ArrowRight") setTileIndex((index) => Math.min(count - 1, index + 1));
     else if (event.key === "ArrowLeft") setTileIndex((index) => Math.max(0, index - 1));
@@ -586,8 +682,9 @@ export function ConnectorsPanel({
           {(visibleMode === "add" || visibleMode === "oauth") && (preview === "loading" || (!ready && !preview)) ? (
             <SkeletonGrid />
           ) : null}
-          {(visibleMode === "add" || visibleMode === "oauth") && ready || preview === "catalog" || preview === "oauth" ? (
-            visibleMode === "add" || visibleMode === "oauth" ? (
+          {(visibleMode === "add" || visibleMode === "oauth") &&
+          preview !== "loading" &&
+          (ready || preview === "catalog" || preview === "oauth") ? (
               <>
                 <div className="connector-pills" role="tablist" aria-label="Categories">
                   {CATALOG_CATEGORIES.map((item) => (
@@ -626,7 +723,7 @@ export function ConnectorsPanel({
                             Manage
                           </button>
                         ) : (
-                          <button type="button" className="btn secondary" onClick={() => beginOAuth(entry, entry.name)}>
+                          <button type="button" className="btn secondary" onClick={() => showOauth(entry, entry.name)}>
                             Connect
                           </button>
                         )}
@@ -655,7 +752,6 @@ export function ConnectorsPanel({
                   </article>
                 </div>
               </>
-            ) : null
           ) : null}
 
           {visibleMode === "no-results" ? (
@@ -764,8 +860,8 @@ export function ConnectorsPanel({
                   type="button"
                   className="btn primary"
                   onClick={() => {
-                    const entry = draft?.catalogId ? catalogById(draft.catalogId) ?? null : null;
-                    beginOAuth(entry, draft?.name ?? "Connector");
+                    const entry = draft?.catalogId ? (catalogById(draft.catalogId) ?? null) : null;
+                    showOauth(entry, draft?.name ?? "Connector", oauthExisting.current ?? undefined);
                   }}
                 >
                   Try again
@@ -819,7 +915,7 @@ export function ConnectorsPanel({
             </>
           ) : null}
 
-          {visibleMode === "manage" && active ? (
+          {(visibleMode === "manage" || visibleMode === "disconnect") && active ? (
             <>
               <ConnectorCard connector={active} />
               <ToolEditor
@@ -868,7 +964,7 @@ export function ConnectorsPanel({
                 setWaiting(false);
                 setMode("add");
               }}
-              onContinue={() => beginOAuth(draft?.catalogId ? catalogById(draft.catalogId) ?? null : null, draft?.name ?? "Connector")}
+              onContinue={() => continueOauth()}
             />
           </div>
         ) : null}
@@ -1134,7 +1230,7 @@ function AuthBlock({
   title: string;
   detail?: string;
   error: string | null;
-  extra: React.ReactNode;
+  extra: ReactNode;
   primary: string;
   onPrimary: () => void;
   onBack: () => void;
@@ -1240,6 +1336,8 @@ function previewMode(preview: string): string {
   if (preview === "catalog" || preview === "loading") return "add";
   if (preview === "oauth" || preview === "oauth-wait") return "oauth";
   if (preview === "connected") return "done";
+  if (preview === "empty" || preview === "error") return "list";
+  if (preview === "partial") return "review";
   return preview;
 }
 
