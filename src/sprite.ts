@@ -72,6 +72,41 @@ export function shouldStartDoneHold(input: {
   return input.wasStreaming && !input.streaming && !input.turnError && !input.toolFailed;
 }
 
+export type SpriteAlertKind = "turn" | "workspace";
+
+/** A banner string, and whether it belongs to Mochi or only to the page. */
+export type SpriteAlert = {
+  message: string;
+  kind: SpriteAlertKind;
+  /** Conversation open when the alert was raised. Null is an unsaved draft. */
+  ownerId: string | null;
+};
+
+/**
+ * Mochi's error face is only a failed chat turn.
+ * Rename, delete, and approval alerts stay on the page, and a turn error
+ * does not follow the user into another conversation.
+ */
+export function spriteTurnErrorForView(
+  alert: SpriteAlert | null,
+  conversationId: string | null,
+): string | null {
+  if (!alert || alert.kind !== "turn") return null;
+  if (alert.ownerId !== conversationId) return null;
+  return alert.message;
+}
+
+export type DoneHoldKey = {
+  conversationId: string | null;
+  turnId: string | null;
+};
+
+/** The two-second done pose belongs to one conversation and one assistant turn. */
+export function doneHoldStillApplies(hold: DoneHoldKey | null, view: DoneHoldKey): boolean {
+  if (!hold) return false;
+  return hold.conversationId === view.conversationId && hold.turnId === view.turnId;
+}
+
 /**
  * Map a run onto Mochi's five states.
  *

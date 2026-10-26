@@ -1,14 +1,25 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+} from "react";
 import type { ReactNode } from "react";
 import {
+  initialSystemScheme,
   resolveTheme,
   systemScheme,
   toggleTheme,
   type ColorScheme,
   type ThemePreference,
 } from "../src/theme";
+
+const useIsoLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
 type ThemeValue = {
   preference: ThemePreference;
@@ -24,16 +35,23 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const scheme = resolveTheme(preference, system);
 
+  useIsoLayoutEffect(() => {
+    const next = initialSystemScheme({
+      dataTheme: document.documentElement.dataset.theme,
+      prefersDark: window.matchMedia("(prefers-color-scheme: dark)").matches,
+    });
+    setSystem(next);
+    setReady(true);
+  }, []);
+
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const apply = () => setSystem(systemScheme(media.matches));
-    apply();
-    setReady(true);
     media.addEventListener("change", apply);
     return () => media.removeEventListener("change", apply);
   }, []);
 
-  useEffect(() => {
+  useIsoLayoutEffect(() => {
     if (!ready && preference === "system") return;
     document.documentElement.dataset.theme = scheme;
     document.documentElement.style.colorScheme = scheme;

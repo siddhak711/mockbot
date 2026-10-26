@@ -1,20 +1,33 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
+import {
+  activityDisclosure,
+  activityDisclosureOnRunning,
+  activityDisclosureToggle,
+} from "../src/tools/activity-open";
 import type { ToolActivity } from "../src/tools/display";
 import type { ToolTrace } from "../src/types";
+
+function useActivityDisclosure(running: boolean) {
+  const [disclosure, setDisclosure] = useState(() => activityDisclosure(running));
+  const [wasRunning, setWasRunning] = useState(running);
+  if (running !== wasRunning) {
+    setWasRunning(running);
+    setDisclosure((current) => activityDisclosureOnRunning(current, running));
+  }
+  const toggle = useCallback(() => {
+    setDisclosure((current) => activityDisclosureToggle(current));
+  }, []);
+  return { open: disclosure.open, toggle };
+}
 
 export type { ToolActivity };
 
 export function ToolCallCard({ tool, pending }: { tool: ToolTrace; pending: boolean }) {
   const title = tool.name || "Tool call";
-  const [open, setOpen] = useState(pending);
+  const { open, toggle } = useActivityDisclosure(pending);
   return (
     <div data-tool-name={title} data-state={pending ? "running" : "done"}>
-      <button
-        type="button"
-        className="tool-line"
-        aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
-      >
+      <button type="button" className="tool-line" aria-expanded={open} onClick={toggle}>
         <span className="tool-mark" aria-hidden="true">
           ◦
         </span>
@@ -81,7 +94,7 @@ function ActivityRow({
   onDecide?: (id: string, decision: "approve" | "deny") => void;
   onSelect?: (id: string) => void;
 }) {
-  const [open, setOpen] = useState(activity.state === "running");
+  const { open, toggle } = useActivityDisclosure(activity.state === "running");
   const meta =
     activity.state === "approval"
       ? activity.summary
@@ -134,7 +147,7 @@ function ActivityRow({
         className="tool-line"
         aria-expanded={open}
         onClick={() => {
-          setOpen((value) => !value);
+          toggle();
           onSelect?.(activity.id);
         }}
       >
