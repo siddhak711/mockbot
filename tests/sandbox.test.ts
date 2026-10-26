@@ -1,3 +1,4 @@
+import { Image } from "@daytonaio/sdk";
 import { mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
@@ -22,6 +23,13 @@ import {
   type RemoteSandbox,
   type RemoteSandboxFleet,
 } from "../src/sandbox/daytona";
+import {
+  DAYTONA_IMAGE_BUILD_TIMEOUT_SEC,
+  SANDBOX_APT_PACKAGES,
+  SANDBOX_BASE_IMAGE,
+  daytonaCreateOptions,
+  sandboxToolCheckCommand,
+} from "../src/sandbox/toolchain";
 import { readSse } from "./helpers";
 
 describe("sandbox", { concurrent: false }, () => {
@@ -215,12 +223,33 @@ describe("sandbox", { concurrent: false }, () => {
         DAYTONA_TARGET: "us",
       }),
     ).toEqual({ apiKey: secret, apiUrl: "https://example.test/api", target: "us" });
-    expect(daytonaCreateParams("agent")).toEqual({
-      language: "python",
-      labels: { app: "mockbot", agentId: "agent" },
-    });
-    expect(daytonaCreateParams("agent")).not.toHaveProperty("envVars");
-    expect(daytonaCreateParams("agent")).not.toHaveProperty("secrets");
+    const params = daytonaCreateParams("agent");
+    expect(params.language).toBe("python");
+    expect(params.labels).toEqual({ app: "mockbot", agentId: "agent" });
+    expect(params).not.toHaveProperty("envVars");
+    expect(params).not.toHaveProperty("secrets");
+    expect(params.image).toBeInstanceOf(Image);
+    const dockerfile = params.image.dockerfile;
+    expect(dockerfile.startsWith(`FROM ${SANDBOX_BASE_IMAGE}\n`)).toBe(true);
+    expect(dockerfile).toContain("apt-get install -y --no-install-recommends");
+    for (const pkg of SANDBOX_APT_PACKAGES) expect(dockerfile).toContain(pkg);
+    const check = sandboxToolCheckCommand();
+    expect(dockerfile).toContain(check);
+    expect(dockerfile.indexOf("apt-get install")).toBeLessThan(
+      dockerfile.indexOf("grep --version"),
+    );
+    expect(check).toContain("command -v ls");
+    expect(check).toContain("command -v cat");
+    expect(check).toContain("command -v wc");
+    expect(check).toContain("command -v head");
+    expect(check).toContain("command -v tail");
+    expect(check).toContain("command -v sed");
+    expect(check).toContain("node --version");
+    expect(check).toContain("npm --version");
+    expect(check).toContain("python3 --version");
+    expect(check).toContain("git --version");
+    expect(daytonaCreateOptions()).toEqual({ timeout: DAYTONA_IMAGE_BUILD_TIMEOUT_SEC });
+    expect(DAYTONA_IMAGE_BUILD_TIMEOUT_SEC).toBe(0);
 
     const source = readFileSync(join("src", "sandbox", "daytona.ts"), "utf8");
     expect(source).not.toContain("child_process");
