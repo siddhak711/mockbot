@@ -19,3 +19,6 @@ export function systemScheme(prefersDark: boolean): ColorScheme {
 export function toggleTheme(resolved: ColorScheme): Exclude<ThemePreference, "system"> {
   return resolved === "dark" ? "light" : "dark";
 }
+
+/** Apply the system scheme before paint. An explicit toggle replaces it after load. */
+export const themeBootScript = `(function(){try{var dark=window.matchMedia("(prefers-color-scheme: dark)").matches;var theme=dark?"dark":"light";var root=document.documentElement;root.setAttribute("data-theme",theme);root.style.colorScheme=theme;}catch(e){}})();`;

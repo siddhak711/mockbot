@@ -104,7 +104,7 @@ export function ComputerPane({
               <h3>{selectedActivity.title}</h3>
               {selectedActivity.state === "approval" ? (
                 <p className="computer-note">
-                  {selectedActivity.summary} Approve or deny it in the transcript.
+                  {selectedActivity.summary} Skip or run it in the transcript.
                 </p>
               ) : null}
               {selectedActivity.arguments ? (

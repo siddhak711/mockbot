@@ -5,8 +5,11 @@ import type { ConnectorRecord, ConnectorTransport } from "../src/connectors";
 import { Composer } from "./composer";
 import { ConnectorsPanel } from "./connectors";
 import { ConversationList } from "./conversation-list";
+import { MenuIcon, PlusIcon } from "./icons";
+import { Mochi } from "./mochi";
 import { SidePane } from "./side-pane";
 import { Transcript } from "./transcript";
+import { useRunSprite } from "./use-run-sprite";
 import type { AgentDraft } from "./agent-panel";
 import { LEAD_AGENT_ID } from "../src/agents/ids";
 import type { Agent } from "../src/agents/types";
@@ -24,6 +27,7 @@ import {
   previewText,
   type ToolActivity,
 } from "../src/tools/display";
+import { spriteLabel } from "../src/sprite";
 import type { Conversation, LivePhase, Memory, Message, ToolCallStatus } from "../src/types";
 
 function isAbort(error: unknown): boolean {
@@ -697,6 +701,7 @@ export function Workspace() {
   const speakingId = active?.agentId ?? activeAgentId;
   const speaking = agents.find((agent) => agent.id === speakingId) ?? null;
   const awaitingApproval = activities.some((activity) => activity.state === "approval");
+  const sprite = useRunSprite({ streaming, livePhase, error, messages, activities });
 
   useEffect(() => {
     if (memoryAgentRef.current !== speakingId) {
@@ -713,6 +718,7 @@ export function Workspace() {
         activeId={activeId}
         agents={agents}
         activeAgentId={speakingId}
+        spriteState={sprite}
         providerLabel={providerLabel}
         busy={streaming}
         open={navOpen}
@@ -820,7 +826,10 @@ export function Workspace() {
             </form>
           ) : (
             <>
-              <h1>{active?.title ?? "New chat"}</h1>
+              <h1>
+                <Mochi state={sprite} size={24} label={`Mochi, ${spriteLabel(sprite)}`} />
+                <span className="thread-title">{active?.title ?? "New chat"}</span>
+              </h1>
               {speaking ? <span className="agent-chip">{speaking.name}</span> : null}
               <div className="header-actions">
                 {active ? (
@@ -867,6 +876,7 @@ export function Workspace() {
             messages={messages}
             streaming={streaming}
             livePhase={livePhase}
+            spriteState={sprite}
             activities={activities}
             decidingId={decidingId}
             onDecide={(id, decision) => void decide(id, decision)}
@@ -921,37 +931,5 @@ export function Workspace() {
         />
       ) : null}
     </div>
-  );
-}
-
-function MenuIcon() {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      aria-hidden="true"
-    >
-      <path d="M4 7h16M4 12h16M4 17h10" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function PlusIcon() {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      aria-hidden="true"
-    >
-      <path d="M12 5v14M5 12h14" strokeLinecap="round" />
-    </svg>
   );
 }

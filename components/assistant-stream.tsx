@@ -1,7 +1,9 @@
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import type { SpriteState } from "../src/sprite";
 import type { LivePhase, Message } from "../src/types";
+import { Mochi } from "./mochi";
 import { ToolCallCard } from "./tool-activity";
 
 const markdownPlugins = [remarkGfm];
@@ -10,10 +12,12 @@ export function AssistantStream({
   message,
   live,
   livePhase,
+  spriteState = "idle",
 }: {
   message: Message;
   live: boolean;
   livePhase: LivePhase | null;
+  spriteState?: SpriteState;
 }) {
   const trace = message.trace;
   const answer = message.content;
@@ -36,6 +40,7 @@ export function AssistantStream({
           onToggle={(event) => setReasoningOpen(event.currentTarget.open)}
         >
           <summary>
+            {live ? <Mochi state={spriteState} size={24} /> : null}
             <span className="reasoning-mark" aria-hidden="true" />
             Reasoning
           </summary>
