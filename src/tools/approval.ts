@@ -13,6 +13,7 @@ const NAME_VERBS = /(^|_)(send|post|delete|pay)(_|$)/i;
 const ACTION_VERBS = /^(send|post|delete|pay)$/i;
 
 export function requiresApproval(tool: ToolDefinition, args: Record<string, unknown>): boolean {
+  if (tool.skipHeuristicApproval) return false;
   if (tool.approval === "always") return true;
   if (NAME_VERBS.test(tool.name)) return true;
   const action = typeof args.action === "string" ? args.action : "";

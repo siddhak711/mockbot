@@ -1,6 +1,12 @@
 import { LEAD_AGENT_ID } from "./agents/ids";
 import { applyAgentSchema } from "./agents/migration";
-import type { ConnectorRecord, ConnectorTransport } from "./connectors";
+import type {
+  ConnectorAuth,
+  ConnectorRecord,
+  ConnectorStatus,
+  ConnectorToolSetting,
+  ConnectorTransport,
+} from "./connectors";
 import { migrate } from "./db/migrate";
 import { openDatabase, type ProcessEnv } from "./db/open";
 import { openPglite } from "./db/pglite";
@@ -61,7 +67,19 @@ type ConnectorRow = {
   enabled: boolean;
   created_at: Date | string;
   updated_at: Date | string;
+  catalog_id?: string | null;
+  auth_type?: ConnectorAuth | null;
+  account_label?: string | null;
+  status?: ConnectorStatus | null;
+  status_detail?: string | null;
+  tools?: unknown;
+  seen_tools?: unknown;
+  failures?: unknown;
+  secret_cipher?: string | null;
 };
+
+const CONNECTOR_COLUMNS = `id, name, transport, target, secret_ref, enabled, created_at, updated_at,
+  catalog_id, auth_type, account_label, status, status_detail, tools, seen_tools, failures, secret_cipher`;
 
 function asIso(value: Date | string): string {
   const date = value instanceof Date ? value : new Date(value);
@@ -89,6 +107,33 @@ function mapMessage(row: MessageRow): Message {
   };
 }
 
+function jsonRecord(value: unknown): Record<string, ConnectorToolSetting> {
+  const parsed = jsonValue(value);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+  return parsed as Record<string, ConnectorToolSetting>;
+}
+
+function jsonStringList(value: unknown): string[] {
+  const parsed = jsonValue(value);
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter((item): item is string => typeof item === "string");
+}
+
+function jsonNumberList(value: unknown): number[] {
+  const parsed = jsonValue(value);
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter((item): item is number => typeof item === "number" && Number.isFinite(item));
+}
+
+function jsonValue(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return null;
+  }
+}
+
 function mapConnector(row: ConnectorRow): ConnectorRecord {
   return {
     id: row.id,
@@ -99,6 +144,15 @@ function mapConnector(row: ConnectorRow): ConnectorRecord {
     enabled: row.enabled,
     createdAt: asIso(row.created_at),
     updatedAt: asIso(row.updated_at),
+    catalogId: row.catalog_id ?? null,
+    authType: row.auth_type ?? "none",
+    accountLabel: row.account_label ?? null,
+    status: row.status ?? "connected",
+    statusDetail: row.status_detail ?? null,
+    tools: jsonRecord(row.tools),
+    seenTools: jsonStringList(row.seen_tools),
+    failures: jsonNumberList(row.failures),
+    secretCipher: row.secret_cipher ?? null,
   };
 }
 
@@ -354,7 +408,7 @@ export class ConversationStore {
 
   async listConnectors(): Promise<ConnectorRecord[]> {
     const result = await this.db.query<ConnectorRow>(
-      `SELECT id, name, transport, target, secret_ref, enabled, created_at, updated_at
+      `SELECT ${CONNECTOR_COLUMNS}
        FROM connectors
        ORDER BY created_at ASC, id ASC`,
     );
@@ -367,13 +421,38 @@ export class ConversationStore {
     transport: ConnectorTransport;
     target: string;
     secretRef: string | null;
+    catalogId?: string | null;
+    authType?: ConnectorAuth;
+    accountLabel?: string | null;
+    status?: ConnectorStatus;
+    statusDetail?: string | null;
+    tools?: Record<string, ConnectorToolSetting>;
+    seenTools?: string[];
+    secretCipher?: string | null;
   }): Promise<ConnectorRecord> {
     const id = input.id ?? crypto.randomUUID();
     const result = await this.db.query<ConnectorRow>(
-      `INSERT INTO connectors (id, name, transport, target, secret_ref)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING id, name, transport, target, secret_ref, enabled, created_at, updated_at`,
-      [id, input.name, input.transport, input.target, input.secretRef],
+      `INSERT INTO connectors (
+         id, name, transport, target, secret_ref, catalog_id, auth_type, account_label,
+         status, status_detail, tools, seen_tools, secret_cipher
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13)
+       RETURNING ${CONNECTOR_COLUMNS}`,
+      [
+        id,
+        input.name,
+        input.transport,
+        input.target,
+        input.secretRef,
+        input.catalogId ?? null,
+        input.authType ?? "none",
+        input.accountLabel ?? null,
+        input.status ?? "connected",
+        input.statusDetail ?? null,
+        JSON.stringify(input.tools ?? {}),
+        JSON.stringify(input.seenTools ?? []),
+        input.secretCipher ?? null,
+      ],
     );
     const row = result.rows[0];
     if (!row) throw new Error("Failed to create connector");
@@ -385,8 +464,46 @@ export class ConversationStore {
       `UPDATE connectors
        SET enabled = $2, updated_at = NOW()
        WHERE id = $1
-       RETURNING id, name, transport, target, secret_ref, enabled, created_at, updated_at`,
+       RETURNING ${CONNECTOR_COLUMNS}`,
       [id, enabled],
+    );
+    const row = result.rows[0];
+    return row ? mapConnector(row) : null;
+  }
+
+  async setConnectorStatus(
+    id: string,
+    status: ConnectorStatus,
+    statusDetail: string | null,
+    failures?: number[],
+  ): Promise<ConnectorRecord | null> {
+    const result = await this.db.query<ConnectorRow>(
+      `UPDATE connectors
+       SET status = $2,
+           status_detail = $3,
+           failures = COALESCE($4::jsonb, failures),
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING ${CONNECTOR_COLUMNS}`,
+      [id, status, statusDetail, failures ? JSON.stringify(failures) : null],
+    );
+    const row = result.rows[0];
+    return row ? mapConnector(row) : null;
+  }
+
+  async updateConnectorTools(
+    id: string,
+    tools: Record<string, ConnectorToolSetting>,
+    seenTools?: string[],
+  ): Promise<ConnectorRecord | null> {
+    const result = await this.db.query<ConnectorRow>(
+      `UPDATE connectors
+       SET tools = $2::jsonb,
+           seen_tools = COALESCE($3::jsonb, seen_tools),
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING ${CONNECTOR_COLUMNS}`,
+      [id, JSON.stringify(tools), seenTools ? JSON.stringify(seenTools) : null],
     );
     const row = result.rows[0];
     return row ? mapConnector(row) : null;

@@ -1,4 +1,21 @@
+import type { ConnectorRecord } from "../connectors";
 import { redact } from "../tools/http";
+import { connectorDataDir, decryptSecret } from "./vault";
+
+export async function resolveConnectorSecret(
+  connector: Pick<ConnectorRecord, "secretRef" | "secretCipher">,
+  env: Record<string, string | undefined>,
+): Promise<{ ok: true; secret?: string } | { ok: false; error: string }> {
+  if (connector.secretCipher) {
+    try {
+      const secret = await decryptSecret(connector.secretCipher, connectorDataDir(env));
+      return { ok: true, secret };
+    } catch {
+      return { ok: false, error: "The stored connector secret could not be read." };
+    }
+  }
+  return resolveSecret(connector.secretRef, env);
+}
 
 export function resolveSecret(
   secretRef: string | null,
@@ -10,15 +27,14 @@ export function resolveSecret(
   return { ok: true, secret };
 }
 
-export function secretsFor(
-  connectors: readonly { secretRef: string | null }[],
+export async function secretsFor(
+  connectors: readonly Pick<ConnectorRecord, "secretRef" | "secretCipher">[],
   env: Record<string, string | undefined>,
-): string[] {
+): Promise<string[]> {
   const values: string[] = [];
   for (const connector of connectors) {
-    if (!connector.secretRef) continue;
-    const secret = env[connector.secretRef];
-    if (secret) values.push(secret);
+    const resolved = await resolveConnectorSecret(connector, env);
+    if (resolved.ok && resolved.secret) values.push(resolved.secret);
   }
   return values;
 }

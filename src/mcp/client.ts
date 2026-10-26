@@ -2,7 +2,7 @@ import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/cli
 import { getDefaultEnvironment, StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { splitCommand, type ConnectorRecord } from "../connectors";
 import { isAbortError } from "../tools/http";
-import { redactSecrets, resolveSecret } from "./secrets";
+import { redactSecrets, resolveConnectorSecret } from "./secrets";
 
 const LIST_TIMEOUT_MS = 10_000;
 const CALL_TIMEOUT_MS = 20_000;
@@ -11,6 +11,8 @@ export type McpToolInfo = {
   name: string;
   description: string;
   inputSchema: unknown;
+  readOnlyHint?: boolean;
+  destructiveHint?: boolean;
 };
 
 export class McpClientError extends Error {
@@ -37,7 +39,7 @@ async function withClient<T>(
   run: (client: Client) => Promise<T>,
 ): Promise<T> {
   if (signal?.aborted) throw abortError();
-  const resolved = resolveSecret(connector.secretRef, env);
+  const resolved = await resolveConnectorSecret(connector, env);
   if (!resolved.ok) throw new McpClientError(resolved.error);
   const client = new Client({ name: "mockbot", version: "0.1.0" });
   const transport = createTransport(connector, resolved.secret);
@@ -99,11 +101,15 @@ export async function listMcpTools(
   try {
     return await withClient(connector, env, secrets, signal, async (client) => {
       const listed = await client.listTools(undefined, { timeout: LIST_TIMEOUT_MS, signal });
-      return listed.tools.map((tool) => ({
-        name: tool.name,
-        description: typeof tool.description === "string" ? tool.description : "",
-        inputSchema: tool.inputSchema,
-      }));
+      return listed.tools.map((tool) => {
+        const hints = toolHints(tool as { annotations?: unknown });
+        return {
+          name: tool.name,
+          description: typeof tool.description === "string" ? tool.description : "",
+          inputSchema: tool.inputSchema,
+          ...hints,
+        };
+      });
     });
   } catch (error) {
     if (isAbortError(error)) throw error;
@@ -134,6 +140,19 @@ export async function callMcpTool(
     if (isAbortError(error)) throw error;
     return { content: failureMessage(error, secrets), isError: true };
   }
+}
+
+function toolHints(tool: { annotations?: unknown }): {
+  readOnlyHint?: boolean;
+  destructiveHint?: boolean;
+} {
+  const annotations = tool.annotations;
+  if (!annotations || typeof annotations !== "object") return {};
+  const record = annotations as { readOnlyHint?: unknown; destructiveHint?: unknown };
+  return {
+    ...(record.readOnlyHint === true ? { readOnlyHint: true } : {}),
+    ...(record.destructiveHint === true ? { destructiveHint: true } : {}),
+  };
 }
 
 function readContent(result: { content?: unknown; structuredContent?: unknown }): string {
