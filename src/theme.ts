@@ -13,6 +13,19 @@ export function systemScheme(prefersDark: boolean): ColorScheme {
 }
 
 /**
+ * Scheme to paint before a system-mode provider has subscribed to the OS.
+ * The boot script's data-theme wins, then the live media query.
+ */
+export function initialSystemScheme(input: {
+  dataTheme?: string | null;
+  prefersDark?: boolean | null;
+}): ColorScheme {
+  if (input.dataTheme === "dark" || input.dataTheme === "light") return input.dataTheme;
+  if (input.prefersDark != null) return systemScheme(input.prefersDark);
+  return "light";
+}
+
+/**
  * Leaves system-follow and pins the opposite of the scheme currently on screen.
  * A reload starts from "system" again; the spec does not say to store an override.
  */

@@ -28,7 +28,12 @@ import {
   previewText,
   type ToolActivity,
 } from "../src/tools/display";
-import { spriteLabel } from "../src/sprite";
+import {
+  alertAfterConversationSwitch,
+  alertMessageForView,
+  spriteLabel,
+  type SpriteAlert,
+} from "../src/sprite";
 import type { Conversation, LivePhase, Memory, Message, ToolCallStatus } from "../src/types";
 
 function isAbort(error: unknown): boolean {
@@ -58,7 +63,7 @@ export function Workspace({
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [livePhase, setLivePhase] = useState<LivePhase | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [alert, setAlert] = useState<SpriteAlert | null>(null);
   const [providerLabel, setProviderLabel] = useState("Mock provider");
   const [editing, setEditing] = useState(false);
   const [draftTitle, setDraftTitle] = useState("");
@@ -307,7 +312,7 @@ export function Workspace({
     setMessages([]);
     setActivities([]);
     setSelectedToolId(null);
-    setError(null);
+    setAlert(null);
     setEditing(false);
     const url = new URL(window.location.href);
     url.searchParams.delete("c");
@@ -343,7 +348,11 @@ export function Workspace({
     });
     if (!response.ok) {
       const body = (await response.json().catch(() => null)) as { error?: string } | null;
-      setError(body?.error ?? "Could not rename conversation");
+      setAlert({
+        message: body?.error ?? "Could not rename conversation",
+        kind: "workspace",
+        ownerId: activeIdRef.current,
+      });
       return;
     }
     const data = (await response.json()) as { conversation: Conversation };
@@ -354,7 +363,11 @@ export function Workspace({
   async function remove(id: string) {
     const response = await fetch(`/api/conversations/${id}`, { method: "DELETE" });
     if (!response.ok) {
-      setError("Could not delete conversation");
+      setAlert({
+        message: "Could not delete conversation",
+        kind: "workspace",
+        ownerId: activeIdRef.current,
+      });
       return;
     }
     setConversations((prev) => prev.filter((item) => item.id !== id));
@@ -393,7 +406,7 @@ export function Workspace({
     const trimmed = text.trim();
     const approvalPending = activitiesRef.current.some((item) => item.state === "approval");
     if (!trimmed || streaming || approvalPending) return;
-    setError(null);
+    setAlert(null);
     setEditing(false);
     const controller = new AbortController();
     abortRef.current = controller;
@@ -611,7 +624,11 @@ export function Workspace({
             releaseDecision(decidingRef, id);
             setDecidingId((current) => (current === id ? null : current));
           } else if (event.event === "error") {
-            setError(String(payload.message ?? "The model request failed"));
+            setAlert({
+              message: String(payload.message ?? "The model request failed"),
+              kind: "turn",
+              ownerId: conversationId,
+            });
           }
         }
       }
@@ -632,7 +649,11 @@ export function Workspace({
         if (!sawMeta) {
           setMessages((prev) => prev.filter((item) => item.id !== localUserId));
         }
-        setError(sendError instanceof Error ? sendError.message : "Something went wrong");
+        setAlert({
+          message: sendError instanceof Error ? sendError.message : "Something went wrong",
+          kind: "turn",
+          ownerId: conversationId,
+        });
       }
     } finally {
       setStreaming(false);
@@ -664,11 +685,14 @@ export function Workspace({
         }
         const activity = activitiesRef.current.find((item) => item.id === id);
         if (!activity || activity.state === "approval") {
-          setError(
-            response.status === 404
-              ? "That approval expired. Send the request again."
-              : "Could not save the decision",
-          );
+          setAlert({
+            message:
+              response.status === 404
+                ? "That approval expired. Send the request again."
+                : "Could not save the decision",
+            kind: "workspace",
+            ownerId: activeIdRef.current,
+          });
         }
         return false;
       });
@@ -700,7 +724,15 @@ export function Workspace({
   const speakingId = active?.agentId ?? activeAgentId;
   const speaking = agents.find((agent) => agent.id === speakingId) ?? null;
   const awaitingApproval = activities.some((activity) => activity.state === "approval");
-  const sprite = useRunSprite({ streaming, livePhase, error, messages, activities });
+  const error = alertMessageForView(alert, activeId);
+  const sprite = useRunSprite({
+    conversationId: activeId,
+    streaming,
+    livePhase,
+    alert,
+    messages,
+    activities,
+  });
 
   useEffect(() => {
     if (memoryAgentRef.current !== speakingId) {
@@ -725,7 +757,10 @@ export function Workspace({
         onSelect={(id) => {
           setNavOpen(false);
           setMobilePane("chat");
-          if (!streaming) void selectConversation(id);
+          if (!streaming) {
+            if (id !== activeId) setAlert((current) => alertAfterConversationSwitch(current));
+            void selectConversation(id);
+          }
         }}
         onSelectAgent={selectAgent}
         onCreateAgent={createAgent}

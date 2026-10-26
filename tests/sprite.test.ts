@@ -1,12 +1,16 @@
 import { expect, it } from "vitest";
 import {
   DONE_HOLD_MS,
+  alertAfterConversationSwitch,
+  alertMessageForView,
+  doneHoldStillApplies,
   lastAssistantId,
   liveAssistantId,
   shouldStartDoneHold,
   spritePixels,
   spriteSrc,
   spriteStateForRun,
+  spriteTurnErrorForView,
   type SpriteRun,
 } from "../src/sprite";
 
@@ -170,6 +174,55 @@ it("serves a theme-specific sprite and the static file when motion is reduced", 
   expect(spriteSrc("error", "light", true)).toBe("/sprites/mochi/svg/mochi-error-light.static.svg");
   expect(spriteSrc("done", "dark", true)).toBe("/sprites/mochi/svg/mochi-done-dark.static.svg");
   expect(spriteSrc("thinking", "light", false)).toBe("/sprites/mochi/svg/mochi-thinking-light.svg");
+});
+
+it("ignores rename, delete, and expired-approval alerts when choosing Mochi's error face", () => {
+  const workspace = (message: string) =>
+    spriteTurnErrorForView({ message, kind: "workspace", ownerId: "c1" }, "c1");
+  expect(workspace("Could not rename conversation")).toBeNull();
+  expect(workspace("Could not delete conversation")).toBeNull();
+  expect(workspace("That approval expired. Send the request again.")).toBeNull();
+
+  const failed = { message: "The model request failed", kind: "turn" as const, ownerId: "c1" };
+  expect(spriteTurnErrorForView(failed, "c1")).toBe("The model request failed");
+  expect(spriteTurnErrorForView(failed, "c2")).toBeNull();
+  expect(
+    spriteTurnErrorForView({ message: "Request failed", kind: "turn", ownerId: null }, null),
+  ).toBe("Request failed");
+  expect(
+    spriteTurnErrorForView({ message: "Request failed", kind: "turn", ownerId: null }, "c1"),
+  ).toBeNull();
+  expect(spriteTurnErrorForView(null, null)).toBeNull();
+});
+
+it("a turn alert owned by chat A is hidden while chat B is open, and it reappears after switching back to A", () => {
+  const ownedByA = {
+    message: "The model request failed",
+    kind: "turn" as const,
+    ownerId: "A",
+  };
+  const whileAway = alertAfterConversationSwitch(ownedByA);
+  expect(whileAway).toBe(ownedByA);
+  expect(spriteTurnErrorForView(whileAway, "B")).toBeNull();
+  expect(alertMessageForView(whileAway, "B")).toBeNull();
+  expect(spriteTurnErrorForView(whileAway, "A")).toBe("The model request failed");
+  expect(alertMessageForView(whileAway, "A")).toBe("The model request failed");
+  expect(
+    alertAfterConversationSwitch({
+      message: "Could not rename conversation",
+      kind: "workspace",
+      ownerId: "A",
+    }),
+  ).toBeNull();
+});
+
+it("drops the done hold when the conversation or the turn changes", () => {
+  const hold = { conversationId: "c1", turnId: "a1" };
+  expect(doneHoldStillApplies(hold, hold)).toBe(true);
+  expect(doneHoldStillApplies(hold, { conversationId: "c2", turnId: "a1" })).toBe(false);
+  expect(doneHoldStillApplies(hold, { conversationId: "c1", turnId: "a2" })).toBe(false);
+  expect(doneHoldStillApplies(hold, { conversationId: null, turnId: null })).toBe(false);
+  expect(doneHoldStillApplies(null, hold)).toBe(false);
 });
 
 it("never draws Mochi below 24px", () => {
