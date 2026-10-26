@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import { isLiveTraceTurn } from "../components/token-stream";
 import { assistantHasVisibleBody, liveAssistantId } from "../components/transcript";
+import { isMockToolResult } from "../src/tools/display";
 import { runtimeStatusLabel, showThinkingRow, tokenStreamEntries } from "../src/token-stream";
 import type { Message, MessageTrace } from "../src/types";
 
@@ -26,6 +27,27 @@ it("builds token stream rows from a stored assistant trace", () => {
 
 it("returns no rows when there is no trace", () => {
   expect(tokenStreamEntries(null)).toEqual([]);
+});
+
+it("flags a mock tool result so the trace can badge it", () => {
+  const result = '{\n  "provider": "mock",\n  "query": "mockbot"\n}';
+  expect(isMockToolResult(result)).toBe(true);
+  expect(isMockToolResult('{"provider":"mock"}\nexit_code: 0')).toBe(true);
+  expect(isMockToolResult('{\n  "provider": "tavily"\n}')).toBe(false);
+  expect(isMockToolResult("plain text")).toBe(false);
+  const rows = tokenStreamEntries(
+    {
+      ...fullTrace,
+      tools: [{ index: 0, id: "1", name: "web_search", arguments: "{}", result }],
+    },
+    "Hello",
+  );
+  expect(rows.find((row) => row.kind === "tool")).toEqual({
+    kind: "tool",
+    label: "web_search",
+    detail: "done",
+    mock: true,
+  });
 });
 
 it("shows a thinking row before the answer starts streaming", () => {

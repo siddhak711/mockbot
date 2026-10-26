@@ -3,6 +3,7 @@
 import { useLayoutEffect, useRef } from "react";
 import type { Message } from "../src/types";
 import { assistantMessagesWithTrace, tokenStreamEntries } from "../src/token-stream";
+import { MockBadge } from "./tool-activity";
 import { liveAssistantId } from "./transcript";
 
 /** The live trace row is the in-flight assistant, not whichever turn was stored last. */
@@ -87,6 +88,7 @@ function TokenStreamTurn({
           <li key={`${entry.kind}-${entryIndex}`} data-kind={entry.kind}>
             <div className="stream-token" data-token={entry.kind}>
               <span className="token-pill">{entry.label}</span>
+              {entry.mock ? <MockBadge /> : null}
               {entry.detail && entry.kind !== "reasoning" ? <span>{entry.detail}</span> : null}
             </div>
             {entry.kind === "reasoning" && entry.detail ? (

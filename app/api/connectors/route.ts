@@ -45,7 +45,11 @@ export async function POST(request: Request): Promise<Response> {
     oauth?: unknown;
   };
   if (typeof record.catalogId === "string" && record.catalogId.trim()) {
-    return createCatalogConnector(record.catalogId.trim(), record.accountLabel);
+    try {
+      return await createCatalogConnector(record.catalogId.trim(), record.accountLabel);
+    } catch (error) {
+      return connectorCreateFailure(error, request.signal);
+    }
   }
 
   const parsed = parseConnectorInput(body);
@@ -76,8 +80,9 @@ export async function POST(request: Request): Promise<Response> {
     env: process.env,
     signal: request.signal,
   });
+  let probe: Awaited<ReturnType<typeof probeConnector>>;
   try {
-    const probe = await probeConnector({
+    probe = await probeConnector({
       transport: parsed.value.transport,
       target: parsed.value.target,
       name: parsed.value.name,
@@ -85,6 +90,11 @@ export async function POST(request: Request): Promise<Response> {
       apiKey: apiKey || undefined,
       signal: request.signal,
     });
+  } catch (error) {
+    await listing.catch(() => undefined);
+    return probeFailure(error, request.signal);
+  }
+  try {
     const listed = await listing;
     const cancelled =
       request.signal.aborted || listed.batches.some((batch) => isAbortError(batch.error));
@@ -131,10 +141,7 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ connector: toPublicConnector(connector), tools }, { status: 201 });
   } catch (error) {
     await listing.catch(() => undefined);
-    if (request.signal.aborted || isAbortError(error)) {
-      return Response.json({ error: "The connection was cancelled." }, { status: 400 });
-    }
-    return Response.json({ error: "Could not reach the MCP server." }, { status: 400 });
+    return connectorCreateFailure(error, request.signal);
   }
 }
 
@@ -171,6 +178,29 @@ async function createCatalogConnector(catalogId: string, accountLabel: unknown):
     tools: settings,
   });
   return Response.json({ connector: toPublicConnector(connector) }, { status: 201 });
+}
+
+function connectorCreateFailure(error: unknown, signal: AbortSignal): Response {
+  if (signal.aborted || isAbortError(error)) {
+    return Response.json({ error: "The connection was cancelled." }, { status: 400 });
+  }
+  return Response.json({ error: connectorErrorMessage(error) }, { status: 500 });
+}
+
+function probeFailure(error: unknown, signal: AbortSignal): Response {
+  if (signal.aborted || isAbortError(error)) {
+    return Response.json({ error: "The connection was cancelled." }, { status: 400 });
+  }
+  const message = error instanceof Error ? error.message : "";
+  if (/CONNECTOR_SECRET_KEY/i.test(message)) {
+    return Response.json({ error: connectorErrorMessage(error) }, { status: 500 });
+  }
+  return Response.json({ error: "Could not reach the MCP server." }, { status: 400 });
+}
+
+function connectorErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) return error.message.trim().slice(0, 500);
+  return "Could not create the connector.";
 }
 
 function redactDiscovered(tool: DiscoveredTool, secrets: readonly string[]): DiscoveredTool {

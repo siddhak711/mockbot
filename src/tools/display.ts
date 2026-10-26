@@ -18,6 +18,27 @@ export type ToolActivity = {
   kind: ToolActivityKind;
 };
 
+/** True when a tool result says it came from the mock provider. */
+export function isMockToolResult(result: string | null | undefined): boolean {
+  if (!result) return false;
+  const trimmed = result.trim();
+  if (providerOf(trimmed) === "mock") return true;
+  const newline = trimmed.indexOf("\n");
+  if (newline > 0 && providerOf(trimmed.slice(0, newline).trim()) === "mock") return true;
+  return false;
+}
+
+function providerOf(text: string): string | null {
+  if (!text.startsWith("{")) return null;
+  try {
+    const value = JSON.parse(text) as { provider?: unknown };
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    return typeof value.provider === "string" ? value.provider : null;
+  } catch {
+    return null;
+  }
+}
+
 export function parseToolArgs(raw: string): Record<string, unknown> | null {
   if (!raw.trim()) return null;
   try {

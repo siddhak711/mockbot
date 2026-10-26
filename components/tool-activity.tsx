@@ -4,7 +4,7 @@ import {
   activityDisclosureOnRunning,
   activityDisclosureToggle,
 } from "../src/tools/activity-open";
-import type { ToolActivity } from "../src/tools/display";
+import { isMockToolResult, type ToolActivity } from "../src/tools/display";
 import type { ToolTrace } from "../src/types";
 
 function useActivityDisclosure(running: boolean) {
@@ -32,6 +32,7 @@ export function ToolCallCard({ tool, pending }: { tool: ToolTrace; pending: bool
           ◦
         </span>
         <span className="tool-line-title">{title}</span>
+        {isMockToolResult(tool.result) ? <MockBadge /> : null}
         {tool.id ? <span className="tool-line-meta">· {tool.id}</span> : null}
         <span className="sr-only">{pending ? "Running" : "Done"}</span>
       </button>
@@ -165,6 +166,7 @@ function ActivityRow({
           ◦
         </span>
         <span className="tool-line-title">{activity.title}</span>
+        {isMockToolResult(activity.output) ? <MockBadge /> : null}
         {meta ? <span className="tool-line-meta">· {meta}</span> : null}
         <span className="sr-only">{statusLabel(activity.state)}</span>
       </button>
@@ -191,6 +193,10 @@ function ActivityRow({
       ) : null}
     </div>
   );
+}
+
+export function MockBadge() {
+  return <span className="mock-badge">MOCK</span>;
 }
 
 function statusLabel(state: ToolActivity["state"]): string {
