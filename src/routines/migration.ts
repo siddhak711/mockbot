@@ -75,4 +75,9 @@ CREATE INDEX IF NOT EXISTS routines_due_idx
 CREATE INDEX IF NOT EXISTS routines_event_idx
   ON routines (event_name)
   WHERE trigger_kind = 'event';
+
+ALTER TABLE routines ADD COLUMN IF NOT EXISTS user_id TEXT REFERENCES users(id) ON DELETE CASCADE;
+ALTER TABLE routines ADD COLUMN IF NOT EXISTS agent_id TEXT;
+
+CREATE INDEX IF NOT EXISTS routines_user_idx ON routines (user_id, created_at DESC);
 `;

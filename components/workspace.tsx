@@ -166,21 +166,14 @@ export function Workspace({
   );
 
   const selectConversation = useCallback(
-    async (id: string) => {
+    async (id: string): Promise<boolean> => {
       const response = await fetch(`/api/conversations/${id}`);
-      if (!response.ok) {
-        releaseApprovalLock();
-        setActive(null);
-        setActiveId(null);
-        setMessages([]);
-        setActivities([]);
-        setSelectedToolId(null);
-        return;
-      }
+      if (!response.ok) return false;
       const data = (await response.json()) as { conversation: Conversation; messages: Message[] };
       applyThread(data.conversation, data.messages, "c");
+      return true;
     },
-    [applyThread, releaseApprovalLock],
+    [applyThread],
   );
 
   const loadAgentConversation = useCallback(
@@ -288,8 +281,8 @@ export function Workspace({
       const params = new URLSearchParams(window.location.search);
       const requestedConversation = params.get("c");
       if (requestedConversation) {
-        await selectConversation(requestedConversation);
-        return;
+        const found = await selectConversation(requestedConversation);
+        if (cancelled || found) return;
       }
       const requestedAgent = params.get("agent");
       const agentId = preferredAgentId(agentData.agents, requestedAgent ?? LEAD_AGENT_ID);
@@ -355,6 +348,8 @@ export function Workspace({
     setAlert((current) => alertAfterConversationSwitch(current));
     adoptMemoryAgent(id);
     setActiveAgentId(id);
+    activeIdRef.current = null;
+    setActiveId(null);
     void loadAgentConversation(id);
   }
 

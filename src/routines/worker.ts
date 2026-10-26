@@ -58,35 +58,46 @@ async function withConversation<T>(conversationId: string, task: () => Promise<T
   }
 }
 
-async function agentOwner(store: ConversationStore, agentId: string): Promise<string | null> {
-  const result = await store.connection.query<{ user_id: string | null }>(
-    `SELECT user_id FROM agents WHERE id = $1`,
-    [agentId],
+/** The owner's lead, when the routine did not store an agent. */
+async function ownerLead(store: ConversationStore, userId: string): Promise<string | null> {
+  const result = await store.connection.query<{ id: string }>(
+    `SELECT id
+     FROM agents
+     WHERE user_id = $1 AND is_lead = TRUE
+     ORDER BY created_at ASC, id ASC
+     LIMIT 1`,
+    [userId],
   );
-  return result.rows[0]?.user_id ?? null;
+  return result.rows[0]?.id ?? null;
 }
 
-/** Append the run to the lead agent's one thread. A missing pointer is repaired. */
+/**
+ * Append the run to its owner's one thread. An unowned routine stays on the
+ * unscoped lead. A missing pointer is repaired.
+ */
 async function ensureConversation(
   store: ConversationStore,
   routines: RoutineStore,
-  routineId: string,
-  name: string,
+  routine: { id: string; name: string; userId: string | null; agentId: string | null },
   conversationId: string | null,
   now: Date,
 ): Promise<string> {
-  const userId = await agentOwner(store, LEAD_AGENT_ID);
-  const conversation = await store.getOrCreateAgentConversation(LEAD_AGENT_ID, userId);
-  await store.nameIfEmpty(conversation.id, name, userId);
+  const userId = routine.userId;
+  const agentId =
+    routine.agentId ??
+    (userId ? await ownerLead(store, userId) : null) ??
+    LEAD_AGENT_ID;
+  const conversation = await store.getOrCreateAgentConversation(agentId, userId);
+  await store.nameIfEmpty(conversation.id, routine.name, userId);
   if (conversationId === conversation.id) return conversation.id;
   if (!conversationId) {
-    const saved = await routines.setConversation(routineId, conversation.id, now);
+    const saved = await routines.setConversation(routine.id, conversation.id, now);
     if (!saved) throw new Error("Routine disappeared before its conversation was saved");
     return saved;
   }
   const existing = await store.getConversation(conversationId);
   if (existing?.conversation.id === conversation.id) return conversation.id;
-  const moved = await routines.moveConversation(routineId, conversation.id, now);
+  const moved = await routines.moveConversation(routine.id, conversation.id, now);
   if (!moved) throw new Error("Routine disappeared before its conversation was saved");
   return moved;
 }
@@ -112,8 +123,7 @@ export async function tick(options: {
       conversationId = await ensureConversation(
         options.store,
         options.routines,
-        job.routine.id,
-        job.routine.name,
+        job.routine,
         conversationId,
         now,
       );

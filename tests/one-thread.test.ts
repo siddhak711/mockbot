@@ -120,3 +120,39 @@ it("merges one user's agent threads in created_at order without dropping rows", 
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+it("keeps the earlier row first when two messages share a timestamp", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "mockbot-one-thread-seq-"));
+  const store = await ConversationStore.open(dir);
+  await store.connection.exec(`
+    DELETE FROM schema_migrations WHERE id = '009_one_thread_per_agent';
+    INSERT INTO conversations (id, title, agent_id, user_id, created_at, updated_at) VALUES
+      ('thread', 'Thread', 'agent_default', NULL, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z');
+    INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES
+      ('z-first', 'thread', 'user', 'first-content', '2024-01-01T00:00:00Z'),
+      ('a-second', 'thread', 'user', 'second-content', '2024-01-01T00:00:00Z');
+    INSERT INTO tool_calls (
+      id, conversation_id, message_id, name, arguments, status, output, created_at
+    ) VALUES
+      ('z-tool', 'thread', 'z-first', 'lookup', '{}', 'done', 'kept-first', '2024-01-01T00:00:00Z'),
+      ('a-tool', 'thread', 'z-first', 'lookup', '{}', 'done', 'kept-second', '2024-01-01T00:00:00Z');
+  `);
+  await store.close();
+
+  try {
+    const migrated = await ConversationStore.open(dir);
+    const loaded = await migrated.getConversation("thread");
+    expect(loaded?.messages.map((message) => message.id)).toEqual(["z-first", "a-second"]);
+    expect(loaded?.messages.map((message) => message.content)).toEqual([
+      "first-content",
+      "second-content",
+    ]);
+    expect(loaded?.messages[0]?.tools?.map((tool) => tool.output)).toEqual([
+      "kept-first",
+      "kept-second",
+    ]);
+    await migrated.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

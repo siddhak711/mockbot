@@ -227,11 +227,25 @@ FROM _conversation_merge_009 AS merge
 WHERE message.conversation_id = merge.id
   AND merge.id <> merge.keep_id;
 
+DROP TABLE IF EXISTS _message_seq_009;
+
+CREATE TABLE _message_seq_009 (
+  id TEXT PRIMARY KEY,
+  seq BIGINT NOT NULL
+);
+
+INSERT INTO _message_seq_009 (id, seq)
+SELECT id, seq FROM messages;
+
 UPDATE messages SET seq = -seq WHERE seq > 0;
 
 WITH ordered AS (
-  SELECT id, ROW_NUMBER() OVER (ORDER BY created_at ASC, id ASC) AS new_seq
-  FROM messages
+  SELECT message.id,
+         ROW_NUMBER() OVER (
+           ORDER BY message.created_at ASC, saved.seq ASC, message.id ASC
+         ) AS new_seq
+  FROM messages AS message
+  JOIN _message_seq_009 AS saved ON saved.id = message.id
 )
 UPDATE messages AS message
 SET seq = ordered.new_seq
@@ -250,11 +264,25 @@ FROM _conversation_merge_009 AS merge
 WHERE tool_call.conversation_id = merge.id
   AND merge.id <> merge.keep_id;
 
+DROP TABLE IF EXISTS _tool_seq_009;
+
+CREATE TABLE _tool_seq_009 (
+  id TEXT PRIMARY KEY,
+  seq BIGINT NOT NULL
+);
+
+INSERT INTO _tool_seq_009 (id, seq)
+SELECT id, seq FROM tool_calls;
+
 UPDATE tool_calls SET seq = -seq WHERE seq > 0;
 
 WITH ordered AS (
-  SELECT id, ROW_NUMBER() OVER (ORDER BY created_at ASC, id ASC) AS new_seq
-  FROM tool_calls
+  SELECT tool_call.id,
+         ROW_NUMBER() OVER (
+           ORDER BY tool_call.created_at ASC, saved.seq ASC, tool_call.id ASC
+         ) AS new_seq
+  FROM tool_calls AS tool_call
+  JOIN _tool_seq_009 AS saved ON saved.id = tool_call.id
 )
 UPDATE tool_calls AS tool_call
 SET seq = ordered.new_seq
@@ -329,6 +357,10 @@ WHERE conversation.id = merge.id
 DROP TABLE _conversation_merge_009;
 
 DROP TABLE IF EXISTS _summary_merge_009;
+
+DROP TABLE IF EXISTS _message_seq_009;
+
+DROP TABLE IF EXISTS _tool_seq_009;
 
 DROP INDEX IF EXISTS conversations_user_agent_key;
 

@@ -1,5 +1,6 @@
 import type { LlmProvider } from "../llm";
 import { titleFromMessage, type ConversationStore } from "../store";
+import { buildModelInput } from "../turn";
 import { applyStreamEvent, emptyTrace } from "../trace";
 import type { LlmMessage, MessageTrace } from "../types";
 import type { AgentDirectory } from "./directory";
@@ -144,17 +145,20 @@ export async function performDelegation(
   await deps.store.addMessage(conversation.id, "user", task);
   const grants = await deps.directory.listGrants(agent.id);
   const memories = await deps.memory.list(agent.id);
-  const stored = await deps.store.getConversation(conversation.id, agent.id);
-  const messages: LlmMessage[] = [
-    {
-      role: "system",
-      content: buildAgentSystemPrompt({ agent, memories, grants, child: true }),
-    },
-    ...(stored?.messages ?? [{ role: "user" as const, content: task }]).map((message) => ({
-      role: message.role,
-      content: message.content,
-    })),
-  ];
+  const prepared = await buildModelInput({
+    store: deps.store,
+    conversationId: conversation.id,
+    agentId: agent.id,
+    agentPrompt: buildAgentSystemPrompt({ agent, memories, grants, child: true }),
+  });
+  if (!prepared) {
+    return {
+      content: "Delegation failed: the child thread disappeared.",
+      isError: true,
+      conversationId: conversation.id,
+    };
+  }
+  const messages: LlmMessage[] = prepared.messages;
 
   let trace = emptyTrace();
   try {

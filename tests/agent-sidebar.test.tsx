@@ -222,3 +222,79 @@ it("shows a collapsed rail of agent avatars and opens that agent's thread", asyn
   expect(researcher.getAttribute("aria-current")).toBe("true");
   expect(mockbot.getAttribute("aria-current")).toBeNull();
 });
+
+it("sends a message on the newly selected agent before that thread finishes loading", async () => {
+  let releaseResearch: (response: Response) => void = () => {};
+  const researchHeld = new Promise<Response>((resolve) => {
+    releaseResearch = resolve;
+  });
+  const chatBodies: Array<Record<string, unknown>> = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/chat")) {
+        chatBodies.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+        return new Response("event: end\ndata: {}\n\n", {
+          headers: { "Content-Type": "text/event-stream" },
+        });
+      }
+      if (url.includes("/api/agents/agent_research/conversation")) return researchHeld;
+      if (url.includes("/api/conversations")) {
+        return new Response("threads are not listed", { status: 404 });
+      }
+      if (url.endsWith("/api/agents") || url.endsWith("/api/agents/")) {
+        return Response.json({ agents });
+      }
+      const agentMatch = url.match(/\/api\/agents\/([^/]+)\/conversation/);
+      if (agentMatch?.[1]) {
+        const thread = threads[decodeURIComponent(agentMatch[1])];
+        if (!thread) return new Response("missing", { status: 404 });
+        return Response.json(thread);
+      }
+      if (url.includes("/api/status")) {
+        return Response.json({ provider: "mock", model: null, database: "local" });
+      }
+      if (url.includes("/api/connectors")) return Response.json({ connectors: [] });
+      if (url.includes("/api/computer")) return new Response("no", { status: 404 });
+      if (url.includes("/api/memories")) return Response.json({ memories: [] });
+      return new Response(`unmocked ${url}`, { status: 404 });
+    }),
+  );
+
+  render(
+    <ThemeProvider>
+      <Workspace user={user} />
+    </ThemeProvider>,
+  );
+  expect(await screen.findByText("Remember the grove")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: /Researcher/ }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Message" }), {
+    target: { value: "Follow the ridge" },
+  });
+  const form = screen.getByRole("textbox", { name: "Message" }).closest("form");
+  expect(form).toBeTruthy();
+  fireEvent.submit(form!);
+  await waitFor(() => expect(chatBodies).toHaveLength(1));
+  expect(chatBodies[0]).toMatchObject({
+    message: "Follow the ridge",
+    agentId: "agent_research",
+  });
+  expect(chatBodies[0]).not.toHaveProperty("conversationId");
+  releaseResearch(Response.json(threads.agent_research));
+});
+
+it("opens the agent's thread when the conversation id in the url is gone", async () => {
+  installFetch();
+  window.history.replaceState(null, "", "/?c=merged-away&agent=agent_research");
+  render(
+    <ThemeProvider>
+      <Workspace user={user} />
+    </ThemeProvider>,
+  );
+
+  expect(await screen.findByText("Research notes")).toBeTruthy();
+  expect(screen.queryByRole("heading", { name: /Hello from/ })).toBeNull();
+  expect(screen.queryByText("Remember the grove")).toBeNull();
+  expect(screen.queryByText("Start a conversation")).toBeNull();
+});

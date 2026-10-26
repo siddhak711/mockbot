@@ -23,6 +23,8 @@ type RoutineRow = {
   event_name: string | null;
   status: RoutineStatus;
   conversation_id: string | null;
+  user_id: string | null;
+  agent_id: string | null;
   next_run_at: Date | string | null;
   created_at: Date | string;
   updated_at: Date | string;
@@ -82,6 +84,8 @@ function mapRoutine(row: RoutineRow): Routine {
     trigger,
     status: row.status,
     conversationId: row.conversation_id,
+    userId: row.user_id,
+    agentId: row.agent_id,
     nextRunAt: asIsoOrNull(row.next_run_at),
     createdAt: asIso(row.created_at),
     updatedAt: asIso(row.updated_at),
@@ -128,6 +132,8 @@ export type NewRoutine = {
   now: Date;
   cron?: string;
   eventName?: string;
+  userId?: string | null;
+  agentId?: string | null;
 };
 
 export type FinishInput = {
@@ -171,11 +177,12 @@ export class RoutineStore {
       const rows = await query<RoutineRow>(
         this.db,
         `INSERT INTO routines (
-             id, name, prompt, trigger_kind, cron, status, next_run_at, created_at, updated_at
-           ) VALUES ($1, $2, $3, 'cron', $4, 'active', $5, $6, $6)
-           RETURNING id, name, prompt, trigger_kind, cron, event_name, status, conversation_id,
+             id, name, prompt, trigger_kind, cron, status, next_run_at, user_id, agent_id,
+             created_at, updated_at
+           ) VALUES ($1, $2, $3, 'cron', $4, 'active', $5, $7, $8, $6, $6)
+           RETURNING id, name, prompt, trigger_kind, cron, event_name, status, conversation_id, user_id, agent_id,
                      next_run_at, created_at, updated_at`,
-        [id, name, prompt, cron, next, input.now],
+        [id, name, prompt, cron, next, input.now, input.userId ?? null, input.agentId ?? null],
       );
       const row = rows[0];
       if (!row) throw new Error("Failed to create routine");
@@ -185,24 +192,26 @@ export class RoutineStore {
     const rows = await query<RoutineRow>(
       this.db,
       `INSERT INTO routines (
-           id, name, prompt, trigger_kind, event_name, status, created_at, updated_at
-         ) VALUES ($1, $2, $3, 'event', $4, 'active', $5, $5)
-         RETURNING id, name, prompt, trigger_kind, cron, event_name, status, conversation_id,
+           id, name, prompt, trigger_kind, event_name, status, user_id, agent_id, created_at, updated_at
+         ) VALUES ($1, $2, $3, 'event', $4, 'active', $6, $7, $5, $5)
+         RETURNING id, name, prompt, trigger_kind, cron, event_name, status, conversation_id, user_id, agent_id,
                    next_run_at, created_at, updated_at`,
-      [id, name, prompt, eventName, input.now],
+      [id, name, prompt, eventName, input.now, input.userId ?? null, input.agentId ?? null],
     );
     const row = rows[0];
     if (!row) throw new Error("Failed to create routine");
     return mapRoutine(row);
   }
 
-  async list(): Promise<Routine[]> {
+  async list(userId?: string): Promise<Routine[]> {
     const rows = await query<RoutineRow>(
       this.db,
-      `SELECT id, name, prompt, trigger_kind, cron, event_name, status, conversation_id,
+      `SELECT id, name, prompt, trigger_kind, cron, event_name, status, conversation_id, user_id, agent_id,
               next_run_at, created_at, updated_at
        FROM routines
+       WHERE ($1::boolean = FALSE OR user_id IS NOT DISTINCT FROM $2)
        ORDER BY created_at DESC, id DESC`,
+      [userId !== undefined, userId ?? null],
     );
     return rows.map(mapRoutine);
   }
@@ -210,7 +219,7 @@ export class RoutineStore {
   async get(id: string): Promise<Routine | null> {
     const rows = await query<RoutineRow>(
       this.db,
-      `SELECT id, name, prompt, trigger_kind, cron, event_name, status, conversation_id,
+      `SELECT id, name, prompt, trigger_kind, cron, event_name, status, conversation_id, user_id, agent_id,
               next_run_at, created_at, updated_at
        FROM routines
        WHERE id = $1`,
@@ -220,15 +229,21 @@ export class RoutineStore {
     return row ? mapRoutine(row) : null;
   }
 
-  async setStatus(id: string, status: RoutineStatus, now: Date): Promise<Routine | null> {
+  async setStatus(
+    id: string,
+    status: RoutineStatus,
+    now: Date,
+    userId?: string,
+  ): Promise<Routine | null> {
     const rows = await query<RoutineRow>(
       this.db,
       `UPDATE routines
        SET status = $2, updated_at = $3
        WHERE id = $1
-       RETURNING id, name, prompt, trigger_kind, cron, event_name, status, conversation_id,
+         AND ($4::boolean = FALSE OR user_id IS NOT DISTINCT FROM $5)
+       RETURNING id, name, prompt, trigger_kind, cron, event_name, status, conversation_id, user_id, agent_id,
                  next_run_at, created_at, updated_at`,
-      [id, status, now],
+      [id, status, now, userId !== undefined, userId ?? null],
     );
     const row = rows[0];
     return row ? mapRoutine(row) : null;
@@ -289,7 +304,7 @@ export class RoutineStore {
   async enqueueDue(now: Date): Promise<number> {
     const due = await query<RoutineRow>(
       this.db,
-      `SELECT id, name, prompt, trigger_kind, cron, event_name, status, conversation_id,
+      `SELECT id, name, prompt, trigger_kind, cron, event_name, status, conversation_id, user_id, agent_id,
               next_run_at, created_at, updated_at
        FROM routines
        WHERE status = 'active'
@@ -410,6 +425,7 @@ export class RoutineStore {
     name: string;
     payload?: string | null;
     now: Date;
+    userId?: string;
   }): Promise<{ event: RoutineEvent; runs: RoutineRun[] }> {
     const name = validateEventName(input.name);
     const payload = validatePayload(input.payload);
@@ -428,9 +444,12 @@ export class RoutineStore {
         tx,
         `SELECT id
          FROM routines
-         WHERE status = 'active' AND trigger_kind = 'event' AND event_name = $1
+         WHERE status = 'active'
+           AND trigger_kind = 'event'
+           AND event_name = $1
+           AND ($2::boolean = FALSE OR user_id IS NOT DISTINCT FROM $3)
          ORDER BY id`,
-        [name],
+        [name, input.userId !== undefined, input.userId ?? null],
       );
       const runs: RoutineRun[] = [];
       for (const listener of listeners) {
