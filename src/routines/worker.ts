@@ -1,3 +1,4 @@
+import { LEAD_AGENT_ID } from "../agents/ids";
 import type { LlmProvider } from "../llm";
 import type { ConversationStore } from "../store";
 import { emptyTrace } from "../trace";
@@ -57,6 +58,15 @@ async function withConversation<T>(conversationId: string, task: () => Promise<T
   }
 }
 
+async function agentOwner(store: ConversationStore, agentId: string): Promise<string | null> {
+  const result = await store.connection.query<{ user_id: string | null }>(
+    `SELECT user_id FROM agents WHERE id = $1`,
+    [agentId],
+  );
+  return result.rows[0]?.user_id ?? null;
+}
+
+/** Append the run to the lead agent's one thread. A missing pointer is repaired. */
 async function ensureConversation(
   store: ConversationStore,
   routines: RoutineStore,
@@ -65,14 +75,20 @@ async function ensureConversation(
   conversationId: string | null,
   now: Date,
 ): Promise<string> {
-  if (conversationId) {
-    const existing = await store.getConversation(conversationId);
-    if (existing) return existing.conversation.id;
+  const userId = await agentOwner(store, LEAD_AGENT_ID);
+  const conversation = await store.getOrCreateAgentConversation(LEAD_AGENT_ID, userId);
+  await store.nameIfEmpty(conversation.id, name, userId);
+  if (conversationId === conversation.id) return conversation.id;
+  if (!conversationId) {
+    const saved = await routines.setConversation(routineId, conversation.id, now);
+    if (!saved) throw new Error("Routine disappeared before its conversation was saved");
+    return saved;
   }
-  const created = await store.createConversation(name);
-  const saved = await routines.setConversation(routineId, created.id, now);
-  if (!saved) throw new Error("Routine disappeared before its conversation was saved");
-  return saved;
+  const existing = await store.getConversation(conversationId);
+  if (existing?.conversation.id === conversation.id) return conversation.id;
+  const moved = await routines.moveConversation(routineId, conversation.id, now);
+  if (!moved) throw new Error("Routine disappeared before its conversation was saved");
+  return moved;
 }
 
 export async function tick(options: {

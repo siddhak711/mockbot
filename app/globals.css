@@ -1762,7 +1762,9 @@ summary:focus-visible {
 }
 
 .agent-section {
-  flex: none;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
   padding-bottom: 4px;
 }
 

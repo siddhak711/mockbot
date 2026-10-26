@@ -314,7 +314,7 @@ it("keeps one conversation when two runs create one together", async () => {
     tick({ routines, store, provider: reply("noted"), clock, workerId: "worker-a" }),
     tick({ routines, store, provider: reply("noted"), clock, workerId: "worker-b" }),
   ]);
-  expect(creates).toBe(2);
+  expect(creates).toBe(1);
   expect(first.succeeded + second.succeeded).toBe(2);
   const saved = await routines.get(routine.id);
   const runs = await routines.listRuns(routine.id);
@@ -327,7 +327,8 @@ it("keeps one conversation when two runs create one together", async () => {
       .map((message) => message.content)
       .sort(),
   ).toEqual(["Note it\n\nEvent shipped:\none", "Note it\n\nEvent shipped:\ntwo"]);
-  const later = await store.createConversation("later");
+  store.createConversation = original;
+  const later = await store.createConversation("later", "agent_other");
   expect(await routines.setConversation(routine.id, later.id, now)).toBe(saved?.conversationId);
 });
 

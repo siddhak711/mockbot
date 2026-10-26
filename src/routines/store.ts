@@ -249,6 +249,18 @@ export class RoutineStore {
     return saved?.conversationId ?? null;
   }
 
+  /** Point a routine at the agent's thread when its saved id is missing or stale. */
+  async moveConversation(id: string, conversationId: string, now: Date): Promise<string | null> {
+    await this.db.query(
+      `UPDATE routines
+       SET conversation_id = $2, updated_at = $3
+       WHERE id = $1`,
+      [id, conversationId, now],
+    );
+    const saved = await this.get(id);
+    return saved?.conversationId ?? null;
+  }
+
   async listRuns(routineId: string, limit = 50): Promise<RoutineRun[]> {
     const rows = await query<RunRow>(
       this.db,

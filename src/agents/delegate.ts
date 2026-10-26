@@ -138,20 +138,22 @@ export async function performDelegation(
     };
   }
 
-  const conversation = await deps.store.createConversation(
-    titleFromMessage(task),
-    agent.id,
-    deps.userId,
-  );
+  const userId = deps.userId ?? null;
+  const conversation = await deps.store.getOrCreateAgentConversation(agent.id, userId);
+  await deps.store.nameIfEmpty(conversation.id, titleFromMessage(task), userId);
   await deps.store.addMessage(conversation.id, "user", task);
   const grants = await deps.directory.listGrants(agent.id);
   const memories = await deps.memory.list(agent.id);
+  const stored = await deps.store.getConversation(conversation.id, agent.id);
   const messages: LlmMessage[] = [
     {
       role: "system",
       content: buildAgentSystemPrompt({ agent, memories, grants, child: true }),
     },
-    { role: "user", content: task },
+    ...(stored?.messages ?? [{ role: "user" as const, content: task }]).map((message) => ({
+      role: message.role,
+      content: message.content,
+    })),
   ];
 
   let trace = emptyTrace();
