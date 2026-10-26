@@ -1,4 +1,5 @@
 # Crown bots 3D: Crew (replaces Mochi)
+
 A glossy 3D squircle bot (clearcoat, soft key light from the top left, rim light, environment reflections, soft contact shadow). Two white tick eyes sit slightly raised on the face, and a metal gold crown with a ruby is tilted on top. Original model built in three.js. Bodies: violet = mockbot, blue, green, pink, teal.
 
 States (25fps loops, quart-out easing ≈ cubic-bezier(.22,1,.36,1)):
