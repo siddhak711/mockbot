@@ -201,6 +201,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS agents_name_unscoped_idx
   WHERE user_id IS NULL;
 `,
   },
+  // 007_ask_user. PR #36 may also append 007_run_events. That migration was not on
+  // main when this branch merged. If it lands first, renumber this id to the next
+  // free index before merging so schema_migrations does not collide.
   {
     id: "007_ask_user",
     sql: `
