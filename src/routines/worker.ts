@@ -84,9 +84,7 @@ async function ensureConversation(
 ): Promise<string> {
   const userId = routine.userId;
   const agentId =
-    routine.agentId ??
-    (userId ? await ownerLead(store, userId) : null) ??
-    LEAD_AGENT_ID;
+    routine.agentId ?? (userId ? await ownerLead(store, userId) : null) ?? LEAD_AGENT_ID;
   const conversation = await store.getOrCreateAgentConversation(agentId, userId);
   await store.nameIfEmpty(conversation.id, routine.name, userId);
   if (conversationId === conversation.id) return conversation.id;
