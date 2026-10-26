@@ -14,7 +14,7 @@ declare global {
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 import { ConnectorsPanel } from "../components/connectors-panel";
 import { ThemeProvider } from "../components/theme";
-import { catalogById, catalogInCategory } from "../src/connectors/catalog";
+import { CATALOG_CATEGORIES, catalogById, catalogInCategory } from "../src/connectors/catalog";
 import type { ConnectorRecord } from "../src/connectors";
 
 function connected(catalogId: string, id = catalogId): ConnectorRecord {
@@ -66,7 +66,7 @@ it("keeps the catalog visible when at least one connector is connected", () => {
   expect(html).toContain('aria-label="Available connectors"');
   expect(html).toContain("Notion");
   expect(html).toContain("● Connected");
-  expect(html).not.toContain('data-catalog-id="notion"');
+  expect(html).toContain('data-catalog-id="notion"');
   for (const id of remaining) {
     expect(html).toContain(`data-catalog-id="${id}"`);
   }
@@ -223,7 +223,7 @@ it("shows the rest of the catalog after connecting from a search", async () => {
     expect(document.querySelector('[data-catalog-id="slack"]')).not.toBeNull();
     expect(document.querySelector('[data-catalog-id="linear"]')).not.toBeNull();
   });
-  expect(document.querySelector('[data-catalog-id="github"]')).toBeNull();
+  expect(document.querySelector('[data-catalog-id="github"] button')?.textContent).toBe("Manage");
   expect(screen.getByRole("textbox", { name: "Search connectors" })).toHaveProperty("value", "");
   expect(screen.getByRole("heading", { name: "Connectors" })).toBeTruthy();
 });
@@ -426,9 +426,108 @@ it("keeps every unconnected catalog entry when several connectors are connected"
 
   expect(html).toContain('aria-label="Connected"');
   expect(html).toContain('aria-label="Add a connector"');
-  expect(html).not.toContain('data-catalog-id="notion"');
-  expect(html).not.toContain('data-catalog-id="github"');
+  expect(html).toContain('data-catalog-id="notion"');
+  expect(html).toContain('data-catalog-id="github"');
   expect(html).toContain('data-catalog-id="slack"');
   expect(html).toContain('data-catalog-id="linear"');
   expect(html).toContain('data-catalog-id="jira"');
+});
+
+function sharedCatalogRow(catalogId: string, status: ConnectorRecord["status"]): ConnectorRecord {
+  return {
+    ...connected(catalogId, `c-${catalogId}`),
+    status,
+    accountLabel: status === "connected" ? "workspace" : null,
+  };
+}
+
+function openCatalog(connectors: ConnectorRecord[], intent: "list" | "add" = "list") {
+  render(
+    createElement(
+      ThemeProvider,
+      null,
+      createElement(ConnectorsPanel, {
+        open: true,
+        intent,
+        connectors,
+        ready: true,
+        onClose() {},
+        onChanged: async () => {},
+        onInsertPrompt() {},
+        onStop() {},
+      }),
+    ),
+  );
+}
+
+function gridTile(catalogId: string): HTMLElement {
+  const tile = document.querySelector(
+    `[aria-label="Available connectors"] [data-catalog-id="${catalogId}"]`,
+  );
+  if (!(tile instanceof HTMLElement)) throw new Error(`missing catalog tile ${catalogId}`);
+  return tile;
+}
+
+function expectCallerCard(catalogId: string, linked: boolean) {
+  const tile = gridTile(catalogId);
+  if (linked) {
+    expect(tile.textContent).toContain("● Connected");
+    expect(tile.querySelector("button")?.textContent).toBe("Manage");
+    return;
+  }
+  expect(tile.textContent).toContain("Not connected");
+  expect(tile.textContent).not.toContain("● Connected");
+  expect(tile.querySelector("button")?.textContent).not.toBe("Manage");
+}
+
+function expectEveryCatalogCard(linkedId: string | null) {
+  for (const category of CATALOG_CATEGORIES) {
+    fireEvent.click(screen.getByRole("button", { name: category.label }));
+    for (const entry of catalogInCategory(category.id)) {
+      expectCallerCard(entry.id, entry.id === linkedId);
+    }
+  }
+}
+
+it("shows every add-connector card from the caller's own link", () => {
+  const catalogIds = CATALOG_CATEGORIES.flatMap((category) =>
+    catalogInCategory(category.id).map((entry) => entry.id),
+  );
+  const ids = [...new Set(catalogIds)];
+
+  openCatalog([], "add");
+  expectEveryCatalogCard(null);
+
+  cleanup();
+  openCatalog(ids.map((id) => sharedCatalogRow(id, "not connected")));
+  expect(document.querySelector('section[aria-label="Connected"]')?.textContent).toContain(
+    "Notion",
+  );
+  expect(document.querySelector('section[aria-label="Connected"]')?.textContent).toContain(
+    "Not connected",
+  );
+  expectEveryCatalogCard(null);
+
+  cleanup();
+  openCatalog(
+    ids.map((id) => sharedCatalogRow(id, id === "notion" ? "connected" : "not connected")),
+  );
+  expectEveryCatalogCard("notion");
+});
+
+it("shows a caller's reconnect link as reconnect needed in the grid", () => {
+  openCatalog([sharedCatalogRow("notion", "connected"), sharedCatalogRow("github", "reconnect")]);
+
+  const github = gridTile("github");
+  expect(github.textContent).toContain("● Reconnect needed");
+  expect(github.querySelector("button")?.textContent).toBe("Reconnect");
+  expect(github.textContent).not.toContain("Not connected");
+  expect(github.textContent).not.toContain("● Connected");
+
+  const notion = gridTile("notion");
+  expect(notion.textContent).toContain("● Connected");
+  expect(notion.querySelector("button")?.textContent).toBe("Manage");
+
+  fireEvent.click(github.querySelector("button")!);
+  expect(screen.getByRole("heading", { name: "Connect GitHub" })).toBeTruthy();
 });

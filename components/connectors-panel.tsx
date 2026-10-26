@@ -287,14 +287,6 @@ export function ConnectorsPanel({
     const base = catalogInCategory(category);
     return search.trim() ? searchCatalog(search, base) : base;
   }, [category, search]);
-  const availableEntries = useMemo(
-    () =>
-      entries.filter(
-        (entry) => !shownConnectors.some((connector) => connector.catalogId === entry.id),
-      ),
-    [entries, shownConnectors],
-  );
-
   async function probe(value: string, apiKey = "") {
     const detected = detectInput(value);
     if (
@@ -537,7 +529,7 @@ export function ConnectorsPanel({
       setMode("auth-failed");
       return;
     }
-    if (entry?.oauth) {
+    if (entry?.composio?.enabled || entry?.oauth) {
       // Open during the click. A popup opened after the start request is blocked.
       const popup = window.open("about:blank", "mockbot-oauth", "popup,width=520,height=720");
       if (!popup) {
@@ -822,39 +814,31 @@ export function ConnectorsPanel({
           }}
         />
         {hint ? <p className="connector-help">{hint}</p> : null}
-        {catalogSearching && availableEntries.length === 0 ? (
+        {catalogSearching && entries.length === 0 ? (
           <div className="connector-empty inline">
-            <h3>
-              {entries.length > 0 ? "Already connected" : `No connectors match “${search.trim()}”`}
-            </h3>
-            <p className="t2">
-              {entries.length > 0
-                ? "Try another category, or paste a server URL above."
-                : "Have a server URL or command? Paste it above."}
-            </p>
-            {entries.length === 0 ? (
-              <div className="pair">
-                <button
-                  type="button"
-                  className="btn secondary"
-                  onClick={() => searchRef.current?.focus()}
-                >
-                  Add by URL
-                </button>
-                <button
-                  type="button"
-                  className="btn ghost"
-                  onClick={() => setNoted(`Noted “${search.trim()}”.`)}
-                >
-                  Request a connector
-                </button>
-              </div>
-            ) : null}
+            <h3>No connectors match “{search.trim()}”</h3>
+            <p className="t2">Have a server URL or command? Paste it above.</p>
+            <div className="pair">
+              <button
+                type="button"
+                className="btn secondary"
+                onClick={() => searchRef.current?.focus()}
+              >
+                Add by URL
+              </button>
+              <button
+                type="button"
+                className="btn ghost"
+                onClick={() => setNoted(`Noted “${search.trim()}”.`)}
+              >
+                Request a connector
+              </button>
+            </div>
             {noted ? <p role="status">{noted}</p> : null}
           </div>
         ) : null}
         <CatalogBrowser
-          entries={availableEntries}
+          entries={entries}
           connectors={shownConnectors}
           category={category}
           tileIndex={tileIndex}
@@ -862,6 +846,7 @@ export function ConnectorsPanel({
           onGridKey={onGridKey}
           onConnect={(entry) => showOauth(entry, entry.name)}
           onManage={openManage}
+          onReconnect={(connector) => void reconnect(connector)}
           onPaste={() => {
             setHint("Paste https://…, npx …, uvx …, or JSON config");
             searchRef.current?.focus();
@@ -988,6 +973,7 @@ export function ConnectorsPanel({
               onGridKey={onGridKey}
               onConnect={(entry) => showOauth(entry, entry.name)}
               onManage={openManage}
+              onReconnect={(connector) => void reconnect(connector)}
               onPaste={() => {
                 setHint("Paste https://…, npx …, uvx …, or JSON config");
                 searchRef.current?.focus();
@@ -1282,6 +1268,15 @@ export function ConnectorsPanel({
   );
 }
 
+/** The caller's own healthy link. A shared catalog row stays unlinked until this user connects it. */
+function callerLinked(connector: ConnectorRecord | undefined, catalogId: string): boolean {
+  return connector?.catalogId === catalogId && connector.status === "connected";
+}
+
+function callerNeedsReconnect(connector: ConnectorRecord | undefined, catalogId: string): boolean {
+  return connector?.catalogId === catalogId && connector.status === "reconnect";
+}
+
 function CatalogBrowser({
   entries,
   connectors,
@@ -1291,6 +1286,7 @@ function CatalogBrowser({
   onGridKey,
   onConnect,
   onManage,
+  onReconnect,
   onPaste,
 }: {
   entries: CatalogEntry[];
@@ -1301,6 +1297,7 @@ function CatalogBrowser({
   onGridKey: (event: ReactKeyboardEvent, count: number) => void;
   onConnect: (entry: CatalogEntry) => void;
   onManage: (connector: ConnectorRecord) => void;
+  onReconnect: (connector: ConnectorRecord) => void;
   onPaste: () => void;
 }) {
   return (
@@ -1325,7 +1322,9 @@ function CatalogBrowser({
         onKeyDown={(event) => onGridKey(event, entries.length + 1)}
       >
         {entries.map((entry, index) => {
-          const connected = connectors.some((connector) => connector.catalogId === entry.id);
+          const link = connectors.find((connector) => connector.catalogId === entry.id);
+          const connected = callerLinked(link, entry.id);
+          const needsReconnect = callerNeedsReconnect(link, entry.id);
           return (
             <article
               key={entry.id}
@@ -1341,16 +1340,13 @@ function CatalogBrowser({
                   <div className="t2">{entry.description}</div>
                 </div>
               </div>
-              {connected ? (
-                <button
-                  type="button"
-                  className="btn secondary"
-                  onClick={() => {
-                    const connector = connectors.find((item) => item.catalogId === entry.id);
-                    if (connector) onManage(connector);
-                  }}
-                >
+              {connected && link ? (
+                <button type="button" className="btn secondary" onClick={() => onManage(link)}>
                   Manage
+                </button>
+              ) : needsReconnect && link ? (
+                <button type="button" className="btn primary" onClick={() => onReconnect(link)}>
+                  Reconnect
                 </button>
               ) : catalogIsWired(entry) ? (
                 <button type="button" className="btn secondary" onClick={() => onConnect(entry)}>
@@ -1364,7 +1360,13 @@ function CatalogBrowser({
                   <span className="pill">Not available yet</span>
                 </>
               )}
-              {connected ? <span className="pill success">● Connected</span> : null}
+              {connected ? (
+                <span className="pill success">● Connected</span>
+              ) : needsReconnect ? (
+                <span className="pill warn">● Reconnect needed</span>
+              ) : (
+                <span className="pill">● Not connected</span>
+              )}
             </article>
           );
         })}
@@ -1430,11 +1432,13 @@ function ConnectorCard({
   ).length;
   const account = connector.accountLabel || connector.name;
   const detail =
-    status === "reconnect"
-      ? connector.statusDetail || "Tools are paused."
-      : status === "error"
-        ? connector.statusDetail || "The last call failed."
-        : `${account} · ${count} tools on · write tools ask first`;
+    status === "not connected"
+      ? "Not connected"
+      : status === "reconnect"
+        ? connector.statusDetail || "Tools are paused."
+        : status === "error"
+          ? connector.statusDetail || "The last call failed."
+          : `${account} · ${count} tools on · write tools ask first`;
   return (
     <article
       className={status === "reconnect" ? "connector-card warn" : "connector-card"}
@@ -1451,6 +1455,7 @@ function ConnectorCard({
           <div className="t1">{connector.name}</div>
           <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
             {status === "connected" ? <span className="pill success">● Connected</span> : null}
+            {status === "not connected" ? <span className="pill">● Not connected</span> : null}
             {status === "error" ? <span className="pill danger">● Error</span> : null}
             {status === "reconnect" ? <span className="pill warn">● Reconnect needed</span> : null}
           </div>
@@ -1459,6 +1464,11 @@ function ConnectorCard({
         {status === "connected" && onManage ? (
           <button type="button" className="btn secondary" onClick={onManage}>
             Manage
+          </button>
+        ) : null}
+        {status === "not connected" && onReconnect ? (
+          <button type="button" className="btn primary" onClick={onReconnect}>
+            Connect
           </button>
         ) : null}
         {status === "reconnect" && onReconnect ? (
@@ -1729,7 +1739,11 @@ function OauthSheet({
               </li>
             ))}
           </ul>
-          <p className="t2">Opens {name} sign-in in a window</p>
+          <p className="t2">
+            {entry?.composio?.enabled
+              ? `Opens ${name} sign-in through Composio`
+              : `Opens ${name} sign-in in a window`}
+          </p>
         </>
       )}
       <div className="sheet-actions">

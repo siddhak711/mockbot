@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { catalogById, catalogIsWired } from "../../../src/connectors/catalog";
+import { composioToolkitForConnector } from "../../../src/connectors/composio/config";
 import { resolveToolSettings, type DiscoveredTool } from "../../../src/connectors/policy";
 import { probeConnector } from "../../../src/connectors/probe";
 import {
@@ -21,7 +22,30 @@ export async function GET(request?: Request): Promise<Response> {
   const actor = await requireApiUser(request);
   if (!actor.ok) return actor.response;
   const { store } = await getAppContext();
-  const connectors = (await store.listConnectors()).map(toPublicConnector);
+  const connections = await store.listComposioConnections(actor.user.id);
+  const byCatalog = new Map(connections.map((item) => [item.catalogId, item]));
+  const connectors = (await store.listConnectors()).map((record) => {
+    const visible = toPublicConnector(record);
+    if (!record.catalogId || !composioToolkitForConnector(record.catalogId, process.env)) {
+      return visible;
+    }
+    const connection = byCatalog.get(record.catalogId);
+    const linked = connection?.status === "connected" || connection?.status === "reconnect";
+    if (!connection || !linked) {
+      return {
+        ...visible,
+        accountLabel: null,
+        status: "not connected" as const,
+        statusDetail: null,
+      };
+    }
+    return {
+      ...visible,
+      accountLabel: connection.accountLabel,
+      status: connection.status,
+      statusDetail: connection.status === "reconnect" ? "Tools are paused." : null,
+    };
+  });
   return Response.json({ connectors });
 }
 
@@ -153,7 +177,7 @@ function createCatalogConnector(catalogId: string, _accountLabel: unknown): Resp
   }
   return Response.json(
     {
-      error: `Connect ${entry.name} with OAuth. Start at /api/connectors/oauth/start.`,
+      error: `Connect ${entry.name} with Composio OAuth. Start at /api/connectors/oauth/start.`,
     },
     { status: 400 },
   );

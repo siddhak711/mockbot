@@ -62,13 +62,31 @@ it("marks only Notion and GitHub as connectable catalog providers", () => {
   }
 });
 
-it("refuses a catalog connect when the provider is unwired or missing credentials", async () => {
+it("refuses a catalog connect when the provider is unwired or Composio is not configured", async () => {
   const slack = await startOAuth(jsonRequest({ catalogId: "slack" }));
   expect(slack.status).toBe(400);
   expect(await slack.json()).toEqual({ error: "Slack is not available yet." });
 
+  const previousKey = process.env.COMPOSIO_API_KEY;
+  const previousNative = process.env.NATIVE_CATALOG_OAUTH;
+  delete process.env.COMPOSIO_API_KEY;
+  delete process.env.NATIVE_CATALOG_OAUTH;
+  try {
+    const missing = await startOAuth(jsonRequest({ catalogId: "notion" }));
+    const body = (await missing.json()) as { error?: string };
+    expect(missing.status).toBe(400);
+    expect(body.error).toContain("COMPOSIO_API_KEY");
+  } finally {
+    restoreEnv("COMPOSIO_API_KEY", previousKey);
+    restoreEnv("NATIVE_CATALOG_OAUTH", previousNative);
+  }
+});
+
+it("keeps native Notion OAuth behind NATIVE_CATALOG_OAUTH", async () => {
+  const previous = process.env.NATIVE_CATALOG_OAUTH;
   const previousId = process.env.NOTION_OAUTH_CLIENT_ID;
   const previousSecret = process.env.NOTION_OAUTH_CLIENT_SECRET;
+  process.env.NATIVE_CATALOG_OAUTH = "1";
   delete process.env.NOTION_OAUTH_CLIENT_ID;
   delete process.env.NOTION_OAUTH_CLIENT_SECRET;
   try {
@@ -78,6 +96,7 @@ it("refuses a catalog connect when the provider is unwired or missing credential
     expect(body.error).toContain("NOTION_OAUTH_CLIENT_ID");
     expect(body.error).toContain("NOTION_OAUTH_CLIENT_SECRET");
   } finally {
+    restoreEnv("NATIVE_CATALOG_OAUTH", previous);
     restoreEnv("NOTION_OAUTH_CLIENT_ID", previousId);
     restoreEnv("NOTION_OAUTH_CLIENT_SECRET", previousSecret);
   }
@@ -822,6 +841,8 @@ it("shares one refresh when two Notion calls get 401 at the same time", async ()
 });
 
 it("routes a GitHub catalog connector through the MCP client", async () => {
+  const previous = process.env.NATIVE_CATALOG_OAUTH;
+  process.env.NATIVE_CATALOG_OAUTH = "1";
   const server = await startMockMcpServer();
   const store = await ConversationStore.open();
   setAppContext({
@@ -853,10 +874,13 @@ it("routes a GitHub catalog connector through the MCP client", async () => {
     expect(result?.content).not.toContain('"connector":"GitHub"');
   } finally {
     await server.close();
+    restoreEnv("NATIVE_CATALOG_OAUTH", previous);
   }
 });
 
 it("saves a tool list that recovers after an empty settings map", async () => {
+  const previous = process.env.NATIVE_CATALOG_OAUTH;
+  process.env.NATIVE_CATALOG_OAUTH = "1";
   const server = await startMockMcpServer();
   const store = await ConversationStore.open();
   setAppContext({
@@ -890,6 +914,7 @@ it("saves a tool list that recovers after an empty settings map", async () => {
     expect(Object.keys(saved ?? {})).not.toHaveLength(0);
   } finally {
     await server.close();
+    restoreEnv("NATIVE_CATALOG_OAUTH", previous);
   }
 });
 
@@ -944,6 +969,7 @@ it("does not mint a catalog connector from the old catalog POST", async () => {
 
 function withOAuthEnv(): void {
   process.env.APP_ORIGIN = "http://localhost:3000";
+  process.env.NATIVE_CATALOG_OAUTH = "1";
   process.env.NOTION_OAUTH_CLIENT_ID = "notion-client";
   process.env.NOTION_OAUTH_CLIENT_SECRET = "notion-secret";
   process.env.GITHUB_OAUTH_CLIENT_ID = "github-client";
@@ -952,6 +978,7 @@ function withOAuthEnv(): void {
 
 function clearOAuthEnv(): void {
   delete process.env.APP_ORIGIN;
+  delete process.env.NATIVE_CATALOG_OAUTH;
   delete process.env.NOTION_OAUTH_CLIENT_ID;
   delete process.env.NOTION_OAUTH_CLIENT_SECRET;
   delete process.env.GITHUB_OAUTH_CLIENT_ID;
