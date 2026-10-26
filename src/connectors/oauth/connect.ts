@@ -293,8 +293,7 @@ async function saveCatalogConnector(options: {
     if (!saved) throw new Error("That connector no longer exists.");
     return saved;
   }
-  return store.createConnector({
-    id: draft.id,
+  return store.insertCatalogConnector({
     name: options.entry.name,
     transport: "http",
     target,
