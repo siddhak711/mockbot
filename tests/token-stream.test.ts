@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
+import { liveAssistantId } from "../components/transcript";
 import { runtimeStatusLabel, showThinkingRow, tokenStreamEntries } from "../src/token-stream";
-import type { MessageTrace } from "../src/types";
+import type { Message, MessageTrace } from "../src/types";
 
 const fullTrace: MessageTrace = {
   started: true,
@@ -46,4 +47,51 @@ it("formats the sidebar runtime status without one truncated line", () => {
     subtitle: "OpenAI-compatible · Neon",
     full: "OpenAI-compatible · deepseek/deepseek-v4.1-flash · Neon",
   });
+});
+
+it("binds the live turn to the assistant after the latest user message", () => {
+  const messages: Message[] = [
+    {
+      id: "u1",
+      conversationId: "c",
+      role: "user",
+      content: "hi",
+      createdAt: "t0",
+      trace: null,
+    },
+    {
+      id: "a1",
+      conversationId: "c",
+      role: "assistant",
+      content: "old",
+      createdAt: "t1",
+      trace: null,
+    },
+    {
+      id: "u2",
+      conversationId: "c",
+      role: "user",
+      content: "again",
+      createdAt: "t2",
+      trace: null,
+    },
+  ];
+  expect(liveAssistantId(messages, true)).toBeNull();
+  expect(
+    liveAssistantId(
+      [
+        ...messages,
+        {
+          id: "a2",
+          conversationId: "c",
+          role: "assistant",
+          content: "",
+          createdAt: "t3",
+          trace: null,
+        },
+      ],
+      true,
+    ),
+  ).toBe("a2");
+  expect(liveAssistantId(messages, false)).toBeNull();
 });
