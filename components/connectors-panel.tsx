@@ -52,6 +52,16 @@ const DETECTING_STEPS: Step[] = [
   { id: "auth", label: "Checking sign-in…", state: "pending" },
   { id: "tools", label: "Listing tools", state: "pending" },
 ];
+const PREVIEW_STEPS: Step[] = [
+  { id: "reach", label: "Reached server (212 ms)", state: "done" },
+  { id: "transport", label: "Transport: Streamable HTTP", state: "done" },
+  { id: "auth", label: "Checking sign-in…", state: "active" },
+  { id: "tools", label: "Listing tools", state: "pending" },
+];
+const PREVIEW_UNREACHABLE =
+  "Couldn't reach mcp.acme.dev (timed out after 10 s). Check the URL, VPN, or that the server is running.";
+const PREVIEW_AUTH_ERROR =
+  'Notion returned "access_denied". You may have closed the window or declined access.';
 
 export function ConnectorsPanel({
   open,
@@ -87,42 +97,60 @@ export function ConnectorsPanel({
   const oauthExisting = useRef<string | null>(null);
   const popupWatch = useRef<ReturnType<typeof setInterval> | null>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
-  const [search, setSearch] = useState(initialQuery);
+  const [search, setSearch] = useState(preview ? previewSearch(preview) : initialQuery);
   const [category, setCategory] = useState<CatalogCategory>("popular");
   const [hint, setHint] = useState("");
-  const [mode, setMode] = useState(intent === "add" ? "add" : "list");
-  const [steps, setSteps] = useState<Step[]>(DETECTING_STEPS);
-  const [draft, setDraft] = useState<Draft | null>(null);
-  const [manageId, setManageId] = useState<string | null>(null);
-  const [localTools, setLocalTools] = useState<UiTool[]>([]);
+  const [mode, setMode] = useState(
+    preview ? previewMode(preview) : intent === "add" ? "add" : "list",
+  );
+  const [steps, setSteps] = useState<Step[]>(preview ? PREVIEW_STEPS : DETECTING_STEPS);
+  const [draft, setDraft] = useState<Draft | null>(preview ? previewDraft(preview) : null);
+  const [manageId, setManageId] = useState<string | null>(
+    preview === "manage" || preview === "disconnect"
+      ? "preview-notion"
+      : preview === "details"
+        ? "preview-postgres"
+        : null,
+  );
+  const [localTools, setLocalTools] = useState<UiTool[]>(preview ? previewTools(preview) : []);
   const [toolError, setToolError] = useState<string | null>(null);
   const [keyVisible, setKeyVisible] = useState(false);
   const [keyError, setKeyError] = useState<string | null>(null);
   const [waiting, setWaiting] = useState(false);
-  const [authError, setAuthError] = useState<string | null>(null);
+  const [authError, setAuthError] = useState<string | null>(preview ? PREVIEW_AUTH_ERROR : null);
   const [toast, setToast] = useState<string | null>(null);
   const [noted, setNoted] = useState("");
   const [menu, setMenu] = useState<"bulk" | "tool" | null>(null);
   const [menuTool, setMenuTool] = useState<string | null>(null);
   const [tileIndex, setTileIndex] = useState(0);
   const [doneId, setDoneId] = useState<string | null>(null);
-  const [unreachable, setUnreachable] = useState("");
+  const [unreachable, setUnreachable] = useState(preview ? PREVIEW_UNREACHABLE : "");
 
   const shownConnectors = preview ? previewConnectors(preview, connectors) : connectors;
   const active = shownConnectors.find((connector) => connector.id === manageId) ?? null;
+  const [appliedPreview, setAppliedPreview] = useState<string | null>(preview ?? null);
+  if (open && preview && appliedPreview !== preview) {
+    setAppliedPreview(preview);
+    applyPreviewState(preview, {
+      setMode,
+      setSearch,
+      setUnreachable,
+      setAuthError,
+      setDraft,
+      setLocalTools,
+      setSteps,
+      setManageId,
+    });
+  }
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || preview) return;
     setSearch(initialQuery);
     setCategory("popular");
     setHint("");
     setToolError(null);
     setNoted("");
     setWaiting(false);
-    if (preview) {
-      applyPreview(preview);
-      return;
-    }
     setMode(intent === "add" || initialQuery ? "add" : "list");
   }, [open, intent, initialQuery, preview]);
 
@@ -243,27 +271,6 @@ export function ConnectorsPanel({
     const base = catalogInCategory(category);
     return search.trim() ? searchCatalog(search, base) : base;
   }, [category, search]);
-
-  function applyPreview(name: string) {
-    setMode(previewMode(name));
-    setSearch(previewSearch(name));
-    setUnreachable(
-      "Couldn't reach mcp.acme.dev (timed out after 10 s). Check the URL, VPN, or that the server is running.",
-    );
-    setAuthError(
-      'Notion returned "access_denied". You may have closed the window or declined access.',
-    );
-    setDraft(previewDraft(name));
-    setLocalTools(previewTools(name));
-    setSteps([
-      { id: "reach", label: "Reached server (212 ms)", state: "done" },
-      { id: "transport", label: "Transport: Streamable HTTP", state: "done" },
-      { id: "auth", label: "Checking sign-in…", state: "active" },
-      { id: "tools", label: "Listing tools", state: "pending" },
-    ]);
-    if (name === "manage" || name === "disconnect") setManageId("preview-notion");
-    if (name === "details") setManageId("preview-postgres");
-  }
 
   async function probe(value: string, apiKey = "") {
     const detected = detectInput(value);
@@ -1495,11 +1502,35 @@ function nameFromTarget(target: string): string {
   }
 }
 
+function applyPreviewState(
+  name: string,
+  setters: {
+    setMode: (mode: string) => void;
+    setSearch: (search: string) => void;
+    setUnreachable: (message: string) => void;
+    setAuthError: (message: string) => void;
+    setDraft: (draft: Draft | null) => void;
+    setLocalTools: (tools: UiTool[]) => void;
+    setSteps: (steps: Step[]) => void;
+    setManageId: (id: string | null) => void;
+  },
+) {
+  setters.setMode(previewMode(name));
+  setters.setSearch(previewSearch(name));
+  setters.setUnreachable(PREVIEW_UNREACHABLE);
+  setters.setAuthError(PREVIEW_AUTH_ERROR);
+  setters.setDraft(previewDraft(name));
+  setters.setLocalTools(previewTools(name));
+  setters.setSteps(PREVIEW_STEPS);
+  if (name === "manage" || name === "disconnect") setters.setManageId("preview-notion");
+  if (name === "details") setters.setManageId("preview-postgres");
+}
+
 function previewMode(preview: string): string {
   if (preview === "catalog" || preview === "loading") return "add";
   if (preview === "oauth" || preview === "oauth-wait") return "oauth";
   if (preview === "connected") return "done";
-  if (preview === "empty" || preview === "error") return "list";
+  if (preview === "empty" || preview === "error" || preview === "reconnect") return "list";
   if (preview === "partial") return "review";
   return preview;
 }
