@@ -321,7 +321,11 @@ export async function streamChatTurn(options: {
           if (signal?.aborted) abortRound();
           else signal?.addEventListener("abort", abortRound, { once: true });
 
-          const modelEvents = provider.stream(history, providerSignal);
+          const modelEvents = provider.stream(history, {
+            signal: providerSignal,
+            tools: exposed,
+            conversationId: conversationSnapshot.id,
+          });
           const events = delegateTool
             ? runWithDelegate(modelEvents, async (call) => {
                 let args: Record<string, unknown>;
@@ -401,7 +405,12 @@ export async function streamChatTurn(options: {
             liveCalls.push(call);
             const output = await executeCall(call);
             if (output === null) break;
-            history.push({ role: "tool", tool_call_id: call.id, content: output });
+            history.push({
+              role: "tool",
+              tool_call_id: call.id,
+              content: output,
+              failed: call.status === "error",
+            });
           }
           if (signal?.aborted || userStopped) break;
         }

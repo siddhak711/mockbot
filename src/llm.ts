@@ -18,6 +18,11 @@ export const MOCK_TOOL_RESULT =
 export type StreamOptions = {
   tools?: readonly ToolDefinition[];
   signal?: AbortSignal;
+  /** Overrides the provider model for this request. The router sets it per turn. */
+  model?: string;
+  conversationId?: string;
+  /** The previous attempt on this turn failed. The router escalates when this is set. */
+  retryAfterFailure?: boolean;
 };
 
 export interface LlmProvider {
@@ -32,8 +37,19 @@ export interface LlmProvider {
 export function streamOptions(input?: StreamOptions | AbortSignal): StreamOptions {
   if (!input) return {};
   if (input instanceof AbortSignal) {
-    const tools = (input as AbortSignal & { tools?: readonly ToolDefinition[] }).tools;
-    return tools ? { signal: input, tools } : { signal: input };
+    const extra = input as AbortSignal & {
+      tools?: readonly ToolDefinition[];
+      model?: string;
+      conversationId?: string;
+      retryAfterFailure?: boolean;
+    };
+    return {
+      signal: input,
+      ...(extra.tools ? { tools: extra.tools } : {}),
+      ...(extra.model ? { model: extra.model } : {}),
+      ...(extra.conversationId ? { conversationId: extra.conversationId } : {}),
+      ...(extra.retryAfterFailure ? { retryAfterFailure: true } : {}),
+    };
   }
   return input;
 }
@@ -526,7 +542,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     messages: LlmMessage[],
     input?: StreamOptions | AbortSignal,
   ): AsyncIterable<LlmStreamEvent> {
-    const { signal, tools = [] } = streamOptions(input);
+    const { signal, tools = [], model } = streamOptions(input);
     let response: Response;
     try {
       response = await fetch(`${this.#baseUrl}/chat/completions`, {
@@ -537,7 +553,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
           Accept: "text/event-stream",
         },
         body: JSON.stringify({
-          model: this.model,
+          model: model || this.model,
           stream: true,
           messages: messages.map(wireMessage),
           ...(tools.length > 0 ? { tools: wireTools(tools), tool_choice: "auto" } : {}),

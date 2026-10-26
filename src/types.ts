@@ -72,6 +72,11 @@ export type LlmMessage = {
   content: string;
   tool_calls?: LlmToolCall[];
   tool_call_id?: string;
+  /**
+   * Live tool results set this when the tool failed. It is not sent to the
+   * provider. The model router uses it to escalate the next round.
+   */
+  failed?: boolean;
 };
 
 export type ProviderId = "mock" | "openai";

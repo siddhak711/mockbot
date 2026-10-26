@@ -123,6 +123,17 @@ npm run dev
 
 You can put the same variables in `.env.local`. Names are listed in `.env.example`.
 
+## Model router
+
+Each model call goes through `pickModel`. The choice is a set of rules. There is no classifier model.
+
+| Turn                                                                                                  | Tier   | Default id                                                 |
+| ----------------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------- |
+| Chat, or a simple tool call (`web_search`, calendar, memory, `tool_search`, and other non-code tools) | cheap  | `MODEL_TIER_CHEAP`, default `deepseek/deepseek-v4.1-flash` |
+| A plan, a code task (`write`, `exec`, or a coding request), or a retry after a failed tool            | strong | `MODEL_TIER_STRONG`, default `deepseek/deepseek-chat`      |
+
+Both ids have to be open-weights models. A closed id in either variable refuses to load. Prices (`MODEL_TIER_*_USD_PER_MTOK`) are list prices used to log the cost of the call. The chosen tier, model id, and cost are written to `run_events` when that table exists. Until the run-replay log lands, the logger no-ops instead of failing the turn. `LLM_MODEL` is still the inner provider's configured model. Routed requests send the tier id.
+
 ## Tools
 
 The server keeps a tool registry. Each tool has a name, a JSON schema, and an invoke function, in the same shape as an MCP tool. A turn exposes at most 15 tools to the model. `tool_search` is always one of them and finds the rest by name or description. With no keys configured, the tools return mock data and do not touch the network. The live mock provider answers an ordinary message without inventing a tool call. A message that asks for the sandbox computer asks the registry to run the computer tools. Any other model that requests tools still runs them through the registry. Tests can opt the mock provider into a multi-step demo that searches the catalog and then calls another tool.

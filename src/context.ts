@@ -3,6 +3,7 @@ import { withAgentMock } from "./agents/mock-script";
 import { NoteMemory, defaultComputer, defaultConnector } from "./agents/ports";
 import type { AgentMemoryPort, ComputerPort, ConnectorPort } from "./agents/types";
 import { selectProvider, type LlmProvider } from "./llm";
+import { loadRouterConfig, RoutingProvider } from "./model-router";
 import { RoutineStore } from "./routines/store";
 import { openComputer } from "./sandbox/open";
 import type { ComputerSupervisor } from "./sandbox/supervisor";
@@ -133,7 +134,11 @@ async function openApp(): Promise<AppContext> {
     registerMemoryTools(tools, store);
     registerComputerTools(tools, sandbox);
     const agents = await AgentDirectory.attach(store);
-    const inner = withAgentMock(selectProvider(process.env));
+    const inner = new RoutingProvider({
+      inner: withAgentMock(selectProvider(process.env)),
+      config: loadRouterConfig(process.env),
+      db: store.connection,
+    });
     return {
       store,
       sandbox,
