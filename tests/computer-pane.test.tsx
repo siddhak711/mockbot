@@ -184,6 +184,36 @@ describe("computer trace", () => {
     expect(within(list).queryByText("cat hello.txt")).toBeNull();
   });
 
+  it("stays collapsed when a refresh rebuilds the same runs", () => {
+    const noiseFirst = [
+      run({ id: "cat", tool: "exec", command: "cat hello.txt", stdout: "hello" }),
+      run({
+        id: "write",
+        tool: "write",
+        arguments: { path: "a.ts" },
+        stdout: "Wrote a.ts",
+        changedFiles: ["a.ts"],
+      }),
+    ];
+    const view = snapshot();
+    const { rerender } = render(<ComputerPane snapshot={{ ...view, runs: noiseFirst }} />);
+    const list = screen.getByRole("list", { name: "Sandbox runs" });
+    fireEvent.click(within(list).getByText("Hide"));
+    expect(within(list).queryByText("cat hello.txt")).toBeNull();
+
+    rerender(
+      <ComputerPane
+        snapshot={{
+          ...view,
+          runs: noiseFirst.map((item) => ({ ...item, arguments: { ...item.arguments } })),
+        }}
+      />,
+    );
+    const refreshed = screen.getByRole("list", { name: "Sandbox runs" });
+    expect(within(refreshed).queryByText("cat hello.txt")).toBeNull();
+    expect(within(refreshed).getByText("Show")).toBeTruthy();
+  });
+
   it("truncates long output until it is expanded", () => {
     const lines = Array.from({ length: 24 }, (_, index) => `line-${index + 1}`);
     lines.push("TAIL_MARKER");
