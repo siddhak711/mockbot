@@ -88,6 +88,42 @@ it("renders the full raw transcript with labels and no truncation", () => {
   expect(text).not.toContain("…");
 });
 
+it("marks a built-in mock tool result and leaves connector results unmarked", () => {
+  const result = '{\n  "provider": "mock",\n  "query": "mockbot"\n}';
+  const text = renderRawTranscript([
+    message({
+      id: "a",
+      role: "assistant",
+      content: "",
+      trace: {
+        ...trace,
+        system: "",
+        prefill: "",
+        reasoning: "",
+        text: "",
+        segments: [
+          { type: "tool", index: 0 },
+          { type: "tool", index: 1 },
+        ],
+        tools: [
+          { index: 0, id: "call_search", name: "web_search", arguments: "{}", result },
+          {
+            index: 1,
+            id: "call_notion",
+            name: "notion_search_pages",
+            arguments: "{}",
+            result,
+          },
+        ],
+      },
+    }),
+  ]);
+
+  expect(text).toContain("[TOOL CALL: web_search]\nid: call_search\nMOCK\ninput:\n{}");
+  expect(text).toContain("[TOOL CALL: notion_search_pages]\nid: call_notion\ninput:\n{}");
+  expect(text).not.toContain("[TOOL CALL: notion_search_pages]\nid: call_notion\nMOCK");
+});
+
 it("keeps tool calls that happened after text in that order", () => {
   const text = renderRawTranscript([
     message({ id: "u", role: "user", content: "Go" }),

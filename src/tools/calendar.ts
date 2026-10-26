@@ -1,4 +1,5 @@
 import { asRecord, jsonResult, present, readJson, toolFetchInit } from "./http";
+import { warnMockFallback } from "./mock-fallback";
 import type { FetchLike, ToolDefinition } from "./types";
 
 const EVENTS_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
@@ -124,6 +125,7 @@ export function calendarTool(
     async invoke(args, context) {
       const token = present(env.GOOGLE_CALENDAR_ACCESS_TOKEN);
       if (!token) {
+        warnMockFallback("google_calendar", "GOOGLE_CALENDAR_ACCESS_TOKEN");
         if (args.action === "list") {
           return {
             content: jsonResult({

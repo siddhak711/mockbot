@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { GET, POST } from "../app/api/computer/route";
 import { resetAppContext, setAppContext } from "../src/context";
 import { withAgentMock } from "../src/agents/mock-script";
@@ -92,6 +92,7 @@ describe("sandbox", { concurrent: false }, () => {
   });
 
   it("creates a file, reads it back, and runs a command that prints it", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const supervisor = await openComputer({ env: {}, dataDir: "memory://" });
     const write = await supervisor.invoke("agent", "write", {
       path: "hello.txt",
@@ -103,6 +104,12 @@ describe("sandbox", { concurrent: false }, () => {
     expect(write.result.isError).toBeUndefined();
     expect(write.run.changedFiles).toEqual(["hello.txt"]);
     expect(read.result.content).toContain("hello from the sandbox");
+    expect(read.result.content.startsWith('{"provider":"mock"}\n')).toBe(true);
+    expect(exec.result.content.startsWith('{"provider":"mock"}\n')).toBe(true);
+    expect(warn).toHaveBeenCalledWith(
+      "sandbox is using a mock implementation because DAYTONA_API_KEY is not set.",
+    );
+    warn.mockRestore();
     expect(exec.result.isError).toBeUndefined();
     expect(exec.run.command).toBe("cat hello.txt");
     expect(exec.run.stdout).toBe("hello from the sandbox");
@@ -241,6 +248,7 @@ describe("sandbox", { concurrent: false }, () => {
 
     const again = await supervisor.invoke("agent-a", "exec", { command: "cat note.txt" });
     expect(again.run.stdout).toContain("from-a");
+    expect(again.result.content).not.toContain('"provider": "mock"');
     expect(again.run.exitCode).toBe(0);
     expect(fleet.execs.at(-1)).toMatchObject({ cwd: "workspace", timeoutSec: 1 });
     expect(fleet.creates).toHaveLength(2);

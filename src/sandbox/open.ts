@@ -1,4 +1,5 @@
 import { isHostedRuntime, type ProcessEnv } from "../db/open";
+import { warnMockFallback } from "../tools/mock-fallback";
 import {
   createSdkFleet,
   DaytonaRuntime,
@@ -39,10 +40,15 @@ export async function openComputer(options: {
     const settings = readDaytonaSettings(env);
     const runtime: SandboxRuntime = settings
       ? new DaytonaRuntime(options.fleet ?? (await createSdkFleet(env)), store, settings.apiKey)
-      : new MockSandboxRuntime(store);
+      : mockSandboxRuntime(store);
     return new ComputerSupervisor(store, runtime, commandTimeoutMs(env));
   } catch (error) {
     await store.close();
     throw error;
   }
+}
+
+function mockSandboxRuntime(store: SandboxStore): MockSandboxRuntime {
+  warnMockFallback("sandbox", "DAYTONA_API_KEY");
+  return new MockSandboxRuntime(store);
 }

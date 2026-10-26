@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import { isLiveTraceTurn } from "../components/token-stream";
 import { assistantHasVisibleBody, liveAssistantId } from "../components/transcript";
 import { activityStaysInChat } from "../src/chat-activities";
+import { isMockToolResult } from "../src/tools/display";
 import { runtimeStatusLabel, showThinkingRow, tokenStreamEntries } from "../src/token-stream";
 import type { ToolActivity } from "../src/tools/display";
 import type { Message, MessageTrace } from "../src/types";
@@ -28,6 +29,29 @@ it("builds token stream rows from a stored assistant trace", () => {
 
 it("returns no rows when there is no trace", () => {
   expect(tokenStreamEntries(null)).toEqual([]);
+});
+
+it("flags a mock tool result so the trace can badge it", () => {
+  const result = '{\n  "provider": "mock",\n  "query": "mockbot"\n}';
+  expect(isMockToolResult("web_search", result)).toBe(true);
+  expect(isMockToolResult("exec", '{"provider":"mock"}\nexit_code: 0')).toBe(true);
+  expect(isMockToolResult("web_search", '{\n  "provider": "tavily"\n}')).toBe(false);
+  expect(isMockToolResult("web_search", "plain text")).toBe(false);
+  expect(isMockToolResult("notion_search_pages", result)).toBe(false);
+  const rows = tokenStreamEntries(
+    {
+      ...fullTrace,
+      tools: [
+        { index: 0, id: "1", name: "web_search", arguments: "{}", result },
+        { index: 1, id: "2", name: "notion_search_pages", arguments: "{}", result },
+      ],
+    },
+    "Hello",
+  );
+  expect(rows.filter((row) => row.kind === "tool")).toEqual([
+    { kind: "tool", label: "web_search", detail: "done", mock: true },
+    { kind: "tool", label: "notion_search_pages", detail: "done" },
+  ]);
 });
 
 it("shows a thinking row before the answer starts streaming", () => {

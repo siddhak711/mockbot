@@ -1,3 +1,4 @@
+import { isMockToolResult } from "./tools/display";
 import type { Message, TraceSegment } from "./types";
 
 export type RawToolActivity = {
@@ -92,6 +93,7 @@ function resolveTools(message: Message, activities: readonly RawToolActivity[]):
 function formatTool(tool: ResolvedTool): string {
   const lines = [`[TOOL CALL: ${tool.name || "tool"}]`];
   if (tool.id) lines.push(`id: ${tool.id}`);
+  if (isMockToolResult(tool.name, tool.output)) lines.push("MOCK");
   lines.push("input:", tool.input, "output:", tool.output ?? "");
   return lines.join("\n");
 }
