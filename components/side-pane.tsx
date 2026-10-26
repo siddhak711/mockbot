@@ -1,6 +1,8 @@
 "use client";
 
 import { ComputerPane } from "./computer-pane";
+import { IconTip } from "./icon-tip";
+import { HidePanelIcon, MemoryIcon, MonitorIcon, TraceIcon } from "./icons";
 import { MemoryPanel } from "./memory-panel";
 import { TokenStreamPanel } from "./token-stream";
 import type { ComputerSnapshot } from "../src/sandbox/types";
@@ -40,6 +42,7 @@ export function SidePane({
   messages?: Message[];
   streaming?: boolean;
 }) {
+  const memoryLabel = memories && memories.length > 0 ? `Memory ${memories.length}` : "Memory";
   return (
     <aside
       className="computer"
@@ -47,38 +50,43 @@ export function SidePane({
     >
       <header className="pane-h">
         <div className="pane-tabs" role="tablist" aria-label="Side panel">
-          <button
-            type="button"
+          <IconTip
+            label="Computer"
             role="tab"
             aria-selected={tab === "computer"}
             className={tab === "computer" ? "on" : undefined}
             onClick={() => onTab("computer")}
           >
-            Computer
-          </button>
-          <button
-            type="button"
+            <MonitorIcon />
+          </IconTip>
+          <IconTip
+            label={memoryLabel}
             role="tab"
             aria-selected={tab === "memory"}
             className={tab === "memory" ? "on" : undefined}
             onClick={() => onTab("memory")}
           >
-            Memory{memories && memories.length > 0 ? ` ${memories.length}` : ""}
-          </button>
-          <button
-            type="button"
+            <MemoryIcon />
+            {memories && memories.length > 0 ? (
+              <span className="tab-badge" aria-hidden="true">
+                {memories.length}
+              </span>
+            ) : null}
+          </IconTip>
+          <IconTip
+            label="Trace"
             role="tab"
             aria-selected={tab === "trace"}
             className={tab === "trace" ? "on" : undefined}
             onClick={() => onTab("trace")}
           >
-            Trace
-          </button>
+            <TraceIcon />
+          </IconTip>
         </div>
         {onHide ? (
-          <button type="button" className="ghost-text" onClick={onHide}>
-            Hide
-          </button>
+          <IconTip label="Hide" onClick={onHide}>
+            <HidePanelIcon />
+          </IconTip>
         ) : null}
       </header>
       {tab === "memory" ? (

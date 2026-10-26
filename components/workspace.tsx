@@ -6,7 +6,8 @@ import { CommandPalette } from "./command-palette";
 import { Composer } from "./composer";
 import { connectorForActivity, ConnectorsPanel } from "./connectors-panel";
 import { ConversationList } from "./conversation-list";
-import { MenuIcon, PlusIcon } from "./icons";
+import { IconTip } from "./icon-tip";
+import { MemoryIcon, MenuIcon, MonitorIcon, PencilIcon, PlusIcon, TrashIcon } from "./icons";
 import { Mochi } from "./mochi";
 import { SidePane, type SideTab } from "./side-pane";
 import { Transcript } from "./transcript";
@@ -880,38 +881,37 @@ export function Workspace({
               <div className="header-actions">
                 {active ? (
                   <>
-                    <button
-                      type="button"
-                      className="ghost-text"
+                    <IconTip
+                      label="Rename"
                       onClick={() => {
                         setDraftTitle(active.title);
                         setEditing(true);
                       }}
                       disabled={streaming}
                     >
-                      Rename
-                    </button>
-                    <button
-                      type="button"
-                      className="ghost-text danger"
+                      <PencilIcon />
+                    </IconTip>
+                    <IconTip
+                      label="Delete"
+                      danger
                       onClick={() => void remove(active.id)}
                       disabled={streaming}
                     >
-                      Delete
-                    </button>
+                      <TrashIcon />
+                    </IconTip>
                   </>
                 ) : null}
-                <button type="button" className="ghost-text" onClick={showMemory}>
-                  Memory
-                </button>
+                <IconTip label="Memory" onClick={showMemory}>
+                  <MemoryIcon />
+                </IconTip>
                 {computerOpen ? null : (
-                  <button
-                    type="button"
-                    className="ghost-text desktop-only"
+                  <IconTip
+                    label="Show computer"
+                    className="desktop-only"
                     onClick={() => setComputerOpen(true)}
                   >
-                    Show computer
-                  </button>
+                    <MonitorIcon />
+                  </IconTip>
                 )}
               </div>
             </>
