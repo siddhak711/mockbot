@@ -32,4 +32,4 @@ Use sizes 16 / 24 / 32 / 64 / 128 (scale the SVG; no per-size redraw needed). 16
 
 ## Files
 
-sheet.png (all states, 128px, light+dark) · readability.png / readability@3x-zoom.png (16/24/32px both themes) · in-context-light.png / in-context-dark.png (cursor-style mockup) · build.py / ctx.py regenerate everything.
+Preview sheets live under `docs/design/` (the app does not serve them): `sheet.png` (all states, 128px, light+dark), `readability.png` / `readability@3x-zoom.png` (16/24/32px both themes), `in-context-light.png` / `in-context-dark.png` (cursor-style mockup). `build.py` / `ctx.py` regenerate everything.
