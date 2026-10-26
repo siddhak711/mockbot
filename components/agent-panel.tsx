@@ -7,6 +7,13 @@ import type { SpriteState } from "../src/sprite";
 import { CloseIcon, PlusIcon } from "./icons";
 import { Mochi } from "./mochi";
 
+const FOCUSABLE =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function focusableIn(root: HTMLElement) {
+  return [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => el.tabIndex >= 0);
+}
+
 export type AgentDraft = {
   name: string;
   instructions: string;
@@ -39,6 +46,7 @@ export function AgentPanel({
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const pendingRef = useRef(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
   pendingRef.current = pending;
 
@@ -49,11 +57,52 @@ export function AgentPanel({
 
   useEffect(() => {
     if (!open) return;
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") closeForm();
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const root = dialog;
+
+    const inerted: HTMLElement[] = [];
+    for (const node of document.body.children) {
+      if (!(node instanceof HTMLElement) || node.contains(root) || node.inert) continue;
+      node.inert = true;
+      inerted.push(node);
     }
+
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        closeForm();
+        return;
+      }
+      if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey) return;
+      const items = focusableIn(root);
+      if (items.length === 0) {
+        event.preventDefault();
+        return;
+      }
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (!first || !last) return;
+      const active = document.activeElement;
+      const inside = active instanceof Node && root.contains(active);
+      if (!inside) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+        return;
+      }
+      if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
     document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      for (const node of inerted) node.inert = false;
+    };
   }, [open]);
 
   async function submit() {
@@ -127,6 +176,7 @@ export function AgentPanel({
               }}
             >
               <div
+                ref={dialogRef}
                 className="agent-dialog"
                 role="dialog"
                 aria-modal="true"

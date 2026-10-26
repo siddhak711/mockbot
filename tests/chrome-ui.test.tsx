@@ -127,6 +127,45 @@ it("opens a new-agent dialog and closes it from Escape, the backdrop, and the X"
   expect(screen.queryByRole("dialog")).toBeNull();
 });
 
+it("keeps Tab inside the new-agent dialog", () => {
+  render(
+    <>
+      <button type="button">Send</button>
+      <AgentPanel
+        agents={[]}
+        activeAgentId="agent_default"
+        spriteState="idle"
+        busy={false}
+        onSelect={() => {}}
+        onCreate={async () => null}
+      />
+    </>,
+  );
+
+  const send = screen.getByRole("button", { name: "Send" });
+  fireEvent.click(screen.getByRole("button", { name: "New agent" }));
+  const dialog = screen.getByRole("dialog");
+  const close = screen.getByRole("button", { name: "Close" });
+  const create = screen.getByRole("button", { name: "Create agent" });
+  expect(send.closest("[inert]")).toBeTruthy();
+
+  create.focus();
+  fireEvent.keyDown(document, { key: "Tab" });
+  expect(document.activeElement).toBe(close);
+  expect(dialog.contains(document.activeElement)).toBe(true);
+
+  fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+  expect(document.activeElement).toBe(create);
+
+  send.focus();
+  fireEvent.keyDown(document, { key: "Tab" });
+  expect(document.activeElement).toBe(close);
+  expect(document.activeElement).not.toBe(send);
+
+  fireEvent.keyDown(document, { key: "Escape" });
+  expect(send.closest("[inert]")).toBeNull();
+});
+
 it("ignores Escape and backdrop dismissal while create is pending", async () => {
   let finish: (message: string | null) => void = () => {};
   const onCreate = vi.fn(
