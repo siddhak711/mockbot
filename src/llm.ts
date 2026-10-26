@@ -595,14 +595,26 @@ export class OpenAiCompatibleProvider implements LlmProvider {
   }
 }
 
+function httpBaseUrl(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
+    return trimmed.replace(/\/+$/, "");
+  } catch {
+    return undefined;
+  }
+}
+
 export function selectProvider(env: Record<string, string | undefined> = process.env): LlmProvider {
   const name = (env.LLM_PROVIDER ?? "mock").trim().toLowerCase() || "mock";
-  if (name === "mock") {
-    return new MockProvider({
+  const mock = () =>
+    new MockProvider({
       delayMs: numberFrom(env.MOCK_STREAM_DELAY_MS, 60),
       chunkSize: numberFrom(env.MOCK_CHUNK_SIZE, 8),
     });
-  }
+  if (name === "mock") return mock();
   const apiKey = env.LLM_API_KEY?.trim() ?? "";
   if (!apiKey) {
     throw new Error(
@@ -611,9 +623,12 @@ export function selectProvider(env: Record<string, string | undefined> = process
         : `Unknown LLM_PROVIDER "${name}". Expected "mock" or "openai".`,
     );
   }
+  const configured = env.LLM_BASE_URL?.trim();
+  const baseUrl = httpBaseUrl(configured);
+  if (configured && !baseUrl) return mock();
   return new OpenAiCompatibleProvider({
     apiKey,
-    baseUrl: env.LLM_BASE_URL?.trim() || DEFAULT_OPENAI_BASE_URL,
+    baseUrl: baseUrl || DEFAULT_OPENAI_BASE_URL,
     model: env.LLM_MODEL?.trim() || DEFAULT_OPENAI_MODEL,
   });
 }
