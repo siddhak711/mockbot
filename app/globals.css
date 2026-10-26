@@ -2678,6 +2678,36 @@ a.icon-btn {
   gap: 8px;
 }
 
+.connector-section {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.connected-connectors {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.connector-catalog {
+  margin-top: 20px;
+}
+
+.connector-catalog .connector-empty.inline {
+  min-height: 0;
+  align-items: flex-start;
+  justify-content: flex-start;
+  text-align: left;
+  padding: 8px 0 0;
+}
+
+.connector-catalog .connector-empty.inline h3 {
+  margin: 0;
+}
+
 .skeleton-tile {
   height: 92px;
   border-radius: var(--radius-lg);
