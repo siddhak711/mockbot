@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import type { Agent } from "../src/agents/types";
 import type { SpriteState } from "../src/sprite";
+import { runtimeStatusLabel, type RuntimeStatus } from "../src/token-stream";
 import { AgentPanel, type AgentDraft } from "./agent-panel";
 import { ClockIcon, ComposeIcon, GearIcon, PlugIcon, TrafficLights } from "./icons";
 import { ThemeToggle } from "./theme";
@@ -30,7 +31,7 @@ export function ConversationList({
   agents,
   activeAgentId,
   spriteState,
-  providerLabel,
+  runtimeStatus,
   busy,
   open,
   onNew,
@@ -45,7 +46,7 @@ export function ConversationList({
   agents: Agent[];
   activeAgentId: string;
   spriteState: SpriteState;
-  providerLabel: string;
+  runtimeStatus: RuntimeStatus;
   busy: boolean;
   open: boolean;
   onNew: () => void;
@@ -58,6 +59,7 @@ export function ConversationList({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const groups = groupsFor(conversations);
   const names = new Map(agents.map((agent) => [agent.id, agent.name]));
+  const status = runtimeStatusLabel(runtimeStatus);
 
   return (
     <aside className={open ? "sidebar open" : "sidebar"}>
@@ -121,11 +123,17 @@ export function ConversationList({
         </section>
         {children}
       </div>
-      <footer className="me">
-        <span className="ava" aria-hidden="true">
-          M
-        </span>
-        <span className="me-label">{providerLabel}</span>
+      <footer className="me" title={status.full}>
+        <div className="me-identity">
+          <span className="ava" aria-hidden="true">
+            M
+          </span>
+          <div className="me-copy">
+            <span className="me-name">Mockbot</span>
+            <span className="me-model">{status.title}</span>
+            <span className="me-meta">{status.subtitle}</span>
+          </div>
+        </div>
         {onOpenConnectors ? (
           <span className="settings-anchor">
             {settingsOpen ? (
