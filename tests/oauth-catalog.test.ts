@@ -171,6 +171,56 @@ it("exchanges a Notion code, stores the real token, and rejects a mismatched sta
   }
 });
 
+it("escapes a provider account label so it cannot close the callback script", async () => {
+  withOAuthEnv();
+  const store = await ConversationStore.open();
+  setAppContext({
+    store,
+    provider: new MockProvider({ delayMs: 0 }),
+    tools: createDefaultTools({}),
+  });
+  const label = "</script><script>alert(1)</script>";
+  const original = globalThis.fetch;
+  globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+    const url = requestUrl(input);
+    if (url !== "https://api.notion.com/v1/oauth/token") {
+      throw new Error(`unexpected fetch ${url}`);
+    }
+    return new Response(
+      JSON.stringify({
+        access_token: "ntn_access",
+        refresh_token: "ntn_refresh",
+        workspace_name: label,
+        token_type: "bearer",
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }) as typeof fetch;
+  try {
+    const start = await startOAuth(jsonRequest({ catalogId: "notion" }));
+    const started = (await start.json()) as { authorizeUrl: string };
+    const state = new URL(started.authorizeUrl).searchParams.get("state");
+    const callback = await oauthCallback(
+      new Request(
+        `http://localhost:3000/connectors/oauth/callback?code=notion-code&state=${state}`,
+        { headers: { cookie: cookiePair(start) } },
+      ),
+    );
+    const html = await callback.text();
+    expect(callback.status).toBe(200);
+    expect(html.match(/<\/script>/g)).toEqual(["</script>"]);
+    expect(html).not.toContain(label);
+    expect(html).toContain(
+      "\\u003c/script\\u003e\\u003cscript\\u003ealert(1)\\u003c/script\\u003e",
+    );
+    const connector = (await store.listConnectors())[0];
+    expect(connector?.accountLabel).toBe(label);
+  } finally {
+    globalThis.fetch = original;
+    clearOAuthEnv();
+  }
+});
+
 it("exchanges a GitHub code with PKCE and points the connector at the hosted MCP server", async () => {
   withOAuthEnv();
   const store = await ConversationStore.open();

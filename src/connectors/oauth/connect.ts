@@ -285,8 +285,8 @@ function htmlResponse(
   <p>${escapeHtml(result.message)}</p>
 </main>
 <script>
-  const payload = ${JSON.stringify(payload)};
-  const origin = ${JSON.stringify(result.origin)};
+  const payload = ${scriptJson(payload)};
+  const origin = ${scriptJson(result.origin)};
   if (window.opener) window.opener.postMessage(payload, origin);
   window.close();
 </script>
@@ -300,6 +300,18 @@ function htmlResponse(
       "set-cookie": clearOAuthCookie(secure),
     },
   });
+}
+
+/** JSON for an inline script. Escapes characters that can close the script tag. */
+export function scriptJson(value: unknown): string {
+  return JSON.stringify(value)
+    .replace(/[<>&]/g, (char) => {
+      if (char === "<") return "\\u003c";
+      if (char === ">") return "\\u003e";
+      return "\\u0026";
+    })
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
 }
 
 function escapeHtml(value: string): string {
