@@ -294,6 +294,18 @@ The same form is on the Routines page.
 - `PATCH /api/routines/:id` with `{ "status": "paused" }` or `{ "status": "active" }` pauses or resumes it.
 - `POST /api/routines/events` with `{ "name", "payload": "optional" }` stores an event and schedules one run for each active routine listening for that name.
 
+## Smoke test
+
+`npm run test:e2e` drives a real browser against a running app. It does not stub Auth.js. Point `SMOKE_BASE_URL` at `npm run dev` or at a Vercel deployment, then set `SMOKE_TEST_EMAIL` and `SMOKE_TEST_PASSWORD` (at least 10 characters).
+
+The Playwright global setup calls `POST /api/auth/password` with `intent: "sign-up"`, the same handler as **Create an account**. That inserts the user into whatever database that server uses (embedded PGlite locally, Neon on Vercel). There is no separate seed script and no SQL to run. If the email already exists, setup signs in with the same password instead. If that password is wrong, delete the user or change `SMOKE_TEST_PASSWORD` to the password already stored for that email.
+
+The test then signs in through the login form, checks that the sidebar footer shows that email, logs out, and checks that `/` sends an anonymous visitor back to `/login`. Later connector and run-view specs can sit next to `e2e/smoke.spec.ts` and reuse the same account.
+
+Preview URLs and `https://mockbot-jet.vercel.app` are covered by Vercel Authentication. For those hosts, set `VERCEL_AUTOMATION_BYPASS_SECRET` to the project's Protection Bypass for Automation secret. The test sends it as `x-vercel-protection-bypass`.
+
+GitHub Actions workflow `e2e-smoke` runs this on pull requests against that commit's preview deployment, and on `main` against that commit's production deployment. The job name is `e2e-smoke`. The status check in a ruleset is `e2e-smoke / e2e-smoke`.
+
 ## Checks
 
 ```bash
@@ -303,4 +315,4 @@ npm run format:check
 npm test
 ```
 
-`npm run format` rewrites files with Prettier. GitHub Actions runs lint, typecheck, the format check, and tests on every push and pull request.
+`npm run format` rewrites files with Prettier. GitHub Actions runs lint, typecheck, the format check, and tests on every push and pull request. The deployment smoke test is the separate `e2e-smoke` workflow, not part of `npm test`.
