@@ -28,9 +28,10 @@ export async function POST(request: Request): Promise<Response> {
       registry: tools,
       connectors,
       env: process.env,
+      userId: actor.user.id,
       signal: request.signal,
       onToolResult: (connectorId, result) => {
-        void noteConnectorOutcome(store, connectorId, result);
+        void noteConnectorOutcome(store, connectorId, result, actor.user.id);
       },
       onTools: (connectorId, next) => {
         void store.updateConnectorTools(connectorId, next);
