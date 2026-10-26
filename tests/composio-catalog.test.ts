@@ -5,6 +5,7 @@ import { GET as listToolkits } from "../app/api/connectors/composio/toolkits/rou
 import { GET as oauthCallback } from "../app/connectors/oauth/callback/route";
 import { POST as startOAuth } from "../app/api/connectors/oauth/start/route";
 import { catalogById, composioConnectorTarget } from "../src/connectors/catalog";
+import { publicOrigin } from "../src/connectors/oauth/flow";
 import { setComposioBrokerForTests } from "../src/connectors/composio/broker";
 import { completeComposioConnect } from "../src/connectors/composio/flow";
 import type { PendingOAuth } from "../src/connectors/oauth/pending";
@@ -378,6 +379,46 @@ it("leaves the user unconnected when the catalog connector cannot be saved", asy
   ).rejects.toThrow(/no longer exists/);
   expect(await store.listComposioConnections("user_test")).toHaveLength(0);
   expect(await store.listConnectors()).toHaveLength(0);
+});
+
+it("builds the Composio callback from the request when APP_ORIGIN is unset", async () => {
+  await openComposio();
+  delete process.env.APP_ORIGIN;
+  const broker = notionBroker();
+  setComposioBrokerForTests(broker);
+  const start = await startOAuth(
+    new Request("http://localhost:3000/api/connectors/oauth/start", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-forwarded-host": "mockbot-jet.vercel.app",
+        "x-forwarded-proto": "https",
+      },
+      body: JSON.stringify({ catalogId: "notion" }),
+    }),
+  );
+  expect(start.status).toBe(200);
+  const callback = new URL(broker.lastCallback ?? "");
+  expect(callback.origin).toBe("https://mockbot-jet.vercel.app");
+  expect(callback.pathname).toBe("/connectors/oauth/callback");
+});
+
+it("resolves a public host header to https and keeps localhost on the request scheme", () => {
+  const preview = new Request("http://localhost:3000/api/connectors/oauth/start", {
+    headers: { host: "preview.example.com" },
+  });
+  expect(publicOrigin(preview, {})).toBe("https://preview.example.com");
+  const local = new Request("http://127.0.0.1:3000/api/connectors/oauth/start");
+  expect(publicOrigin(local, {})).toBe("http://127.0.0.1:3000");
+  const overridden = new Request("http://127.0.0.1:3000/api/connectors/oauth/start", {
+    headers: { "x-forwarded-host": "preview.example.com", "x-forwarded-proto": "https" },
+  });
+  expect(publicOrigin(overridden, { APP_ORIGIN: "https://mockbot-jet.vercel.app/" })).toBe(
+    "https://mockbot-jet.vercel.app",
+  );
+  expect(publicOrigin(local, { AUTH_URL: "https://mockbot-jet.vercel.app" })).toBe(
+    "http://127.0.0.1:3000",
+  );
 });
 
 it("pins Notion and GitHub toolkit versions unless the environment overrides them", () => {

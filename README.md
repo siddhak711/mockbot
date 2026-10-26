@@ -163,12 +163,14 @@ COMPOSIO_API_KEY=
 
 `COMPOSIO_API_KEY` is a server secret. It is not written into the repo, the prompt, or the browser. If it is unset, connect fails with that variable name and does not create a connector.
 
-The catalog sign-in window opens Composio's hosted URL. Composio sends the browser back to `/connectors/oauth/callback` on the app origin:
+The catalog sign-in window opens Composio's hosted URL. Composio sends the browser back to `/connectors/oauth/callback`. The callback origin does not require `APP_ORIGIN`:
 
-- Local: `http://localhost:3000/connectors/oauth/callback`
-- Production: `https://mockbot-jet.vercel.app/connectors/oauth/callback`
+1. `APP_ORIGIN`, when it is set to an http or https URL. This is an optional override.
+2. The incoming request. `x-forwarded-host` is used when the platform sends it, otherwise the `host` header. The scheme is `x-forwarded-proto` when that is `http` or `https`. A public host without that header uses `https`. A localhost host uses the request URL's scheme.
+3. The origin of the request URL, when those headers are absent.
+4. `AUTH_URL`, or `NEXTAUTH_URL` when `AUTH_URL` is unset. This is the URL NextAuth is configured with, and it is used only when the request URL is not an http or https origin.
 
-Set `APP_ORIGIN` to that site's origin when the request host would be different, for example `APP_ORIGIN=https://mockbot-jet.vercel.app` on Vercel and `APP_ORIGIN=http://localhost:3000` locally. If it is unset, the callback uses the incoming request origin.
+On Vercel that is the deployment host from the forwarded headers, so production and preview each call back to the site that started sign-in. Leave `APP_ORIGIN` unset.
 
 A finished sign-in stores a Composio connected-account id per user and catalog app in `composio_connections`. The id is a connection reference, not an access token. The connector row itself stays workspace-wide and does not hold the provider token or a person's account name. Tool calls for a chat turn use the signed-in user's connection. Another account has to connect the same app before those tools run for them. Disconnecting removes that person's link. The shared connector stays until nobody is linked. A failed sign-in marks reconnect on that person's link only.
 
