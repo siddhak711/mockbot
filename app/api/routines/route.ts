@@ -1,3 +1,4 @@
+import { requireApiUser } from "../../../src/auth/guard";
 import { getAppContext } from "../../../src/context";
 import type { Routine, RoutineRun } from "../../../src/routines/types";
 import { RoutineInputError } from "../../../src/routines/validate";
@@ -17,7 +18,9 @@ function text(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-export async function GET(): Promise<Response> {
+export async function GET(request?: Request): Promise<Response> {
+  const actor = await requireApiUser(request);
+  if (!actor.ok) return actor.response;
   const { routines } = await getAppContext();
   if (!routines) return Response.json({ error: "Routines are not available" }, { status: 500 });
   const listed = await routines.list();
@@ -28,6 +31,8 @@ export async function GET(): Promise<Response> {
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const actor = await requireApiUser(request);
+  if (!actor.ok) return actor.response;
   const body = await readJson(request);
   if (!body || typeof body !== "object") {
     return Response.json({ error: "Expected JSON body" }, { status: 400 });

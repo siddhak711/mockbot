@@ -107,6 +107,7 @@ export async function performDelegation(
     computer: ComputerPort;
     connector: ConnectorPort;
     parentAgentId: string;
+    userId?: string;
     signal?: AbortSignal;
   },
 ): Promise<DelegationOutcome> {
@@ -137,7 +138,11 @@ export async function performDelegation(
     };
   }
 
-  const conversation = await deps.store.createConversation(titleFromMessage(task), agent.id);
+  const conversation = await deps.store.createConversation(
+    titleFromMessage(task),
+    agent.id,
+    deps.userId,
+  );
   await deps.store.addMessage(conversation.id, "user", task);
   const grants = await deps.directory.listGrants(agent.id);
   const memories = await deps.memory.list(agent.id);

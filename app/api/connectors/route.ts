@@ -7,6 +7,7 @@ import {
   toPublicConnector,
   type ConnectorRecord,
 } from "../../../src/connectors";
+import { requireApiUser } from "../../../src/auth/guard";
 import { getAppContext } from "../../../src/context";
 import { assignMcpToolNames } from "../../../src/mcp/sync";
 import { redactSecrets, resolveSecret } from "../../../src/mcp/secrets";
@@ -16,13 +17,17 @@ import { isAbortError } from "../../../src/tools/http";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET(): Promise<Response> {
+export async function GET(request?: Request): Promise<Response> {
+  const actor = await requireApiUser(request);
+  if (!actor.ok) return actor.response;
   const { store } = await getAppContext();
   const connectors = (await store.listConnectors()).map(toPublicConnector);
   return Response.json({ connectors });
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const actor = await requireApiUser(request);
+  if (!actor.ok) return actor.response;
   let body: unknown;
   try {
     body = await request.json();

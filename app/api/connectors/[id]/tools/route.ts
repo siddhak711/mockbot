@@ -4,6 +4,7 @@ import {
   type ConnectorToolSetting,
 } from "../../../../../src/connectors";
 import { classifyToolRisk } from "../../../../../src/connectors/policy";
+import { requireApiUser } from "../../../../../src/auth/guard";
 import { getAppContext } from "../../../../../src/context";
 
 export const runtime = "nodejs";
@@ -12,6 +13,8 @@ export const dynamic = "force-dynamic";
 type RouteContext = { params: Promise<{ id: string }> };
 
 export async function PATCH(request: Request, context: RouteContext): Promise<Response> {
+  const actor = await requireApiUser(request);
+  if (!actor.ok) return actor.response;
   const { id } = await context.params;
   let body: unknown;
   try {

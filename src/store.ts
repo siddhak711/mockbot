@@ -224,23 +224,29 @@ export class ConversationStore {
     return result.rows.map((row) => row.id);
   }
 
-  async createConversation(title: string, agentId = LEAD_AGENT_ID): Promise<Conversation> {
+  async createConversation(
+    title: string,
+    agentId = LEAD_AGENT_ID,
+    userId?: string | null,
+  ): Promise<Conversation> {
     const id = crypto.randomUUID();
     const result = await this.db.query<ConversationRow>(
-      `INSERT INTO conversations (id, title, agent_id) VALUES ($1, $2, $3)
+      `INSERT INTO conversations (id, title, agent_id, user_id) VALUES ($1, $2, $3, $4)
        RETURNING id, title, agent_id, created_at, updated_at`,
-      [id, title, agentId],
+      [id, title, agentId, userId ?? null],
     );
     const row = result.rows[0];
     if (!row) throw new Error("Failed to create conversation");
     return mapConversation(row);
   }
 
-  async listConversations(): Promise<Conversation[]> {
+  async listConversations(userId?: string): Promise<Conversation[]> {
     const result = await this.db.query<ConversationRow>(
       `SELECT id, title, agent_id, created_at, updated_at
        FROM conversations
+       WHERE ($1::text IS NULL OR user_id = $1)
        ORDER BY updated_at DESC, id DESC`,
+      [userId ?? null],
     );
     return result.rows.map(mapConversation);
   }
@@ -248,14 +254,15 @@ export class ConversationStore {
   async getConversation(
     id: string,
     agentId?: string,
+    userId?: string,
   ): Promise<{ conversation: Conversation; messages: Message[] } | null> {
     const conversations = await this.db.query<ConversationRow>(
-      agentId
-        ? `SELECT id, title, agent_id, created_at, updated_at
-           FROM conversations
-           WHERE id = $1 AND agent_id = $2`
-        : `SELECT id, title, agent_id, created_at, updated_at FROM conversations WHERE id = $1`,
-      agentId ? [id, agentId] : [id],
+      `SELECT id, title, agent_id, created_at, updated_at
+       FROM conversations
+       WHERE id = $1
+         AND ($2::text IS NULL OR agent_id = $2)
+         AND ($3::text IS NULL OR user_id = $3)`,
+      [id, agentId ?? null, userId ?? null],
     );
     const conversation = conversations.rows[0];
     if (!conversation) return null;
@@ -283,22 +290,28 @@ export class ConversationStore {
     };
   }
 
-  async renameConversation(id: string, title: string): Promise<Conversation | null> {
+  async renameConversation(
+    id: string,
+    title: string,
+    userId?: string,
+  ): Promise<Conversation | null> {
     const result = await this.db.query<ConversationRow>(
       `UPDATE conversations
        SET title = $2, updated_at = NOW()
-       WHERE id = $1
+       WHERE id = $1 AND ($3::text IS NULL OR user_id = $3)
        RETURNING id, title, agent_id, created_at, updated_at`,
-      [id, title],
+      [id, title, userId ?? null],
     );
     const row = result.rows[0];
     return row ? mapConversation(row) : null;
   }
 
-  async deleteConversation(id: string): Promise<boolean> {
+  async deleteConversation(id: string, userId?: string): Promise<boolean> {
     const result = await this.db.query<{ id: string }>(
-      `DELETE FROM conversations WHERE id = $1 RETURNING id`,
-      [id],
+      `DELETE FROM conversations
+       WHERE id = $1 AND ($2::text IS NULL OR user_id = $2)
+       RETURNING id`,
+      [id, userId ?? null],
     );
     return result.rows.length > 0;
   }

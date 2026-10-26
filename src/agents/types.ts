@@ -5,6 +5,7 @@ export type Agent = {
   name: string;
   instructions: string;
   memoryNote: string;
+  isLead: boolean;
   createdAt: string;
 };
 

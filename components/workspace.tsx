@@ -15,6 +15,7 @@ import { useRunSprite } from "./use-run-sprite";
 import type { AgentDraft } from "./agent-panel";
 import { LEAD_AGENT_ID } from "../src/agents/ids";
 import type { Agent } from "../src/agents/types";
+import type { SignedInUser } from "../src/auth/user";
 import { releaseDecision, settleDecision, stopDecision } from "../src/decision-lock";
 import { applyMemoryRefresh, memoriesAfterAgentSwitch } from "../src/memory/panel-state";
 import { SseParser } from "../src/sse";
@@ -53,13 +54,21 @@ function preferRicherAssistant(local: Message[], remote: Message[]): Message[] {
   return remote;
 }
 
+function preferredAgentId(agents: Agent[], current: string): string {
+  if (agents.some((agent) => agent.id === current)) return current;
+  return agents.find((agent) => agent.isLead)?.id ?? agents[0]?.id ?? current;
+}
+
 export function Workspace({
+  user,
   connectorLaunch,
 }: {
+  user: SignedInUser;
   connectorLaunch?: { query?: string; preview?: string; intent?: "list" | "add" };
-} = {}) {
+}) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [agentsLoaded, setAgentsLoaded] = useState(false);
   const [activeAgentId, setActiveAgentId] = useState(LEAD_AGENT_ID);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -226,6 +235,8 @@ export function Workspace({
     if (!response.ok) return;
     const data = (await response.json()) as { agents: Agent[] };
     setAgents(data.agents);
+    setActiveAgentId((current) => preferredAgentId(data.agents, current));
+    setAgentsLoaded(true);
   }, []);
 
   useEffect(() => {
@@ -252,7 +263,11 @@ export function Workspace({
       }
       if (agentResponse.ok) {
         const agentData = (await agentResponse.json()) as { agents: Agent[] };
-        if (!cancelled) setAgents(agentData.agents);
+        if (!cancelled) {
+          setAgents(agentData.agents);
+          setActiveAgentId((current) => preferredAgentId(agentData.agents, current));
+          setAgentsLoaded(true);
+        }
       }
       if (!listResponse.ok) return;
       const data = (await listResponse.json()) as { conversations: Conversation[] };
@@ -750,12 +765,13 @@ export function Workspace({
   });
 
   useEffect(() => {
+    if (!agentsLoaded) return;
     if (memoryAgentRef.current !== speakingId) {
       memoryAgentRef.current = speakingId;
       clearMemoriesForSwitch();
     }
     void refreshMemories();
-  }, [speakingId, refreshMemories, clearMemoriesForSwitch]);
+  }, [agentsLoaded, speakingId, refreshMemories, clearMemoriesForSwitch]);
 
   return (
     <div className={computerOpen ? "app with-computer" : "app"}>
@@ -780,6 +796,7 @@ export function Workspace({
         onSelectAgent={selectAgent}
         onCreateAgent={createAgent}
         onOpenConnectors={() => openConnectors("list")}
+        user={user}
       ></ConversationList>
       <button
         type="button"

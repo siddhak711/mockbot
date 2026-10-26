@@ -8,10 +8,25 @@ CREATE TABLE IF NOT EXISTS agents (
   name TEXT NOT NULL,
   instructions TEXT NOT NULL,
   memory_note TEXT NOT NULL DEFAULT '',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  user_id TEXT,
+  is_lead BOOLEAN NOT NULL DEFAULT FALSE
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS agents_name_lower_idx ON agents (lower(name));
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS user_id TEXT;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS is_lead BOOLEAN NOT NULL DEFAULT FALSE;
+
+UPDATE agents SET is_lead = TRUE WHERE id = 'agent_default' AND is_lead = FALSE;
+
+DROP INDEX IF EXISTS agents_name_lower_idx;
+
+CREATE UNIQUE INDEX IF NOT EXISTS agents_name_per_user_idx
+  ON agents (user_id, lower(name))
+  WHERE user_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS agents_name_unscoped_idx
+  ON agents (lower(name))
+  WHERE user_id IS NULL;
 
 CREATE TABLE IF NOT EXISTS agent_grants (
   id TEXT PRIMARY KEY,

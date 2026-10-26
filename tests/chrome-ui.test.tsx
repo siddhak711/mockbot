@@ -87,6 +87,7 @@ it("renders the theme toggle in the sidebar header", () => {
         onSelectAgent={() => {}}
         onCreateAgent={async () => null}
         onOpenConnectors={() => {}}
+        user={{ id: "user_1", name: "Ada", email: "ada@example.com", image: null }}
       />
     </ThemeProvider>,
   );
@@ -96,7 +97,8 @@ it("renders the theme toggle in the sidebar header", () => {
   const footer = document.querySelector("footer.me");
   expect(header?.contains(toggle)).toBe(true);
   expect(footer?.contains(toggle)).toBe(false);
-  expect(footer?.textContent).toContain("Mockbot");
+  expect(footer?.textContent).toContain("Ada");
+  expect(footer?.textContent).toContain("ada@example.com");
   expect(footer?.textContent).toContain("deepseek/deepseek-v4.1-flash");
 });
 

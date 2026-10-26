@@ -1,3 +1,4 @@
+import { requireApiUser } from "../../../../src/auth/guard";
 import { getAppContext } from "../../../../src/context";
 import { RoutineInputError } from "../../../../src/routines/validate";
 
@@ -5,6 +6,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request): Promise<Response> {
+  const actor = await requireApiUser(request);
+  if (!actor.ok) return actor.response;
   let body: unknown;
   try {
     body = await request.json();
