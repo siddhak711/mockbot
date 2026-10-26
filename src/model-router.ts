@@ -39,21 +39,25 @@ export type RouteDecision = {
 };
 
 /**
- * Defaults are open-weights ids. Operators override them with MODEL_TIER_*.
- * Prices are list-price defaults used to log cost. They are not a live bill.
+ * Open-weights ids used when the base URL is OpenRouter, or when a tier var is unset there.
+ * Prices are OpenRouter list prices (USD per million tokens) used to log cost, not a live bill.
+ * Cheap: DeepSeek V4.1 Flash, $0.30 / $1.20. Strong: Kimi K3.1 Pro, $2 / $10.
  */
 export const DEFAULT_ROUTER_CONFIG: RouterConfig = {
   cheap: {
     id: "deepseek/deepseek-v4.1-flash",
-    inputUsdPerMillion: 0.14,
-    outputUsdPerMillion: 0.28,
+    inputUsdPerMillion: 0.3,
+    outputUsdPerMillion: 1.2,
   },
   strong: {
-    id: "deepseek/deepseek-chat",
-    inputUsdPerMillion: 0.27,
-    outputUsdPerMillion: 1.1,
+    id: "moonshotai/kimi-k3.1-pro",
+    inputUsdPerMillion: 2,
+    outputUsdPerMillion: 10,
   },
 };
+
+/** Same fallback as the OpenAI-compatible provider when LLM_MODEL is unset. */
+const PROVIDER_MODEL_FALLBACK = "gpt-4o-mini";
 
 const OPEN_WEIGHT_PREFIXES = [
   "deepseek/",
@@ -110,9 +114,9 @@ assertOpenWeights(DEFAULT_ROUTER_CONFIG.strong.id);
 export function loadRouterConfig(
   env: Record<string, string | undefined> = process.env,
 ): RouterConfig {
-  const config: RouterConfig = {
+  return {
     cheap: {
-      id: readId(env.MODEL_TIER_CHEAP, DEFAULT_ROUTER_CONFIG.cheap.id),
+      id: resolveTierId(env.MODEL_TIER_CHEAP, DEFAULT_ROUTER_CONFIG.cheap.id, env),
       inputUsdPerMillion: readRate(
         env.MODEL_TIER_CHEAP_INPUT_USD_PER_MTOK,
         DEFAULT_ROUTER_CONFIG.cheap.inputUsdPerMillion,
@@ -123,7 +127,7 @@ export function loadRouterConfig(
       ),
     },
     strong: {
-      id: readId(env.MODEL_TIER_STRONG, DEFAULT_ROUTER_CONFIG.strong.id),
+      id: resolveTierId(env.MODEL_TIER_STRONG, DEFAULT_ROUTER_CONFIG.strong.id, env),
       inputUsdPerMillion: readRate(
         env.MODEL_TIER_STRONG_INPUT_USD_PER_MTOK,
         DEFAULT_ROUTER_CONFIG.strong.inputUsdPerMillion,
@@ -134,9 +138,36 @@ export function loadRouterConfig(
       ),
     },
   };
-  assertOpenWeights(config.cheap.id);
-  assertOpenWeights(config.strong.id);
-  return config;
+}
+
+/**
+ * An explicit MODEL_TIER_* id wins. Otherwise an OpenRouter base URL uses the
+ * open-weights default. Any other base URL keeps LLM_MODEL, so a non-OpenRouter
+ * server is not sent an OpenRouter-style id.
+ */
+function resolveTierId(
+  explicit: string | undefined,
+  openWeightsDefault: string,
+  env: Record<string, string | undefined>,
+): string {
+  const configured = explicit?.trim();
+  if (configured) {
+    assertOpenWeights(configured);
+    return configured;
+  }
+  if (isOpenRouterBase(env.LLM_BASE_URL)) return openWeightsDefault;
+  return env.LLM_MODEL?.trim() || PROVIDER_MODEL_FALLBACK;
+}
+
+export function isOpenRouterBase(value: string | undefined): boolean {
+  const trimmed = value?.trim();
+  if (!trimmed) return false;
+  try {
+    const url = new URL(trimmed);
+    return url.hostname === "openrouter.ai" || url.hostname.endsWith(".openrouter.ai");
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -410,11 +441,6 @@ function impliedTools(text: string): RouterToolCall[] {
 function isCode(text: string, tools: readonly RouterToolCall[]): boolean {
   if (tools.some((tool) => CODE_TOOLS.has(tool.name))) return true;
   return CODE_TEXT.test(text);
-}
-
-function readId(value: string | undefined, fallback: string): string {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : fallback;
 }
 
 function readRate(value: string | undefined, fallback: number): number {

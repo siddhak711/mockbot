@@ -23,6 +23,18 @@ type ColumnInfo = {
 const RECENT_LIMIT = 200;
 const recent: ModelRouteEvent[] = [];
 
+type SchemaCache = { status: "missing" } | { status: "ready"; columns: ColumnInfo[] };
+
+/** One probe per process. A missing table stays missing until the process restarts. */
+let schemaCache: SchemaCache | null = null;
+let schemaProbe: Promise<SchemaCache> | null = null;
+
+/** Tests reset this after they create or drop `run_events` in the same process. */
+export function clearRunEventSchemaCache(): void {
+  schemaCache = null;
+  schemaProbe = null;
+}
+
 /**
  * Decisions the helper has seen in this process. Persistence is separate:
  * when `run_events` is missing, `logModelRoute` still records the attempt
@@ -77,17 +89,9 @@ export async function logModelRoute(
 }
 
 async function insertRunEvent(db: Sql, event: ModelRouteEvent): Promise<boolean> {
-  const present = await db.query<{ rel: string | null }>(
-    `SELECT to_regclass('public.run_events') AS rel`,
-  );
-  if (!present.rows[0]?.rel) return false;
-
-  const described = await db.query<ColumnInfo>(
-    `SELECT column_name, is_nullable, column_default, udt_name
-     FROM information_schema.columns
-     WHERE table_schema = 'public' AND table_name = 'run_events'`,
-  );
-  const columns = described.rows;
+  const schema = await loadSchema(db);
+  if (schema.status === "missing") return false;
+  const columns = schema.columns;
   if (columns.length === 0) return false;
 
   const payload = {
@@ -137,6 +141,36 @@ async function insertRunEvent(db: Sql, event: ModelRouteEvent): Promise<boolean>
     values,
   );
   return true;
+}
+
+async function loadSchema(db: Sql): Promise<SchemaCache> {
+  if (schemaCache) return schemaCache;
+  if (!schemaProbe) {
+    schemaProbe = probeSchema(db)
+      .then((result) => {
+        schemaCache = result;
+        schemaProbe = null;
+        return result;
+      })
+      .catch((error: unknown) => {
+        schemaProbe = null;
+        throw error;
+      });
+  }
+  return schemaProbe;
+}
+
+async function probeSchema(db: Sql): Promise<SchemaCache> {
+  const present = await db.query<{ rel: string | null }>(
+    `SELECT to_regclass('public.run_events') AS rel`,
+  );
+  if (!present.rows[0]?.rel) return { status: "missing" };
+  const described = await db.query<ColumnInfo>(
+    `SELECT column_name, is_nullable, column_default, udt_name
+     FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = 'run_events'`,
+  );
+  return { status: "ready", columns: described.rows };
 }
 
 function columnValue(

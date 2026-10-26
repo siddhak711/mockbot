@@ -16,7 +16,13 @@ import {
   SAMPLE_TURNS,
   type RouterTurn,
 } from "../src/model-router";
-import { clearRouteLogs, logModelRoute, recentRouteLogs } from "../src/run-events";
+import {
+  clearRouteLogs,
+  clearRunEventSchemaCache,
+  logModelRoute,
+  recentRouteLogs,
+} from "../src/run-events";
+import type { Sql } from "../src/db/sql";
 import { SandboxTurnProvider } from "../src/sandbox/turn";
 import { ConversationStore } from "../src/store";
 import { createDefaultTools } from "../src/tools/builtins";
@@ -24,6 +30,7 @@ import { readSse } from "./helpers";
 
 afterEach(async () => {
   clearRouteLogs();
+  clearRunEventSchemaCache();
   await resetAppContext();
 });
 
@@ -93,7 +100,7 @@ const RULES: Array<{ turn: RouterTurn; tier: "cheap" | "strong"; reason: string 
 ];
 
 it("routes each rule to the cheap or strong open-weights tier", () => {
-  const config = loadRouterConfig({});
+  const config = loadRouterConfig({ LLM_BASE_URL: "https://openrouter.ai/api/v1" });
   expect(config.cheap.id).toBe(DEFAULT_ROUTER_CONFIG.cheap.id);
   expect(config.strong.id).toBe(DEFAULT_ROUTER_CONFIG.strong.id);
   for (const rule of RULES) {
@@ -129,6 +136,27 @@ it("reads tier ids and prices from env and refuses a closed model", () => {
     /open-weights/,
   );
   expect(() => loadRouterConfig({ MODEL_TIER_CHEAP_INPUT_USD_PER_MTOK: "-1" })).toThrow(/price/i);
+});
+
+it("keeps both tiers on LLM_MODEL when tiers are unset and the base URL is not OpenRouter", () => {
+  const config = loadRouterConfig({
+    LLM_MODEL: "gpt-4o-mini",
+    LLM_BASE_URL: "https://api.openai.com/v1",
+  });
+  expect(config.cheap.id).toBe("gpt-4o-mini");
+  expect(config.strong.id).toBe("gpt-4o-mini");
+  expect(pickModel({ text: "Hey, what can you help me with today?" }, config).model).toBe(
+    "gpt-4o-mini",
+  );
+  expect(pickModel({ text: "Implement the parser in TypeScript" }, config).model).toBe(
+    "gpt-4o-mini",
+  );
+  const openRouter = loadRouterConfig({
+    LLM_MODEL: "gpt-4o-mini",
+    LLM_BASE_URL: "https://openrouter.ai/api/v1",
+  });
+  expect(openRouter.cheap.id).toBe(DEFAULT_ROUTER_CONFIG.cheap.id);
+  expect(openRouter.strong.id).toBe(DEFAULT_ROUTER_CONFIG.strong.id);
 });
 
 it("escalates the next round after a failed tool, and a later try-again", () => {
@@ -204,6 +232,7 @@ it("spends less on a sample multi-turn run than an all-strong baseline", async (
 
 it("logs the tier and cost to run_events, and no-ops when the table is absent", async () => {
   const store = await ConversationStore.open();
+  const counted = countSchemaQueries(store.connection);
   const event = {
     id: "route_test",
     kind: "model.route" as const,
@@ -216,13 +245,16 @@ it("logs the tier and cost to run_events, and no-ops when the table is absent", 
     conversationId: "conv_test",
   };
 
-  expect(await logModelRoute(event, store.connection)).toBe("noop");
-  expect(recentRouteLogs()).toEqual([event]);
+  expect(await logModelRoute(event, counted.db)).toBe("noop");
+  expect(await logModelRoute(event, counted.db)).toBe("noop");
+  expect(counted.schemaQueries).toBe(1);
+  expect(recentRouteLogs()).toEqual([event, event]);
   const missing = await store.connection.query<{ rel: string | null }>(
     `SELECT to_regclass('public.run_events') AS rel`,
   );
   expect(missing.rows[0]?.rel ?? null).toBeNull();
 
+  clearRunEventSchemaCache();
   await store.connection.exec(`
     CREATE TABLE run_events (
       id TEXT PRIMARY KEY,
@@ -235,15 +267,25 @@ it("logs the tier and cost to run_events, and no-ops when the table is absent", 
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
-  expect(await logModelRoute({ ...event, id: "route_test_2" }, store.connection)).toBe("logged");
+  const beforeInsert = counted.schemaQueries;
+  expect(await logModelRoute({ ...event, id: "route_test_2" }, counted.db)).toBe("logged");
+  expect(await logModelRoute({ ...event, id: "route_test_2b" }, counted.db)).toBe("logged");
+  expect(counted.schemaQueries - beforeInsert).toBe(2);
   const rows = await store.connection.query<{
     tier: string;
     model: string;
     cost_usd: number;
     payload: { costUsd?: number; tier?: string };
     conversation_id: string;
-  }>(`SELECT tier, model, cost_usd, payload, conversation_id FROM run_events`);
+  }>(`SELECT tier, model, cost_usd, payload, conversation_id FROM run_events ORDER BY id`);
   expect(rows.rows).toEqual([
+    {
+      tier: "cheap",
+      model: DEFAULT_ROUTER_CONFIG.cheap.id,
+      cost_usd: 0.00001234,
+      payload: expect.objectContaining({ tier: "cheap", costUsd: 0.00001234 }),
+      conversation_id: "conv_test",
+    },
     {
       tier: "cheap",
       model: DEFAULT_ROUTER_CONFIG.cheap.id,
@@ -253,9 +295,10 @@ it("logs the tier and cost to run_events, and no-ops when the table is absent", 
     },
   ]);
 
+  clearRunEventSchemaCache();
   await store.connection.exec(`DROP TABLE run_events`);
   await store.connection.exec(`CREATE TABLE run_events (id TEXT PRIMARY KEY, note TEXT NOT NULL)`);
-  expect(await logModelRoute({ ...event, id: "route_test_3" }, store.connection)).toBe("noop");
+  expect(await logModelRoute({ ...event, id: "route_test_3" }, counted.db)).toBe("noop");
   const notes = await store.connection.query(`SELECT id FROM run_events`);
   expect(notes.rows).toEqual([]);
 });
@@ -343,6 +386,28 @@ it("keeps routing when the sandbox provider wraps the router", async () => {
   expect(routed.lastDecision).toMatchObject({ tier: "cheap", reason: "chat" });
   expect(recentRouteLogs()[0]?.tier).toBe("cheap");
 });
+
+function countSchemaQueries(inner: Sql): { db: Sql; schemaQueries: number } {
+  const counted = { schemaQueries: 0 };
+  const db: Sql = {
+    driver: inner.driver,
+    async query(text, params) {
+      if (text.includes("to_regclass") || text.includes("information_schema")) {
+        counted.schemaQueries += 1;
+      }
+      return inner.query(text, params);
+    },
+    exec: (script) => inner.exec(script),
+    transaction: (fn) => inner.transaction(fn),
+    close: () => inner.close(),
+  };
+  return {
+    db,
+    get schemaQueries() {
+      return counted.schemaQueries;
+    },
+  };
+}
 
 async function readBody(request: IncomingMessage): Promise<string> {
   const chunks: Buffer[] = [];

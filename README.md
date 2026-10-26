@@ -127,12 +127,12 @@ You can put the same variables in `.env.local`. Names are listed in `.env.exampl
 
 Each model call goes through `pickModel`. The choice is a set of rules. There is no classifier model.
 
-| Turn                                                                                                  | Tier   | Default id                                                 |
-| ----------------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------- |
-| Chat, or a simple tool call (`web_search`, calendar, memory, `tool_search`, and other non-code tools) | cheap  | `MODEL_TIER_CHEAP`, default `deepseek/deepseek-v4.1-flash` |
-| A plan, a code task (`write`, `exec`, or a coding request), or a retry after a failed tool            | strong | `MODEL_TIER_STRONG`, default `deepseek/deepseek-chat`      |
+| Turn                                                                                                  | Tier   | Model id                                                                                              |
+| ----------------------------------------------------------------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------- |
+| Chat, or a simple tool call (`web_search`, calendar, memory, `tool_search`, and other non-code tools) | cheap  | `MODEL_TIER_CHEAP`, or `LLM_MODEL` unless the base URL is OpenRouter (`deepseek/deepseek-v4.1-flash`) |
+| A plan, a code task (`write`, `exec`, or a coding request), or a retry after a failed tool            | strong | `MODEL_TIER_STRONG`, or `LLM_MODEL` unless the base URL is OpenRouter (`moonshotai/kimi-k3.1-pro`)    |
 
-Both ids have to be open-weights models. A closed id in either variable refuses to load. Prices (`MODEL_TIER_*_USD_PER_MTOK`) are list prices used to log the cost of the call. The chosen tier, model id, and cost are written to `run_events` when that table exists. Until the run-replay log lands, the logger no-ops instead of failing the turn. `LLM_MODEL` is still the inner provider's configured model. Routed requests send the tier id.
+An explicit `MODEL_TIER_*` value has to be an open-weights id. A closed id refuses to load. When those variables are unset and `LLM_BASE_URL` is not OpenRouter, both tiers send `LLM_MODEL`, so another OpenAI-compatible server is not given an OpenRouter id. Prices (`MODEL_TIER_*_USD_PER_MTOK`) are list prices used to log the cost of the call. The chosen tier, model id, and cost are written to `run_events` when that table exists. The table lookup is cached for the process. Until the run-replay log lands, the logger no-ops instead of failing the turn.
 
 ## Tools
 
