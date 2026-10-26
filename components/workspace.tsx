@@ -105,6 +105,7 @@ export function Workspace({
   const [decidingId, setDecidingId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const computerRequest = useRef(0);
+  const agentLoadRequest = useRef(0);
   const activeIdRef = useRef<string | null>(null);
   const memoryAgentRef = useRef(LEAD_AGENT_ID);
   const memoriesRef = useRef<Memory[] | null>(null);
@@ -178,7 +179,9 @@ export function Workspace({
 
   const loadAgentConversation = useCallback(
     async (agentId: string) => {
+      const request = ++agentLoadRequest.current;
       const response = await fetch(`/api/agents/${encodeURIComponent(agentId)}/conversation`);
+      if (request !== agentLoadRequest.current) return;
       if (!response.ok) {
         releaseApprovalLock();
         setActive(null);
@@ -189,6 +192,7 @@ export function Workspace({
         return;
       }
       const data = (await response.json()) as { conversation: Conversation; messages: Message[] };
+      if (request !== agentLoadRequest.current) return;
       applyThread(data.conversation, data.messages, "agent");
     },
     [applyThread, releaseApprovalLock],
@@ -388,6 +392,7 @@ export function Workspace({
     const trimmed = text.trim();
     const approvalPending = activitiesRef.current.some((item) => item.state === "approval");
     if (!trimmed || streaming || approvalPending) return;
+    agentLoadRequest.current += 1;
     setAlert(null);
     const controller = new AbortController();
     abortRef.current = controller;

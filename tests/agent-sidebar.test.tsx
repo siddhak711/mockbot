@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ThemeProvider } from "../components/theme";
 import { Workspace } from "../components/workspace";
@@ -297,4 +297,64 @@ it("opens the agent's thread when the conversation id in the url is gone", async
   expect(screen.queryByRole("heading", { name: /Hello from/ })).toBeNull();
   expect(screen.queryByText("Remember the grove")).toBeNull();
   expect(screen.queryByText("Start a conversation")).toBeNull();
+});
+
+it("keeps a sent message when the new agent's thread arrives late", async () => {
+  let releaseResearch: (response: Response) => void = () => {};
+  const researchHeld = new Promise<Response>((resolve) => {
+    releaseResearch = resolve;
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/chat")) {
+        return new Response("event: end\ndata: {}\n\n", {
+          headers: { "Content-Type": "text/event-stream" },
+        });
+      }
+      if (url.includes("/api/agents/agent_research/conversation")) return researchHeld;
+      if (url.includes("/api/conversations")) {
+        return new Response("threads are not listed", { status: 404 });
+      }
+      if (url.endsWith("/api/agents") || url.endsWith("/api/agents/")) {
+        return Response.json({ agents });
+      }
+      const agentMatch = url.match(/\/api\/agents\/([^/]+)\/conversation/);
+      if (agentMatch?.[1]) {
+        const thread = threads[decodeURIComponent(agentMatch[1])];
+        if (!thread) return new Response("missing", { status: 404 });
+        return Response.json(thread);
+      }
+      if (url.includes("/api/status")) {
+        return Response.json({ provider: "mock", model: null, database: "local" });
+      }
+      if (url.includes("/api/connectors")) return Response.json({ connectors: [] });
+      if (url.includes("/api/computer")) return new Response("no", { status: 404 });
+      if (url.includes("/api/memories")) return Response.json({ memories: [] });
+      return new Response(`unmocked ${url}`, { status: 404 });
+    }),
+  );
+
+  render(
+    <ThemeProvider>
+      <Workspace user={user} />
+    </ThemeProvider>,
+  );
+  expect(await screen.findByText("Remember the grove")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: /Researcher/ }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Message" }), {
+    target: { value: "Follow the ridge" },
+  });
+  const form = screen.getByRole("textbox", { name: "Message" }).closest("form");
+  expect(form).toBeTruthy();
+  fireEvent.submit(form!);
+  expect(await screen.findByText("Follow the ridge")).toBeTruthy();
+
+  await act(async () => {
+    releaseResearch(Response.json(threads.agent_research));
+  });
+
+  expect(screen.getByText("Follow the ridge")).toBeTruthy();
+  expect(screen.queryByText("Research notes")).toBeNull();
 });

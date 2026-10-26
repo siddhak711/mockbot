@@ -72,8 +72,8 @@ async function ownerLead(store: ConversationStore, userId: string): Promise<stri
 }
 
 /**
- * Append the run to its owner's one thread. An unowned routine stays on the
- * unscoped lead. A missing pointer is repaired.
+ * Append the run to its owner's one thread. A routine that still has no owner
+ * stays on the unscoped lead. A missing pointer is repaired.
  */
 async function ensureConversation(
   store: ConversationStore,
