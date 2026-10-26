@@ -1,11 +1,11 @@
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import type { Agent } from "../src/agents/types";
 import type { SignedInUser } from "../src/auth/user";
 import { UserMenu } from "./user-menu";
 import type { SpriteState } from "../src/sprite";
 import { runtimeStatusLabel, type RuntimeStatus } from "../src/token-stream";
 import { AgentPanel, type AgentDraft } from "./agent-panel";
-import { ClockIcon, ComposeIcon, GearIcon, PlugIcon, TrafficLights } from "./icons";
+import { ClockIcon, ComposeIcon, PlugIcon, TrafficLights } from "./icons";
 import { ThemeToggle } from "./theme";
 import type { Conversation } from "../src/types";
 
@@ -60,7 +60,6 @@ export function ConversationList({
   onOpenConnectors?: () => void;
   user: SignedInUser;
 }) {
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const groups = groupsFor(conversations);
   const names = new Map(agents.map((agent) => [agent.id, agent.name]));
   const status = runtimeStatusLabel(runtimeStatus);
@@ -131,34 +130,6 @@ export function ConversationList({
       </div>
       <footer className="me" title={status.full}>
         <UserMenu user={user} detail={`${status.title} · ${status.subtitle}`} />
-        {onOpenConnectors ? (
-          <span className="settings-anchor">
-            {settingsOpen ? (
-              <div className="settings-pop menu" role="menu" aria-label="Settings">
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setSettingsOpen(false);
-                    onOpenConnectors();
-                  }}
-                >
-                  Connectors
-                </button>
-              </div>
-            ) : null}
-            <button
-              type="button"
-              className="icon-btn"
-              aria-label="Settings"
-              aria-expanded={settingsOpen}
-              aria-haspopup="menu"
-              onClick={() => setSettingsOpen((open) => !open)}
-            >
-              <GearIcon />
-            </button>
-          </span>
-        ) : null}
       </footer>
     </aside>
   );
