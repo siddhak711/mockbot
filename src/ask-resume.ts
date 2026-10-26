@@ -3,9 +3,16 @@ import type { ConversationStore } from "./store";
 import { applyStreamEvent, emptyTrace } from "./trace";
 import { buildModelInput } from "./turn";
 import { ASK_USER_TOOL, readAskUser } from "./tools/ask-user";
+import { requiresApproval } from "./tools/approval";
 import { runTool, type ToolRegistry } from "./tools/registry";
 import type { ToolDefinition } from "./tools/types";
-import type { LlmMessage, LlmToolCall, MessageTrace, StoredToolCall } from "./types";
+import type {
+  LlmMessage,
+  LlmStreamEvent,
+  LlmToolCall,
+  MessageTrace,
+  StoredToolCall,
+} from "./types";
 
 const MAX_ROUNDS = 4;
 
@@ -61,8 +68,14 @@ export async function resumeStoredAsk(options: {
       tools?: readonly ToolDefinition[];
     };
     signal.tools = exposed;
+    // A new model round reuses tool index 0 and may reuse a call id. Shift the
+    // index so it does not merge into the stored ask, and replace a colliding id
+    // so the follow-up row does not overwrite that ask.
+    const indexOffset = trace.tools.reduce((max, tool) => Math.max(max, tool.index), -1) + 1;
+    const takenIds = new Set(trace.tools.map((tool) => tool.id).filter(Boolean));
+    const idsByIndex = new Map<number, string>();
     for await (const event of options.provider.stream(history, signal)) {
-      trace = applyStreamEvent(trace, event);
+      trace = applyStreamEvent(trace, shiftToolCall(event, indexOffset, takenIds, idsByIndex));
       await options.store.updateMessage(message.id, trace.text, trace);
     }
     const pending = trace.tools.filter((tool) => tool.name && tool.result == null);
@@ -73,56 +86,26 @@ export async function resumeStoredAsk(options: {
       content: roundText,
       tool_calls: pending.map((tool) => toolCall(tool.id, tool.name, tool.arguments || "{}")),
     });
-    let askedAgain = false;
+    let pause = false;
     for (const call of pending) {
       if (!call.id) call.id = `call_${crypto.randomUUID()}`;
-      if (call.name === ASK_USER_TOOL) {
-        const parsed = readAskUser(call.arguments);
-        if (!parsed) {
-          trace = await recordResult(options.store, message.id, trace, {
-            id: call.id,
-            name: call.name,
-            arguments: call.arguments,
-            conversationId: options.tool.conversationId,
-            status: "error",
-            output: "ask_user requires a question and options.",
-          });
-          history.push({
-            role: "tool",
-            tool_call_id: call.id,
-            content: "ask_user requires a question and options.",
-          });
-          continue;
-        }
-        await options.store.saveToolCall({
-          id: call.id,
-          conversationId: options.tool.conversationId,
-          messageId: message.id,
-          name: call.name,
-          arguments: JSON.stringify(parsed),
-          status: "ask",
-          output: null,
-        });
-        askedAgain = true;
-        continue;
-      }
-      const tool = options.tools.get(call.name);
-      const result = tool
-        ? await runTool(tool, parseObject(call.arguments), {
-            promote: (names) => names.forEach((name) => promoted.add(name)),
-          })
-        : { content: `Unknown tool "${call.name}".`, isError: true as const };
-      trace = await recordResult(options.store, message.id, trace, {
-        id: call.id,
-        name: call.name,
-        arguments: call.arguments,
+      const settled = await settleFollowUp({
+        store: options.store,
+        tools: options.tools,
         conversationId: options.tool.conversationId,
-        status: result.isError ? "error" : "done",
-        output: result.content,
+        messageId: message.id,
+        trace,
+        call,
+        promoted,
       });
-      history.push({ role: "tool", tool_call_id: call.id, content: result.content });
+      trace = settled.trace;
+      if (settled.pause) {
+        pause = true;
+        break;
+      }
+      history.push({ role: "tool", tool_call_id: call.id, content: settled.output });
     }
-    if (askedAgain) return;
+    if (pause) return;
   }
   if (!trace.ended) {
     trace = applyStreamEvent(trace, { type: "end", finishReason: "stop" });
@@ -148,17 +131,136 @@ export async function noteStoredAsk(
   await store.updateMessage(message.id, trace.text || message.content, trace);
 }
 
+function shiftToolCall(
+  event: LlmStreamEvent,
+  indexOffset: number,
+  takenIds: Set<string>,
+  idsByIndex: Map<number, string>,
+): LlmStreamEvent {
+  if (event.type !== "tool_call") return event;
+  const index = event.index + indexOffset;
+  const assigned = idsByIndex.get(index);
+  let id = assigned ?? event.id;
+  if (!assigned && id && takenIds.has(id)) id = `call_${crypto.randomUUID()}`;
+  if (id) {
+    idsByIndex.set(index, id);
+    takenIds.add(id);
+  }
+  return { ...event, index, ...(id ? { id } : {}) };
+}
+
 function toolCall(id: string, name: string, args: string): LlmToolCall {
   return { id, type: "function", function: { name, arguments: args || "{}" } };
 }
 
-function parseObject(raw: string): Record<string, unknown> {
+type FollowUpCall = {
+  id: string;
+  name: string;
+  arguments: string;
+};
+
+/**
+ * Prepare one follow-up call the way the live chat turn does. Approval-required
+ * tools are stored and left for the approvals flow. Anything that cannot be
+ * gated is recorded as an error and is not run.
+ */
+async function settleFollowUp(options: {
+  store: ConversationStore;
+  tools: ToolRegistry;
+  conversationId: string;
+  messageId: string;
+  trace: MessageTrace;
+  call: FollowUpCall;
+  promoted: Set<string>;
+}): Promise<{ trace: MessageTrace; pause: boolean; output: string }> {
+  const refuse = async (output: string) => {
+    const trace = await recordResult(options.store, options.messageId, options.trace, {
+      id: options.call.id,
+      name: options.call.name,
+      arguments: options.call.arguments,
+      conversationId: options.conversationId,
+      status: "error",
+      output,
+    });
+    return { trace, pause: false, output };
+  };
+
+  if (options.call.name === ASK_USER_TOOL) {
+    const parsed = readAskUser(options.call.arguments);
+    if (!parsed) return refuse("ask_user requires a question and options.");
+    await options.store.saveToolCall({
+      id: options.call.id,
+      conversationId: options.conversationId,
+      messageId: options.messageId,
+      name: options.call.name,
+      arguments: JSON.stringify(parsed),
+      status: "ask",
+      output: null,
+    });
+    return { trace: options.trace, pause: true, output: "" };
+  }
+
+  const tool = options.tools.get(options.call.name);
+  if (!tool) return refuse(`Unknown tool "${options.call.name}".`);
+  const parsed = parseArguments(options.call.arguments);
+  if (!parsed.ok) return refuse(parsed.error);
+
+  let args = parsed.args;
+  if (tool.prepare) {
+    try {
+      const prepared = tool.prepare(parsed.args);
+      if ("error" in prepared) return refuse(prepared.error);
+      args = prepared.args;
+    } catch {
+      return refuse("This tool was not run because its arguments could not be prepared.");
+    }
+  }
+
+  let needsApproval: boolean;
   try {
-    const value = JSON.parse(raw || "{}") as unknown;
-    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-    return value as Record<string, unknown>;
+    needsApproval = requiresApproval(tool, args);
   } catch {
-    return {};
+    return refuse("This tool was not run because approval could not be checked.");
+  }
+  if (needsApproval) {
+    await options.store.saveToolCall({
+      id: options.call.id,
+      conversationId: options.conversationId,
+      messageId: options.messageId,
+      name: options.call.name,
+      arguments: JSON.stringify(args),
+      status: "approval",
+      output: null,
+    });
+    return { trace: options.trace, pause: true, output: "" };
+  }
+
+  const result = await runTool(tool, args, {
+    promote: (names) => names.forEach((name) => options.promoted.add(name)),
+  });
+  const trace = await recordResult(options.store, options.messageId, options.trace, {
+    id: options.call.id,
+    name: options.call.name,
+    arguments: JSON.stringify(args),
+    conversationId: options.conversationId,
+    status: result.isError ? "error" : "done",
+    output: result.content,
+  });
+  return { trace, pause: false, output: result.content };
+}
+
+function parseArguments(
+  raw: string,
+): { ok: true; args: Record<string, unknown> } | { ok: false; error: string } {
+  const text = raw.trim() ? raw : "{}";
+  try {
+    const value = JSON.parse(text) as unknown;
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return { ok: false, error: "Tool arguments must be a JSON object." };
+    }
+    return { ok: true, args: value as Record<string, unknown> };
+  } catch {
+    return { ok: false, error: "Tool arguments were not valid JSON." };
   }
 }
 

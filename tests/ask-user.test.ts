@@ -12,7 +12,8 @@ import { ApprovalGate } from "../src/tools/approval";
 import { AskGate, ASK_UNATTENDED, parseAskUser } from "../src/tools/ask-user";
 import { createDefaultTools } from "../src/tools/builtins";
 import { activitiesFromMessages } from "../src/tools/display";
-import type { LlmStreamEvent, StoredToolCall } from "../src/types";
+import type { ToolDefinition } from "../src/tools/types";
+import type { LlmMessage, LlmStreamEvent, StoredToolCall } from "../src/types";
 import { deltas } from "./helpers";
 
 afterEach(async () => {
@@ -253,6 +254,79 @@ it("resumes a stored question after the in-memory waiter is gone", async () => {
   expect(settled?.content).not.toContain("did not answer");
 });
 
+it("does not run an approval-required tool while resuming a stored ask", async () => {
+  const store = await ConversationStore.open();
+  let ran = false;
+  const tools = createDefaultTools({});
+  tools.register(
+    recordingTool(
+      "send_note",
+      "always",
+      ranFlag(() => (ran = true)),
+    ),
+  );
+  const provider = new MockProvider({
+    delayMs: 0,
+    tools: followAskWith("send_note", { body: "  hello  " }),
+  });
+  const started = await startAsk(store, provider, tools);
+  const decision = await postAsk(
+    new Request("http://localhost/api/tools/asks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: started.id, answer: "Yes" }),
+    }),
+  );
+  expect(decision.status).toBe(200);
+  const send = (await store.getConversation(started.conversationId))?.messages
+    .flatMap((message) => message.tools ?? [])
+    .find((tool) => tool.name === "send_note");
+  const rows = (await store.getConversation(started.conversationId))?.messages.flatMap(
+    (message) => message.tools ?? [],
+  );
+  const ask = rows?.find((tool) => tool.id === started.id);
+  expect(ask?.status).toBe("done");
+  expect(ask?.output).toBe("Yes");
+  expect(ran).toBe(false);
+  expect(send?.status).toBe("approval");
+  expect(send?.output).toBeNull();
+  expect(JSON.parse(send?.arguments ?? "{}")).toEqual({ body: "hello" });
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  expect(ran).toBe(false);
+  expect((await store.getToolCall(send?.id ?? ""))?.status).toBe("approval");
+});
+
+it("still runs a follow-up tool that does not need approval after a stored ask resumes", async () => {
+  const store = await ConversationStore.open();
+  let ran = false;
+  const tools = createDefaultTools({});
+  tools.register(
+    recordingTool("read_note", "never", async (args) => {
+      ran = true;
+      return { content: `Noted ${String(args.body)}` };
+    }),
+  );
+  const provider = new MockProvider({
+    delayMs: 0,
+    tools: followAskWith("read_note", { body: "  hello  " }),
+  });
+  const started = await startAsk(store, provider, tools);
+  const decision = await postAsk(
+    new Request("http://localhost/api/tools/asks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: started.id, answer: "Yes" }),
+    }),
+  );
+  expect(decision.status).toBe(200);
+  const follow = (await store.getConversation(started.conversationId))?.messages
+    .flatMap((message) => message.tools ?? [])
+    .find((tool) => tool.name === "read_note");
+  expect(ran).toBe(true);
+  expect(follow?.status).toBe("done");
+  expect(follow?.output).toBe("Noted hello");
+});
+
 it("expires a stored question that can no longer be read", async () => {
   const store = await ConversationStore.open();
   setAppContext({
@@ -376,6 +450,84 @@ it("ends a pending question on stop and times out when nobody answers", async ()
 });
 
 type SseEvent = { event: string; data: Record<string, unknown> };
+
+async function startAsk(
+  store: ConversationStore,
+  provider: MockProvider,
+  tools: ReturnType<typeof createDefaultTools>,
+) {
+  const controller = new AbortController();
+  setAppContext({ store, provider, tools, asks: new AskGate(300) });
+  const response = await postChat(
+    new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({ message: "Ask whether to continue" }),
+    }),
+  );
+  const pending = await readUntil(response, "ask_user");
+  const id = String(pending.events.find((event) => event.event === "ask_user")?.data.id);
+  const conversationId = String(
+    pending.events.find((event) => event.event === "meta")?.data.conversationId,
+  );
+  controller.abort();
+  await pending.reader.cancel().catch(() => undefined);
+  setAppContext({ store, provider, tools, asks: new AskGate() });
+  return { id, conversationId };
+}
+
+function followAskWith(
+  name: string,
+  args: Record<string, unknown>,
+): (messages: LlmMessage[]) => Array<{ name: string; arguments: string }> {
+  return (messages) => {
+    if (messages.some((message) => message.role === "tool")) {
+      return [{ name, arguments: JSON.stringify(args) }];
+    }
+    return [
+      {
+        name: "ask_user",
+        arguments: JSON.stringify({
+          question: "Continue?",
+          options: ["Yes"],
+          allowCustom: false,
+        }),
+      },
+    ];
+  };
+}
+
+function recordingTool(
+  name: string,
+  approval: "always" | "never",
+  invoke: ToolDefinition["invoke"],
+): ToolDefinition {
+  return {
+    name,
+    description: name,
+    approval,
+    skipHeuristicApproval: approval === "never",
+    inputSchema: {
+      type: "object",
+      properties: { body: { type: "string" } },
+      additionalProperties: false,
+    },
+    prepare(args) {
+      const body = typeof args.body === "string" ? args.body.trim() : "";
+      if (!body) return { error: `${name} requires a body.` };
+      return { args: { body } };
+    },
+    invoke,
+  };
+}
+
+function ranFlag(mark: () => void): ToolDefinition["invoke"] {
+  return async () => {
+    mark();
+    return { content: "sent" };
+  };
+}
 
 async function readUntil(response: Response, eventName: string) {
   if (!response.body) throw new Error("Expected a response body");
