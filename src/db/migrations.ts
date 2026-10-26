@@ -202,16 +202,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS agents_name_unscoped_idx
 `,
   },
   {
-    id: "007_one_thread_per_agent",
+    id: "009_one_thread_per_agent",
     sql: `
 DROP TABLE IF EXISTS _conversation_merge_007;
+DROP TABLE IF EXISTS _summary_merge_007;
+DROP TABLE IF EXISTS _conversation_merge_009;
 
-CREATE TABLE _conversation_merge_007 (
+CREATE TABLE _conversation_merge_009 (
   id TEXT PRIMARY KEY,
   keep_id TEXT NOT NULL
 );
 
-INSERT INTO _conversation_merge_007 (id, keep_id)
+INSERT INTO _conversation_merge_009 (id, keep_id)
 SELECT id,
        FIRST_VALUE(id) OVER (
          PARTITION BY user_id, agent_id
@@ -221,7 +223,7 @@ FROM conversations;
 
 UPDATE messages AS message
 SET conversation_id = merge.keep_id
-FROM _conversation_merge_007 AS merge
+FROM _conversation_merge_009 AS merge
 WHERE message.conversation_id = merge.id
   AND merge.id <> merge.keep_id;
 
@@ -244,7 +246,7 @@ SELECT setval(
 
 UPDATE tool_calls AS tool_call
 SET conversation_id = merge.keep_id
-FROM _conversation_merge_007 AS merge
+FROM _conversation_merge_009 AS merge
 WHERE tool_call.conversation_id = merge.id
   AND merge.id <> merge.keep_id;
 
@@ -265,7 +267,7 @@ SELECT setval(
   (SELECT COUNT(*) FROM tool_calls) > 0
 );
 
-CREATE TABLE IF NOT EXISTS _summary_merge_007 (
+CREATE TABLE IF NOT EXISTS _summary_merge_009 (
   conversation_id TEXT PRIMARY KEY,
   keep_id TEXT NOT NULL,
   summary TEXT NOT NULL,
@@ -273,7 +275,7 @@ CREATE TABLE IF NOT EXISTS _summary_merge_007 (
   created_at TIMESTAMPTZ NOT NULL
 );
 
-INSERT INTO _summary_merge_007 (conversation_id, keep_id, summary, upto_msg, created_at)
+INSERT INTO _summary_merge_009 (conversation_id, keep_id, summary, upto_msg, created_at)
 SELECT summary.conversation_id,
        merge.keep_id,
        summary.summary,
@@ -281,15 +283,15 @@ SELECT summary.conversation_id,
        conversation.created_at
 FROM conversation_summaries AS summary
 JOIN conversations AS conversation ON conversation.id = summary.conversation_id
-JOIN _conversation_merge_007 AS merge ON merge.id = summary.conversation_id
-WHERE NOT EXISTS (SELECT 1 FROM _summary_merge_007);
+JOIN _conversation_merge_009 AS merge ON merge.id = summary.conversation_id
+WHERE NOT EXISTS (SELECT 1 FROM _summary_merge_009);
 
 INSERT INTO conversation_summaries (conversation_id, summary, upto_msg, updated_at)
 SELECT keep_id,
        string_agg(summary, (chr(10) || chr(10)) ORDER BY created_at ASC, conversation_id ASC),
        (ARRAY_AGG(upto_msg ORDER BY created_at DESC, conversation_id DESC))[1],
        NOW()
-FROM _summary_merge_007
+FROM _summary_merge_009
 GROUP BY keep_id
 ON CONFLICT (conversation_id) DO UPDATE SET
   summary = EXCLUDED.summary,
@@ -297,7 +299,7 @@ ON CONFLICT (conversation_id) DO UPDATE SET
   updated_at = NOW();
 
 DELETE FROM conversation_summaries AS summary
-USING _conversation_merge_007 AS merge
+USING _conversation_merge_009 AS merge
 WHERE summary.conversation_id = merge.id
   AND merge.id <> merge.keep_id;
 
@@ -306,27 +308,27 @@ BEGIN
   IF to_regclass('public.routines') IS NOT NULL THEN
     UPDATE routines AS routine
     SET conversation_id = merge.keep_id
-    FROM _conversation_merge_007 AS merge
+    FROM _conversation_merge_009 AS merge
     WHERE routine.conversation_id = merge.id
       AND merge.id <> merge.keep_id;
   END IF;
   IF to_regclass('public.routine_runs') IS NOT NULL THEN
     UPDATE routine_runs AS run
     SET conversation_id = merge.keep_id
-    FROM _conversation_merge_007 AS merge
+    FROM _conversation_merge_009 AS merge
     WHERE run.conversation_id = merge.id
       AND merge.id <> merge.keep_id;
   END IF;
 END $$;
 
 DELETE FROM conversations AS conversation
-USING _conversation_merge_007 AS merge
+USING _conversation_merge_009 AS merge
 WHERE conversation.id = merge.id
   AND merge.id <> merge.keep_id;
 
-DROP TABLE _conversation_merge_007;
+DROP TABLE _conversation_merge_009;
 
-DROP TABLE IF EXISTS _summary_merge_007;
+DROP TABLE IF EXISTS _summary_merge_009;
 
 DROP INDEX IF EXISTS conversations_user_agent_key;
 

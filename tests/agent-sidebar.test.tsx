@@ -178,3 +178,47 @@ it("shows agents instead of chats, and keeps history after a reload", async () =
     expect(window.location.search).toContain("agent=agent_scribe");
   });
 });
+
+it("shows a collapsed rail of agent avatars and opens that agent's thread", async () => {
+  installFetch();
+  render(
+    <ThemeProvider>
+      <Workspace user={user} />
+    </ThemeProvider>,
+  );
+
+  expect(await screen.findByText("Remember the grove")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+
+  expect(screen.queryByText("Routines")).toBeNull();
+  expect(screen.queryByText("Connectors")).toBeNull();
+  expect(screen.queryByRole("button", { name: "New chat" })).toBeNull();
+  expect(screen.queryByText("Conversations")).toBeNull();
+
+  const person = screen.getByRole("button", { name: "Expand sidebar, Ada" });
+  expect(person.getAttribute("title")).toBe("Ada");
+  const divider = screen.getByRole("separator");
+  const mockbot = screen.getByRole("button", { name: "Mockbot" });
+  const researcher = screen.getByRole("button", { name: "Researcher" });
+  expect(person.compareDocumentPosition(divider) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(divider.compareDocumentPosition(mockbot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(mockbot.className).toContain("rail-agent");
+  expect(mockbot.className).toContain("on");
+  expect(mockbot.getAttribute("title")).toBe("Mockbot");
+  expect(mockbot.getAttribute("aria-current")).toBe("true");
+  expect(mockbot.querySelector("[data-sprite-color]")?.getAttribute("data-sprite-color")).toBe(
+    "violet",
+  );
+  expect(researcher.className).toContain("rail-agent");
+  expect(researcher.className).not.toContain("on");
+  expect(researcher.getAttribute("title")).toBe("Researcher");
+  expect(
+    researcher.querySelector("[data-sprite-color]")?.getAttribute("data-sprite-color"),
+  ).not.toBe("violet");
+
+  fireEvent.click(researcher);
+  expect(await screen.findByText("Research notes")).toBeTruthy();
+  expect(screen.queryByText("Remember the grove")).toBeNull();
+  expect(researcher.getAttribute("aria-current")).toBe("true");
+  expect(mockbot.getAttribute("aria-current")).toBeNull();
+});

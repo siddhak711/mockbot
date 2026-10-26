@@ -3,7 +3,7 @@
 - Neutral gray light theme (Mac app); warm near-black dark theme (#14120B, from cursor.com vars).
 - Font: system SF Pro → Inter fallback. Mono: Berkeley Mono → JetBrains Mono. Text levels via opacity of ink (92/60/40%).
 - Density: 34px sidebar rows, 14px items, 15/26 body (v2 after compare), 11–12px meta. Titlebar 40px with traffic lights, icon buttons 24px ghost.
-- Sidebar: agents only. Each (user, agent) is one persistent thread, opened in full when the agent is selected. No New Chat, no conversation list, no rename, no delete, no Today or Last 7 Days groups. 34px rows; selected = #E2E2E2 r8. Routines and Connectors stay as nav actions. Theme toggle in the header.
+- Sidebar: agents only. Each (user, agent) is one persistent thread, opened in full when the agent is selected. No New Chat, no conversation list, no rename, no delete, no Today or Last 7 Days groups. 34px rows; selected = #E2E2E2 r8. Routines and Connectors stay as nav actions. Theme toggle in the header. Collapsed, the sidebar is a narrow rail: the person's avatar, a divider, then one rounded agent avatar per agent. The active agent has a rounded-square background. Hover shows the name. Clicking an avatar opens that agent's thread.
 - Transcript: no assistant bubble; bold lead-ins; links blue; row of 14px ghost icons (👍👎⧉) after reply; "Worked 14s" muted line. User msg = white card r10 hairline shadow, right-aligned, max 540.
 - Tool calls: single muted line "◦ Read file.ts · +12 −3" in 13px, expandable; code/diff blocks r8 surface hairline mono 12/20; add/del tinted rows.
 - Approval: compact card r10 surface, title 13/600, meta 12 muted, buttons right: secondary ghost "Skip", primary ink-filled "Run ⏎" r6 h26.

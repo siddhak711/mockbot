@@ -87,6 +87,7 @@ export function Workspace({
   const [computer, setComputer] = useState<ComputerSnapshot | null>(null);
   const [computerReady, setComputerReady] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobilePane, setMobilePane] = useState<"chat" | SideTab>("chat");
   const [activities, setActivities] = useState<ToolActivity[]>([]);
   const [connectors, setConnectors] = useState<ConnectorRecord[]>([]);
@@ -732,7 +733,17 @@ export function Workspace({
   }, [agentsLoaded, speakingId, refreshMemories, clearMemoriesForSwitch]);
 
   return (
-    <div className={computerOpen ? "app with-computer" : "app"}>
+    <div
+      className={
+        computerOpen
+          ? sidebarCollapsed
+            ? "app with-computer sidebar-collapsed"
+            : "app with-computer"
+          : sidebarCollapsed
+            ? "app sidebar-collapsed"
+            : "app"
+      }
+    >
       <Sidebar
         agents={agents}
         activeAgentId={speakingId}
@@ -740,6 +751,11 @@ export function Workspace({
         runtimeStatus={runtimeStatus}
         busy={streaming}
         open={navOpen}
+        collapsed={sidebarCollapsed}
+        onToggleCollapsed={() => {
+          setSidebarCollapsed((value) => !value);
+          setNavOpen(false);
+        }}
         onSelectAgent={selectAgent}
         onCreateAgent={createAgent}
         onOpenConnectors={() => openConnectors("list")}

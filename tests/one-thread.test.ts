@@ -8,7 +8,7 @@ import { RoutineStore } from "../src/routines/store";
 import { ConversationStore } from "../src/store";
 
 it("keeps the routine repoint inside one SQL statement", () => {
-  const migration = MIGRATIONS.find((item) => item.id === "007_one_thread_per_agent");
+  const migration = MIGRATIONS.find((item) => item.id === "009_one_thread_per_agent");
   expect(migration).toBeTruthy();
   const parts = splitSql(migration?.sql ?? "");
   const routine = parts.find((part) => part.includes("routine_runs"));
@@ -23,7 +23,7 @@ it("merges one user's agent threads in created_at order without dropping rows", 
   await RoutineStore.attach(store);
   await store.connection.exec(`
     DROP INDEX IF EXISTS conversations_user_agent_key;
-    DELETE FROM schema_migrations WHERE id = '007_one_thread_per_agent';
+    DELETE FROM schema_migrations WHERE id = '009_one_thread_per_agent';
     INSERT INTO users (id, email) VALUES ('user_a', 'a@example.com');
     INSERT INTO conversations (id, title, agent_id, user_id, created_at, updated_at) VALUES
       ('old', 'Oldest', 'agent_default', NULL, '2020-01-01T00:00:00Z', '2020-01-01T00:00:00Z'),
@@ -103,7 +103,7 @@ it("merges one user's agent threads in created_at order without dropping rows", 
     ).rejects.toThrow();
 
     await migrated.connection.exec(`
-      DELETE FROM schema_migrations WHERE id = '007_one_thread_per_agent';
+      DELETE FROM schema_migrations WHERE id = '009_one_thread_per_agent';
       DROP INDEX IF EXISTS conversations_user_agent_key;
     `);
     await migrated.close();
