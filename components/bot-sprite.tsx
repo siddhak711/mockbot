@@ -40,8 +40,10 @@ export function BotSprite({
 }) {
   const reduced = usePrefersReducedMotion();
   const px = spritePixels(size);
-  const src = spriteSrc(state, color, reduced);
-  const srcSet = spriteSrcSet(state, color, reduced);
+  // The animated file is the fallback. The <source> is in the first HTML, so a
+  // reduced-motion browser never waits for this hook before choosing the PNG.
+  const src = spriteSrc(state, color, false);
+  const still = spriteSrcSet(state, color, true);
   const shown = useRef(src);
   const [previous, setPrevious] = useState<string | null>(null);
 
@@ -71,15 +73,10 @@ export function BotSprite({
       {previous ? (
         <img className="bot-sprite bot-sprite-out" src={previous} alt="" width={px} height={px} />
       ) : null}
-      <img
-        className="bot-sprite"
-        src={src}
-        srcSet={srcSet}
-        alt={name}
-        width={px}
-        height={px}
-        draggable={false}
-      />
+      <picture>
+        <source media="(prefers-reduced-motion: reduce)" srcSet={still} />
+        <img className="bot-sprite" src={src} alt={name} width={px} height={px} draggable={false} />
+      </picture>
     </span>
   );
 }

@@ -1881,6 +1881,15 @@ summary:focus-visible {
   flex: none;
 }
 
+.bot-sprite-slot > .bot-sprite,
+.bot-sprite-slot > picture {
+  grid-area: 1 / 1;
+}
+
+.bot-sprite-slot picture {
+  display: grid;
+}
+
 .bot-sprite-slot .bot-sprite {
   grid-area: 1 / 1;
   width: 100%;

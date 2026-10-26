@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { renderToStaticMarkup } from "react-dom/server";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { BotSprite } from "../components/bot-sprite";
@@ -33,21 +34,29 @@ it("renders the violet idle animation at 32px", () => {
   expect(img.hasAttribute("srcset")).toBe(false);
   expect(img.getAttribute("width")).toBe("32");
   expect(img.getAttribute("height")).toBe("32");
-  const slot = img.parentElement;
+  const slot = img.closest("[data-sprite-state]");
   expect(slot?.getAttribute("data-sprite-state")).toBe("idle");
   expect(slot?.getAttribute("data-sprite-color")).toBe("violet");
   expect(slot?.getAttribute("data-sprite-motion")).toBe("animated");
 });
 
-it("renders a crew color and the static srcset when motion is reduced", () => {
+const TEAL_WORKING_STILL =
+  "/sprites/crown3d/static/teal-working@1x.png 1x, /sprites/crown3d/static/teal-working@2x.png 2x, /sprites/crown3d/static/teal-working@3x.png 3x";
+
+it("uses the static png on the first render when reduced motion is on", () => {
   mockMotion(true);
+  const html = renderToStaticMarkup(<BotSprite state="working" color="teal" size={16} />);
+  const source = html.match(/<source\b[^>]*>/)?.[0] ?? "";
+  expect(source).toContain('media="(prefers-reduced-motion: reduce)"');
+  expect(source).toContain(TEAL_WORKING_STILL);
+  expect(source).not.toContain(".webp");
+
   const { container } = render(<BotSprite state="working" color="teal" size={16} />);
-  const img = container.querySelector("img.bot-sprite:not(.bot-sprite-out)");
-  expect(img?.getAttribute("src")).toBe("/sprites/crown3d/static/teal-working@1x.png");
-  expect(img?.getAttribute("srcset")).toBe(
-    "/sprites/crown3d/static/teal-working@1x.png 1x, /sprites/crown3d/static/teal-working@2x.png 2x, /sprites/crown3d/static/teal-working@3x.png 3x",
-  );
+  const live = container.querySelector("source");
+  expect(live?.getAttribute("media")).toBe("(prefers-reduced-motion: reduce)");
+  expect(live?.getAttribute("srcset")).toBe(TEAL_WORKING_STILL);
+  const img = container.querySelector("img.bot-sprite");
   expect(img?.getAttribute("width")).toBe("24");
   expect(img?.getAttribute("alt")).toBe("");
-  expect(img?.parentElement?.getAttribute("data-sprite-motion")).toBe("static");
+  expect(img?.closest("[data-sprite-state]")?.getAttribute("data-sprite-motion")).toBe("static");
 });
