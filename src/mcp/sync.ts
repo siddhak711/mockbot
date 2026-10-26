@@ -172,6 +172,9 @@ function mergeSettings(
 ): Record<string, ConnectorToolSetting> {
   const hasPolicy = Boolean(connector.tools && Object.keys(connector.tools).length > 0);
   const merged: Record<string, ConnectorToolSetting> = {};
+  for (const [name, setting] of Object.entries(connector.tools ?? {})) {
+    merged[name] = { ...setting };
+  }
   for (const tool of tools) {
     const discovered = discoverTool(tool.name, tool.description, tool.inputSchema, {
       readOnlyHint: tool.readOnlyHint,
@@ -213,6 +216,8 @@ function settingsChanged(
   const beforeKeys = Object.keys(before);
   const nextKeys = Object.keys(next);
   if (!beforeKeys.length) return false;
+  if (nextKeys.length < beforeKeys.length) return false;
+  if (beforeKeys.some((name) => !next[name])) return false;
   if (beforeKeys.length !== nextKeys.length) return true;
   return nextKeys.some((name) => {
     const left = before[name];
@@ -268,7 +273,7 @@ function toToolDefinition(
     inputSchema,
     exposure: "default",
     approval: asks ? "always" : "never",
-    skipHeuristicApproval: setting.risk === "read",
+    skipHeuristicApproval: setting.approval === "auto",
     async invoke(args, context) {
       if (connector.catalogId) {
         return {

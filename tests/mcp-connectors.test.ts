@@ -441,7 +441,7 @@ it("passes only the referenced secret into a stdio server", async () => {
   expect(result?.data).toMatchObject({
     name: "demo_env_probe",
     status: "done",
-    output: '{"llm":"absent","demo":"present"}',
+    output: '{"llm":"absent","demo":"present","probe":"absent"}',
   });
   const visible = [JSON.stringify(events), provider.prompts.join("\n")].join("\n");
   expect(visible).not.toContain(LLM_KEY);

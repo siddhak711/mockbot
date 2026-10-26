@@ -1,10 +1,15 @@
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { PATCH as patchConnector } from "../app/api/connectors/[id]/route";
 import { PATCH as patchTools } from "../app/api/connectors/[id]/tools/route";
 import { POST as detectConnector } from "../app/api/connectors/detect/route";
 import { GET as getConnectors, POST as createConnector } from "../app/api/connectors/route";
+import { connectorForActivity } from "../components/connectors-panel";
 import { searchCatalog } from "../src/connectors/catalog";
+import { probeConnector } from "../src/connectors/probe";
+import { ReconnectAttempt } from "../src/connectors/reconnect";
+import type { ConnectorRecord, ConnectorToolSetting } from "../src/connectors";
 import {
   applyBulk,
   classifyToolRisk,
@@ -392,6 +397,231 @@ it("reads CONNECTOR_SECRET_KEY and refuses to mint one in production", async () 
     else env.VERCEL = previousVercel;
   }
 });
+
+it("clears a reconnect attempt on cancel, back, and success", () => {
+  const attempt = new ReconnectAttempt();
+  attempt.start("connector-old");
+  attempt.clear();
+  expect(attempt.id).toBeNull();
+
+  attempt.start("connector-old");
+  expect(attempt.take()).toBe("connector-old");
+  expect(attempt.id).toBeNull();
+
+  attempt.start("connector-old");
+  attempt.clear();
+  expect(attempt.take()).toBeNull();
+});
+
+it("matches the longest connector slug and an exact connector id", () => {
+  const notion = sampleConnector("11111111-1111-1111-1111-111111111111", "Notion");
+  const calendar = sampleConnector("22222222-2222-2222-2222-222222222222", "Notion Calendar");
+  const connectors = [notion, calendar];
+  expect(connectorForActivity(connectors, "notion_calendar_list_events")?.id).toBe(calendar.id);
+  expect(connectorForActivity(connectors, "notion_search_pages")?.id).toBe(notion.id);
+  expect(connectorForActivity(connectors, "notion_search_22222222")?.id).toBe(calendar.id);
+});
+
+it("skips the name heuristic when a write tool is set to always allow", async () => {
+  const server = await startMockMcpServer({ extraTools: ["send_note", "send_mail"] });
+  try {
+    const store = await ConversationStore.open();
+    setAppContext({
+      store,
+      provider: new MockProvider({ delayMs: 0 }),
+      tools: createDefaultTools({}),
+    });
+    const setting = (approval: "ask" | "auto"): ConnectorToolSetting => ({
+      enabled: true,
+      approval,
+      risk: "write",
+      description: "send",
+      skipped: false,
+    });
+    await store.createConnector({
+      name: "Demo",
+      transport: "http",
+      target: server.url,
+      secretRef: null,
+      tools: { send_note: setting("auto"), send_mail: setting("ask") },
+    });
+    const registry = new ToolRegistry();
+    await refreshMcpTools({
+      registry,
+      connectors: await store.listConnectors(),
+      env: process.env,
+    });
+    const allowed = registry.get("demo_send_note");
+    const asked = registry.get("demo_send_mail");
+    expect(allowed?.skipHeuristicApproval).toBe(true);
+    expect(allowed ? requiresApproval(allowed, {}) : true).toBe(false);
+    expect(asked?.skipHeuristicApproval).toBe(false);
+    expect(asked ? requiresApproval(asked, {}) : false).toBe(true);
+  } finally {
+    await server.close();
+  }
+});
+
+it("keeps stored tools that are missing from the current listing", async () => {
+  const extras = Array.from({ length: 33 }, (_, index) => `tool_${String(index).padStart(2, "0")}`);
+  const server = await startMockMcpServer({ extraTools: extras });
+  try {
+    const store = await ConversationStore.open();
+    setAppContext({
+      store,
+      provider: new MockProvider({ delayMs: 0 }),
+      tools: createDefaultTools({}),
+    });
+    const tools: Record<string, ConnectorToolSetting> = {
+      echo: {
+        enabled: true,
+        approval: "ask",
+        risk: "write",
+        description: "stale echo description",
+        skipped: false,
+      },
+      kept_offline: {
+        enabled: false,
+        approval: "ask",
+        risk: "write",
+        description: "stored but not listed",
+        skipped: false,
+      },
+    };
+    for (const name of extras) {
+      tools[name] = {
+        enabled: false,
+        approval: "ask",
+        risk: "write",
+        description: name,
+        skipped: false,
+      };
+    }
+    await store.createConnector({
+      name: "Demo",
+      transport: "http",
+      target: server.url,
+      secretRef: null,
+      tools,
+    });
+    let written: Record<string, ConnectorToolSetting> | undefined;
+    await refreshMcpTools({
+      registry: new ToolRegistry(),
+      connectors: await store.listConnectors(),
+      env: process.env,
+      onTools: (_id, next) => {
+        written = next;
+      },
+    });
+    expect(written?.kept_offline?.description).toBe("stored but not listed");
+    expect(written?.tool_32?.description).toBe("tool_32");
+    expect(Object.keys(written ?? {})).toEqual(expect.arrayContaining(["kept_offline", ...extras]));
+    expect(written?.echo?.description).not.toBe("stale echo description");
+  } finally {
+    await server.close();
+  }
+});
+
+it("still probes a server when the transport peek fails", async () => {
+  const server = await startMockMcpServer();
+  const original = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const method = (
+      init?.method ?? (input instanceof Request ? input.method : "GET")
+    ).toUpperCase();
+    const headers = new Headers(
+      init?.headers ?? (input instanceof Request ? input.headers : undefined),
+    );
+    if (method === "GET" && !headers.get("accept")?.includes("text/event-stream")) {
+      throw new Error("peek failed");
+    }
+    return original(input, init);
+  }) as typeof fetch;
+  try {
+    const result = await probeConnector({ transport: "http", target: server.url });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.tools.some((tool) => tool.name === "echo")).toBe(true);
+  } finally {
+    globalThis.fetch = original;
+    await server.close();
+  }
+});
+
+it("passes a saved stdio api key to the child as MCP_PROBE_KEY", async () => {
+  const store = await ConversationStore.open();
+  setAppContext({
+    store,
+    provider: new MockProvider({ delayMs: 0 }),
+    tools: createDefaultTools({}),
+  });
+  const script = join(process.cwd(), "scripts/mock-mcp-server.mjs");
+  const created = await createConnector(
+    jsonRequest({
+      name: "Local",
+      transport: "stdio",
+      target: `${process.execPath} ${script}`,
+      apiKey: "stdio-secret",
+      tools: { env_probe: { enabled: true, approval: "auto" } },
+    }),
+  );
+  const createdText = await created.text();
+  expect(created.status, createdText).toBe(201);
+  expect(createdText).not.toContain("stdio-secret");
+  const registry = new ToolRegistry();
+  await refreshMcpTools({
+    registry,
+    connectors: await store.listConnectors(),
+    env: process.env,
+  });
+  const tool = registry.get("local_env_probe");
+  expect(tool?.skipHeuristicApproval).toBe(true);
+  const result = await tool?.invoke({}, {});
+  expect(result?.content).toContain('"probe":"present"');
+  expect(result?.content).not.toContain("stdio-secret");
+});
+
+it("creates a pasted oauth connector when the server asks for sign-in", async () => {
+  const server = await startMockMcpServer({ auth: "oauth" });
+  try {
+    const store = await ConversationStore.open();
+    setAppContext({
+      store,
+      provider: new MockProvider({ delayMs: 0 }),
+      tools: createDefaultTools({}),
+    });
+    const created = await createConnector(
+      jsonRequest({
+        name: "Acme",
+        transport: "http",
+        target: server.url,
+        oauth: true,
+      }),
+    );
+    const createdText = await created.text();
+    expect(created.status, createdText).toBe(201);
+    const body = JSON.parse(createdText) as { connector: { authType?: string; id: string } };
+    expect(body.connector.authType).toBe("oauth");
+    const rejected = await createConnector(
+      jsonRequest({ name: "Acme", transport: "http", target: server.url }),
+    );
+    expect(rejected.status).toBe(400);
+  } finally {
+    await server.close();
+  }
+});
+
+function sampleConnector(id: string, name: string): ConnectorRecord {
+  return {
+    id,
+    name,
+    transport: "http",
+    target: "https://example.com/mcp",
+    secretRef: null,
+    enabled: true,
+    createdAt: new Date(0).toISOString(),
+    updatedAt: new Date(0).toISOString(),
+  };
+}
 
 function jsonRequest(body: unknown): Request {
   return new Request("http://localhost/api/connectors", {

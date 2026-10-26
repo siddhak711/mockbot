@@ -54,7 +54,8 @@ export async function probeConnector(input: {
   }
   try {
     const listed = await listMcpTools(draft, env, input.apiKey ? [input.apiKey] : [], input.signal);
-    const peeked = input.transport === "http" ? await peek(input.target, input.signal) : null;
+    const peeked =
+      input.transport === "http" ? await peekTransport(input.target, input.signal) : null;
     return {
       ok: true,
       transport: input.transport,
@@ -128,6 +129,18 @@ function classifyAuth(
   if (www.includes("oauth") || www.includes("resource_metadata")) return "oauth";
   if (peeked?.status === 401 || isAuthFailure(message)) return "apikey";
   return "none";
+}
+
+async function peekTransport(
+  url: string,
+  signal?: AbortSignal,
+): Promise<{ status: number; www: string; sse: boolean } | null> {
+  try {
+    return await peek(url, signal);
+  } catch (error) {
+    if (signal?.aborted || isAbortError(error)) throw error;
+    return null;
+  }
 }
 
 async function peek(

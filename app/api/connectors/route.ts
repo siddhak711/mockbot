@@ -42,6 +42,7 @@ export async function POST(request: Request): Promise<Response> {
     accountLabel?: unknown;
     apiKey?: unknown;
     tools?: unknown;
+    oauth?: unknown;
   };
   if (typeof record.catalogId === "string" && record.catalogId.trim()) {
     return createCatalogConnector(record.catalogId.trim(), record.accountLabel);
@@ -91,6 +92,19 @@ export async function POST(request: Request): Promise<Response> {
       return Response.json({ error: "The connection was cancelled." }, { status: 400 });
     }
     if (!probe.ok) {
+      if (record.oauth === true && probe.code === "auth" && probe.auth === "oauth") {
+        const connector = await store.createConnector({
+          ...parsed.value,
+          secretRef: null,
+          secretCipher: await encryptSecret(randomBytes(32).toString("base64url")),
+          authType: "oauth",
+          tools: {},
+        });
+        return Response.json(
+          { connector: toPublicConnector(connector), tools: [] },
+          { status: 201 },
+        );
+      }
       return Response.json({ error: probe.message, code: probe.code }, { status: 400 });
     }
     const provided = providedTools(record.tools);

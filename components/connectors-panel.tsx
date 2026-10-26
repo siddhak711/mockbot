@@ -13,6 +13,7 @@ import {
   type CatalogCategory,
   type CatalogEntry,
 } from "../src/connectors/catalog";
+import { ReconnectAttempt } from "../src/connectors/reconnect";
 import {
   applyBulk,
   detectInput,
@@ -94,7 +95,7 @@ export function ConnectorsPanel({
   const dialogRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const oauthExisting = useRef<string | null>(null);
+  const oauthExisting = useRef(new ReconnectAttempt());
   const popupWatch = useRef<ReturnType<typeof setInterval> | null>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
   const [search, setSearch] = useState(preview ? previewSearch(preview) : initialQuery);
@@ -214,13 +215,12 @@ export function ConnectorsPanel({
           return;
         }
         if (mode === "oauth" || mode === "details") {
-          setWaiting(false);
-          setMode(mode === "details" ? "list" : "add");
+          if (mode === "oauth") abandonAdd();
+          else setMode("list");
           return;
         }
         if (mode === "detecting") {
-          abortRef.current?.abort();
-          setMode("add");
+          abandonAdd();
           return;
         }
         onClose();
@@ -338,15 +338,16 @@ export function ConnectorsPanel({
           body.elapsedMs ?? 0,
         ),
       );
-      if (oauthExisting.current) {
-        const id = oauthExisting.current;
-        oauthExisting.current = null;
+      const existingId = oauthExisting.current.take();
+      if (existingId) {
+        const id = existingId;
         const saved = await fetch(`/api/connectors/${id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ reconnected: true, ...(apiKey ? { apiKey } : {}) }),
         });
         if (!saved.ok) {
+          oauthExisting.current.start(id);
           const failed = (await saved.json().catch(() => null)) as { error?: string } | null;
           setAuthError(failed?.error ?? "Could not reconnect.");
           setMode("auth-failed");
@@ -447,14 +448,23 @@ export function ConnectorsPanel({
       setMode("unreachable");
       return;
     }
+    oauthExisting.current.clear();
     await onChanged();
     setDoneId(body.connector.id);
     setToast(`${body.connector.name} connected`);
     setMode("done");
   }
 
+  function abandonAdd() {
+    oauthExisting.current.clear();
+    abortRef.current?.abort();
+    setWaiting(false);
+    setMode("add");
+  }
+
   function showOauth(entry: CatalogEntry | null, name: string, existingId?: string) {
-    oauthExisting.current = existingId ?? null;
+    if (existingId) oauthExisting.current.start(existingId);
+    else oauthExisting.current.clear();
     setDraft((current) => {
       if (entry) {
         return {
@@ -486,7 +496,7 @@ export function ConnectorsPanel({
     if (preview) return;
     const name = draft?.name ?? "Connector";
     const entry = draft?.catalogId ? (catalogById(draft.catalogId) ?? null) : null;
-    const existingId = oauthExisting.current;
+    const existingId = oauthExisting.current.id;
     const popup = window.open(
       `/connectors/oauth?name=${encodeURIComponent(name)}`,
       "mockbot-oauth",
@@ -520,7 +530,7 @@ export function ConnectorsPanel({
         return;
       }
       if (entry) void finishCatalog(entry, account || "workspace");
-      else void probe(search);
+      else void connectPastedOauth();
     };
     const onMessage = (event: MessageEvent) => {
       if (event.origin !== window.location.origin) return;
@@ -546,6 +556,7 @@ export function ConnectorsPanel({
       setMode("auth-failed");
       return;
     }
+    oauthExisting.current.clear();
     await onChanged();
     setToast(`${name} reconnected`);
     setMode("list");
@@ -566,9 +577,38 @@ export function ConnectorsPanel({
       setMode("auth-failed");
       return;
     }
+    oauthExisting.current.clear();
     await onChanged();
     setDoneId(body.connector.id);
     setToast(`${entry.name} connected`);
+    setMode("done");
+  }
+
+  async function connectPastedOauth() {
+    if (!draft) return;
+    oauthExisting.current.clear();
+    const response = await fetch("/api/connectors", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: draft.name,
+        transport: draft.transport,
+        target: draft.target,
+        oauth: true,
+      }),
+    });
+    const body = (await response.json().catch(() => null)) as {
+      error?: string;
+      connector?: ConnectorRecord;
+    } | null;
+    if (!response.ok || !body?.connector) {
+      setAuthError(body?.error ?? `Could not connect ${draft.name}.`);
+      setMode("auth-failed");
+      return;
+    }
+    await onChanged();
+    setDoneId(body.connector.id);
+    setToast(`${body.connector.name} connected`);
     setMode("done");
   }
 
@@ -593,7 +633,7 @@ export function ConnectorsPanel({
       return;
     }
     if (connector.authType === "apikey") {
-      oauthExisting.current = connector.id;
+      oauthExisting.current.start(connector.id);
       setDraft({
         name: connector.name,
         transport: connector.transport,
@@ -687,8 +727,7 @@ export function ConnectorsPanel({
                   setSearch(value);
                   setHint("");
                   if (mode !== "add") {
-                    abortRef.current?.abort();
-                    setMode("add");
+                    abandonAdd();
                   }
                 }}
                 onSubmit={() => {
@@ -696,10 +735,7 @@ export function ConnectorsPanel({
                   if (detected.kind !== "search" && !detected.valid) setMode("invalid");
                   else if (detected.kind !== "search") void probe(search);
                 }}
-                onCancel={() => {
-                  abortRef.current?.abort();
-                  setMode("add");
-                }}
+                onCancel={() => abandonAdd()}
               />
               {hint ? <p className="connector-help">{hint}</p> : null}
               {visibleMode === "invalid" ? (
@@ -887,7 +923,7 @@ export function ConnectorsPanel({
                 >
                   Retry
                 </button>
-                <button type="button" className="btn ghost" onClick={() => setMode("add")}>
+                <button type="button" className="btn ghost" onClick={() => abandonAdd()}>
                   Edit URL
                 </button>
               </div>
@@ -933,7 +969,7 @@ export function ConnectorsPanel({
               }
               primary="Verify & continue"
               onPrimary={() => void probe(draft.target, draft.apiKey)}
-              onBack={() => setMode("add")}
+              onBack={() => abandonAdd()}
             />
           ) : null}
 
@@ -942,7 +978,7 @@ export function ConnectorsPanel({
               <Identity name={draft.name} detail="Local server" />
               <Notice tone="warn">Runs on this machine with your user's file access.</Notice>
               <div className="pair">
-                <button type="button" className="btn ghost" onClick={() => setMode("add")}>
+                <button type="button" className="btn ghost" onClick={() => abandonAdd()}>
                   Back
                 </button>
                 <button type="button" className="btn primary" onClick={() => setMode("review")}>
@@ -957,7 +993,7 @@ export function ConnectorsPanel({
               <Identity name={draft?.name ?? "Notion"} />
               <Notice tone="danger">{authError}</Notice>
               <div className="pair">
-                <button type="button" className="btn ghost" onClick={() => setMode("add")}>
+                <button type="button" className="btn ghost" onClick={() => abandonAdd()}>
                   Cancel
                 </button>
                 <button
@@ -968,7 +1004,7 @@ export function ConnectorsPanel({
                     showOauth(
                       entry,
                       draft?.name ?? "Connector",
-                      oauthExisting.current ?? undefined,
+                      oauthExisting.current.id ?? undefined,
                     );
                   }}
                 >
@@ -986,7 +1022,7 @@ export function ConnectorsPanel({
               help={draft.auth === "oauth" ? "Sign-in opens after Connect" : ""}
               onChange={updateDraftTools}
               onConnect={() => void connectDraft()}
-              onCancel={() => setMode("add")}
+              onCancel={() => abandonAdd()}
               menu={menu}
               menuTool={menuTool}
               setMenu={setMenu}
@@ -1086,10 +1122,7 @@ export function ConnectorsPanel({
               name={draft?.name ?? "Connector"}
               entry={draft?.catalogId ? catalogById(draft.catalogId) : undefined}
               waiting={waiting || preview === "oauth-wait"}
-              onCancel={() => {
-                setWaiting(false);
-                setMode("add");
-              }}
+              onCancel={() => abandonAdd()}
               onContinue={() => continueOauth()}
             />
           </div>
@@ -1693,5 +1726,21 @@ export function connectorForActivity(
   connectors: readonly ConnectorRecord[],
   toolName: string,
 ): ConnectorRecord | undefined {
-  return connectors.find((connector) => toolName.startsWith(`${connectorSlug(connector.name)}_`));
+  const exact = connectors.filter((connector) => {
+    const compact = connector.id.replace(/-/g, "");
+    return toolName.endsWith(`_${compact}`) || toolName.endsWith(`_${compact.slice(0, 8)}`);
+  });
+  if (exact.length === 1) return exact[0];
+  const full = exact.find((connector) => toolName.endsWith(`_${connector.id.replace(/-/g, "")}`));
+  if (full) return full;
+  let best: ConnectorRecord | undefined;
+  let bestLength = 0;
+  for (const connector of connectors) {
+    const slug = connectorSlug(connector.name);
+    if (toolName.startsWith(`${slug}_`) && slug.length > bestLength) {
+      best = connector;
+      bestLength = slug.length;
+    }
+  }
+  return best;
 }

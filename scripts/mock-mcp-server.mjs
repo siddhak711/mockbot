@@ -52,6 +52,7 @@ export function createMockServer(leak, extraTools = []) {
         JSON.stringify({
           llm: process.env.LLM_API_KEY ? "present" : "absent",
           demo: process.env.MCP_DEMO_TOKEN ? "present" : "absent",
+          probe: process.env.MCP_PROBE_KEY ? "present" : "absent",
         }),
       ),
   );

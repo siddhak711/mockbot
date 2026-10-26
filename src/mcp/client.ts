@@ -78,7 +78,11 @@ function createTransport(connector: ConnectorRecord, secret: string | undefined)
   const command = splitCommand(connector.target);
   if (!command) throw new McpClientError("The connector command is not valid.");
   const childEnv = getDefaultEnvironment();
-  if (connector.secretRef && secret) childEnv[connector.secretRef] = secret;
+  if (secret) {
+    // Probe injects the key as MCP_PROBE_KEY. Saved keys live in secretCipher
+    // with secretRef cleared, so the child still needs that same variable.
+    childEnv[connector.secretRef || "MCP_PROBE_KEY"] = secret;
+  }
   return new StdioClientTransport({
     command: command.command,
     args: command.args,
