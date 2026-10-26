@@ -42,6 +42,10 @@ export class ComputerSupervisor {
     return this.runtime.kind;
   }
 
+  get driver() {
+    return this.store.driver;
+  }
+
   async close(): Promise<void> {
     await this.store.close();
   }

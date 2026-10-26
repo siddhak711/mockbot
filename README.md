@@ -148,7 +148,7 @@ SANDBOX_COMMAND_TIMEOUT_MS=10000
 npm run dev
 ```
 
-`DAYTONA_API_URL` defaults to the SDK's Daytona cloud URL. `DAYTONA_TARGET` is the region, when you set one. Computer records and the mock workspace are stored in embedded Postgres under `.data/sandbox`.
+`DAYTONA_API_URL` defaults to the SDK's Daytona cloud URL. `DAYTONA_TARGET` is the region, when you set one. In local development, computer records and the mock workspace are stored in embedded Postgres under `.data/sandbox`. When `DATABASE_URL` is set, and on Vercel or in production, those tables are created in the same Postgres database as conversations.
 
 ## Routines
 
