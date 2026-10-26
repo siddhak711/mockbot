@@ -7,6 +7,7 @@ import { Composer } from "./composer";
 import { connectorForActivity, ConnectorsPanel } from "./connectors-panel";
 import { ConversationList } from "./conversation-list";
 import { MenuIcon, PlusIcon } from "./icons";
+import { ThreadActions } from "./thread-actions";
 import { Mochi } from "./mochi";
 import { SidePane, type SideTab } from "./side-pane";
 import { Transcript } from "./transcript";
@@ -553,6 +554,7 @@ export function Workspace({
               ),
             );
           } else if (
+            event.event === "prompt" ||
             event.event === "start" ||
             event.event === "reasoning" ||
             event.event === "tool_call" ||
@@ -658,7 +660,9 @@ export function Workspace({
         }
       } else {
         if (!sawMeta) {
-          setMessages((prev) => prev.filter((item) => item.id !== localUserId));
+          setMessages((prev) =>
+            prev.filter((item) => item.id !== localUserId && item.id !== assistantLocalId),
+          );
         }
         setAlert({
           message: sendError instanceof Error ? sendError.message : "Something went wrong",
@@ -877,43 +881,22 @@ export function Workspace({
                 <span className="thread-title">{active?.title ?? "New chat"}</span>
               </h1>
               {speaking ? <span className="agent-chip">{speaking.name}</span> : null}
-              <div className="header-actions">
-                {active ? (
-                  <>
-                    <button
-                      type="button"
-                      className="ghost-text"
-                      onClick={() => {
-                        setDraftTitle(active.title);
-                        setEditing(true);
-                      }}
-                      disabled={streaming}
-                    >
-                      Rename
-                    </button>
-                    <button
-                      type="button"
-                      className="ghost-text danger"
-                      onClick={() => void remove(active.id)}
-                      disabled={streaming}
-                    >
-                      Delete
-                    </button>
-                  </>
-                ) : null}
-                <button type="button" className="ghost-text" onClick={showMemory}>
-                  Memory
-                </button>
-                {computerOpen ? null : (
-                  <button
-                    type="button"
-                    className="ghost-text desktop-only"
-                    onClick={() => setComputerOpen(true)}
-                  >
-                    Show computer
-                  </button>
-                )}
-              </div>
+              <ThreadActions
+                active={active}
+                streaming={streaming}
+                computerOpen={computerOpen}
+                onRename={() => {
+                  if (!active) return;
+                  setDraftTitle(active.title);
+                  setEditing(true);
+                }}
+                onDelete={() => {
+                  if (!active) return;
+                  void remove(active.id);
+                }}
+                onMemory={showMemory}
+                onShowComputer={() => setComputerOpen(true)}
+              />
             </>
           )}
         </header>
@@ -975,7 +958,6 @@ export function Workspace({
             snapshot={computer}
             status={computerStatus}
             messages={messages}
-            streaming={streaming}
           />
         </div>
       </main>
@@ -994,7 +976,6 @@ export function Workspace({
           snapshot={computer}
           status={computerStatus}
           messages={messages}
-          streaming={streaming}
         />
       ) : null}
       <ConnectorsPanel

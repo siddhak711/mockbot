@@ -129,6 +129,78 @@ export function CloseIcon() {
   );
 }
 
+export function PencilIcon() {
+  return (
+    <Icon>
+      <path d="M4 20h4L18.5 9.5l-4-4L4 16v4Z" strokeLinejoin="round" />
+      <path d="m13.5 6.5 4 4" strokeLinecap="round" />
+    </Icon>
+  );
+}
+
+export function TrashIcon() {
+  return (
+    <Icon>
+      <path d="M4.5 7h15" strokeLinecap="round" />
+      <path d="M9 7V5h6v2" strokeLinejoin="round" />
+      <path d="M7.5 7l.8 12h7.4l.8-12" strokeLinejoin="round" />
+    </Icon>
+  );
+}
+
+export function MemoryIcon() {
+  return (
+    <Icon>
+      <ellipse cx="12" cy="7" rx="7" ry="3" />
+      <path d="M5 7v5c0 1.7 3.1 3 7 3s7-1.3 7-3V7" />
+      <path d="M5 12v5c0 1.7 3.1 3 7 3s7-1.3 7-3v-5" />
+    </Icon>
+  );
+}
+
+export function MonitorIcon() {
+  return (
+    <Icon>
+      <rect x="3" y="4" width="18" height="12" rx="2" />
+      <path d="M8 20h8M12 16v4" strokeLinecap="round" />
+    </Icon>
+  );
+}
+
+export function TraceIcon() {
+  return (
+    <Icon>
+      <path d="M3 12h4l2.5-6 5 12L17 12h4" strokeLinecap="round" strokeLinejoin="round" />
+    </Icon>
+  );
+}
+
+export function HidePanelIcon() {
+  return (
+    <Icon>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M15 4v16" />
+      <path d="m10.5 9-3 3 3 3" strokeLinecap="round" strokeLinejoin="round" />
+    </Icon>
+  );
+}
+
+export function DownIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      aria-hidden="true"
+    >
+      <path d="M12 5v14M6 13l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export function SendIcon() {
   return (
     <svg

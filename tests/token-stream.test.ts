@@ -1,8 +1,10 @@
 import { expect, it } from "vitest";
 import { isLiveTraceTurn } from "../components/token-stream";
 import { assistantHasVisibleBody, liveAssistantId } from "../components/transcript";
+import { activityStaysInChat } from "../src/chat-activities";
 import { isMockToolResult } from "../src/tools/display";
 import { runtimeStatusLabel, showThinkingRow, tokenStreamEntries } from "../src/token-stream";
+import type { ToolActivity } from "../src/tools/display";
 import type { Message, MessageTrace } from "../src/types";
 
 const fullTrace: MessageTrace = {
@@ -121,7 +123,7 @@ it("binds the live turn to the assistant after the latest user message", () => {
   expect(liveAssistantId(messages, false)).toBeNull();
 });
 
-it("treats an empty live assistant as invisible until tools or text arrive", () => {
+it("keeps tool-only assistants out of the chat until text or an approval arrives", () => {
   const empty: Message = {
     id: "a2",
     conversationId: "c",
@@ -138,6 +140,19 @@ it("treats an empty live assistant as invisible until tools or text arrive", () 
       ended: false,
     },
   };
+  const approval: ToolActivity = {
+    id: "1",
+    messageId: "a2",
+    name: "send",
+    title: "Send",
+    detail: "",
+    arguments: "{}",
+    output: "",
+    preview: "",
+    summary: "Send it?",
+    state: "approval",
+    kind: "draft",
+  };
   expect(assistantHasVisibleBody(empty)).toBe(false);
   expect(
     assistantHasVisibleBody({
@@ -150,10 +165,53 @@ it("treats an empty live assistant as invisible until tools or text arrive", () 
       ...empty,
       trace: {
         ...empty.trace!,
-        tools: [{ index: 0, id: "1", name: "lookup", arguments: "{}", result: null }],
+        tools: [{ index: 0, id: "1", name: "web_fetch", arguments: "{}", result: "page" }],
       },
     }),
+  ).toBe(false);
+  expect(assistantHasVisibleBody(empty, [approval])).toBe(true);
+  expect(assistantHasVisibleBody(empty, [{ ...approval, state: "done" }])).toBe(false);
+});
+
+it("keeps a failed connector call in the chat when it needs a reconnect", () => {
+  const empty: Message = {
+    id: "a2",
+    conversationId: "c",
+    role: "assistant",
+    content: "",
+    createdAt: "t3",
+    trace: null,
+  };
+  const failed: ToolActivity = {
+    id: "call_github",
+    messageId: "a2",
+    name: "github_issues",
+    title: "Read GitHub",
+    detail: "401",
+    arguments: "{}",
+    output: "401 Unauthorized",
+    preview: "401 Unauthorized",
+    summary: "",
+    state: "error",
+    kind: "read",
+  };
+  const doneSearch: ToolActivity = {
+    ...failed,
+    id: "call_search",
+    name: "web_search",
+    state: "done",
+    output: "results",
+  };
+
+  expect(activityStaysInChat(failed, null)).toBe(true);
+  expect(activityStaysInChat({ ...failed, output: "socket hang up" }, null)).toBe(false);
+  expect(activityStaysInChat({ ...failed, output: "socket hang up" }, "GitHub")).toBe(true);
+  expect(activityStaysInChat(doneSearch, null)).toBe(false);
+  expect(assistantHasVisibleBody(empty, [failed])).toBe(true);
+  expect(
+    assistantHasVisibleBody(empty, [{ ...failed, output: "socket hang up" }], () => "GitHub"),
   ).toBe(true);
+  expect(assistantHasVisibleBody(empty, [doneSearch])).toBe(false);
 });
 
 it("hides an empty assistant after stop or a finish that produced nothing", () => {

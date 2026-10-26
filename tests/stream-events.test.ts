@@ -17,6 +17,7 @@ import {
 import { SseParser } from "../src/sse";
 import { ConversationStore } from "../src/store";
 import { createDefaultTools } from "../src/tools/builtins";
+import { BASE_SYSTEM_PROMPT } from "../src/memory/prompt";
 import { emptyTrace } from "../src/trace";
 import type { LlmMessage, LlmStreamEvent } from "../src/types";
 import { deltas, readSse } from "./helpers";
@@ -52,6 +53,10 @@ it("streams start, reasoning, answer text, and end from the mock provider", asyn
   expect(kinds).not.toContain("tool_call");
   expect(kinds).not.toContain("tool_result");
   expect(kinds.at(-1)).toBe("done");
+  expect(events.find((event) => event.event === "prompt")?.data).toEqual({
+    system: BASE_SYSTEM_PROMPT,
+    prefill: "",
+  });
 
   const start = events.find((event) => event.event === "start");
   expect(start?.data).toEqual({ role: "assistant" });
@@ -66,7 +71,7 @@ it("streams start, reasoning, answer text, and end from the mock provider", asyn
   const loaded = await store.getConversation((await store.listConversations())[0]!.id);
   const assistant = loaded?.messages[1];
   expect(assistant?.content).toBe(buildMockReply("Say hello"));
-  expect(assistant?.trace).toEqual({
+  expect(assistant?.trace).toMatchObject({
     started: true,
     role: "assistant",
     reasoning,
@@ -74,7 +79,13 @@ it("streams start, reasoning, answer text, and end from the mock provider", asyn
     text: buildMockReply("Say hello"),
     finishReason: "stop",
     ended: true,
+    system: BASE_SYSTEM_PROMPT,
+    prefill: "",
   });
+  expect(assistant?.trace?.segments).toEqual([
+    { type: "reasoning", text: reasoning },
+    { type: "text", text: buildMockReply("Say hello") },
+  ]);
   expect(loaded?.messages[0]?.trace).toBeNull();
 });
 
