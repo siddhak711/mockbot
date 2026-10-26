@@ -86,6 +86,29 @@ function readReasoning(delta: Record<string, unknown>, events: LlmStreamEvent[])
   }
 }
 
+function readCount(value: unknown): number | null {
+  const parsed =
+    typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return Math.round(parsed);
+}
+
+/** Token counts from an OpenAI-compatible chunk. Prefers prompt/completion, then total. */
+export function readModelUsage(
+  payload: unknown,
+): { inputTokens: number; outputTokens: number } | null {
+  const usage = asRecord(asRecord(payload)?.usage);
+  if (!usage) return null;
+  const input = readCount(usage.prompt_tokens ?? usage.input_tokens);
+  const output = readCount(usage.completion_tokens ?? usage.output_tokens);
+  if (input == null && output == null) {
+    const total = readCount(usage.total_tokens);
+    if (total == null) return null;
+    return { inputTokens: total, outputTokens: 0 };
+  }
+  return { inputTokens: input ?? 0, outputTokens: output ?? 0 };
+}
+
 export function readOpenAiEvents(payload: unknown): LlmStreamEvent[] {
   const record = asRecord(payload);
   if (!record || !Array.isArray(record.choices)) return [];

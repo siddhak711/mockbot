@@ -201,4 +201,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS agents_name_unscoped_idx
   WHERE user_id IS NULL;
 `,
   },
+  {
+    id: "007_run_events",
+    sql: `
+CREATE TABLE IF NOT EXISTS run_events (
+  run_id TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  type TEXT NOT NULL CHECK (type IN ('model', 'tool', 'event', 'error')),
+  input TEXT,
+  output TEXT,
+  tokens INTEGER,
+  cost_usd DOUBLE PRECISION,
+  ms INTEGER,
+  PRIMARY KEY (run_id, seq)
+);
+`,
+  },
 ];

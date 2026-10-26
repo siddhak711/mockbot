@@ -1,4 +1,5 @@
 import type { LlmProvider } from "../llm";
+import { captureModelEvent, elapsedMs, emptyModelCapture, type RunLog } from "../runs/events";
 import { titleFromMessage, type ConversationStore } from "../store";
 import { applyStreamEvent, emptyTrace } from "../trace";
 import type { LlmMessage, MessageTrace } from "../types";
@@ -109,6 +110,45 @@ export async function performDelegation(
     parentAgentId: string;
     userId?: string;
     signal?: AbortSignal;
+    runLog?: RunLog;
+  },
+): Promise<DelegationOutcome> {
+  const started = performance.now();
+  let content = "Delegation failed.";
+  try {
+    const outcome = await runDelegatedTurn(args, deps);
+    content = outcome.content;
+    return outcome;
+  } catch (error) {
+    if (!isAbort(error, deps.signal)) {
+      const message = error instanceof Error ? error.message : "The child run failed.";
+      content = `Delegation failed: ${message}`;
+      await deps.runLog?.fail(message, { phase: "delegate" });
+    }
+    throw error;
+  } finally {
+    await deps.runLog?.recordTool({
+      name: DELEGATE_TOOL_NAME,
+      input: args,
+      output: content,
+      ms: elapsedMs(started),
+    });
+  }
+}
+
+async function runDelegatedTurn(
+  args: Record<string, unknown>,
+  deps: {
+    directory: AgentDirectory;
+    store: ConversationStore;
+    provider: LlmProvider;
+    memory: AgentMemoryPort;
+    computer: ComputerPort;
+    connector: ConnectorPort;
+    parentAgentId: string;
+    userId?: string;
+    signal?: AbortSignal;
+    runLog?: RunLog;
   },
 ): Promise<DelegationOutcome> {
   const agentName = typeof args.agent === "string" ? args.agent.trim() : "";
@@ -155,14 +195,28 @@ export async function performDelegation(
   ];
 
   let trace = emptyTrace();
+  const capture = emptyModelCapture();
+  const modelStarted = performance.now();
+  let modelError: unknown;
   try {
     for await (const event of deps.provider.stream(messages, deps.signal)) {
       if (deps.signal?.aborted) throw abortError();
+      captureModelEvent(capture, event);
       trace = applyStreamEvent(trace, event);
     }
   } catch (error) {
-    if (isAbort(error, deps.signal)) throw error;
-    const message = error instanceof Error ? error.message : "The child run failed.";
+    modelError = error;
+  } finally {
+    await deps.runLog?.recordModel({
+      model: deps.provider.model,
+      messages,
+      capture,
+      ms: elapsedMs(modelStarted),
+    });
+  }
+  if (modelError) {
+    if (isAbort(modelError, deps.signal)) throw modelError;
+    const message = modelError instanceof Error ? modelError.message : "The child run failed.";
     const content = `Delegation failed: ${message}`;
     await deps.store.addMessage(conversation.id, "assistant", content, {
       ...emptyTrace(),
@@ -177,9 +231,16 @@ export async function performDelegation(
 
   let failed = false;
   for (const tool of trace.tools) {
+    const toolStarted = performance.now();
     const outcome = await runChildTool(agent, tool, deps.directory, deps.computer, deps.connector);
     tool.result = outcome.content;
     if (outcome.failed) failed = true;
+    await deps.runLog?.recordTool({
+      name: tool.name,
+      input: tool.arguments,
+      output: outcome.content,
+      ms: elapsedMs(toolStarted),
+    });
   }
   const content = summarize(trace.text, trace.tools, failed);
   trace.text = trace.text || content;

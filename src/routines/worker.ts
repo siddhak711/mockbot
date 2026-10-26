@@ -110,6 +110,7 @@ export async function tick(options: {
             provider: options.provider,
             conversationId: activeConversation,
             prompt: promptForRun(job.routine.prompt, event),
+            runId: job.run.id,
           });
           const saved = await options.routines.finishRun(job.run.id, options.workerId, {
             status: "succeeded",

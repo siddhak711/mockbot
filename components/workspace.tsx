@@ -104,6 +104,7 @@ export function Workspace({
   const [composerDraft, setComposerDraft] = useState("");
   const [selectedToolId, setSelectedToolId] = useState<string | null>(null);
   const [decidingId, setDecidingId] = useState<string | null>(null);
+  const [replayIds, setReplayIds] = useState<Record<string, string>>({});
   const abortRef = useRef<AbortController | null>(null);
   const computerRequest = useRef(0);
   const activeIdRef = useRef<string | null>(null);
@@ -568,6 +569,10 @@ export function Workspace({
                 item.id === localUserId ? { ...item, conversationId: id } : item,
               ),
             );
+            if (typeof payload.runId === "string" && payload.runId) {
+              const replayRunId = payload.runId;
+              setReplayIds((prev) => ({ ...prev, [id]: replayRunId }));
+            }
           } else if (
             event.event === "prompt" ||
             event.event === "start" ||
@@ -905,6 +910,11 @@ export function Workspace({
                 <span className="thread-title">{active?.title ?? "New chat"}</span>
               </h1>
               {speaking ? <span className="agent-chip">{speaking.name}</span> : null}
+              {active && replayIds[active.id] ? (
+                <a className="ghost-text" href={`/runs/${replayIds[active.id]}`}>
+                  Replay
+                </a>
+              ) : null}
               <ThreadActions
                 active={active}
                 streaming={streaming}

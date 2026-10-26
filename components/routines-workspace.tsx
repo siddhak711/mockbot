@@ -347,6 +347,7 @@ export function RoutinesWorkspace({ user }: { user: SignedInUser }) {
                             {run.resultExcerpt ? (
                               <span className="run-excerpt">{run.resultExcerpt}</span>
                             ) : null}
+                            <a href={`/runs/${run.id}`}>Replay</a>
                           </li>
                         ))}
                       </ul>

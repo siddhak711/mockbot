@@ -2898,3 +2898,154 @@ a.icon-btn {
     grid-template-columns: 1fr;
   }
 }
+
+.run-id {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.run-id code {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.run-totals {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.run-total {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 12px 14px;
+}
+
+.run-total span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.run-total strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 18px;
+  line-height: 24px;
+  font-weight: 600;
+}
+
+.run-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.run-event {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+
+.run-event summary {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) auto auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.run-event summary::-webkit-details-marker {
+  display: none;
+}
+
+.run-type {
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 16px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.run-type.model {
+  color: var(--link);
+}
+
+.run-type.tool {
+  color: var(--success);
+}
+
+.run-type.event {
+  color: var(--muted);
+}
+
+.run-type.error {
+  color: var(--danger);
+}
+
+.run-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.run-metric {
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.run-body {
+  display: grid;
+  gap: 10px;
+  padding: 0 12px 12px;
+}
+
+.run-body h2 {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.run-body pre {
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  max-height: 320px;
+  background: var(--window);
+  border-radius: var(--radius-md);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@media (max-width: 760px) {
+  .run-totals {
+    grid-template-columns: 1fr;
+  }
+
+  .run-event summary {
+    grid-template-columns: 64px minmax(0, 1fr);
+  }
+
+  .run-metric {
+    grid-column: 2;
+  }
+}
