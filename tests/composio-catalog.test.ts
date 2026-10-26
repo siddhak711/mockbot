@@ -6,6 +6,8 @@ import { GET as oauthCallback } from "../app/connectors/oauth/callback/route";
 import { POST as startOAuth } from "../app/api/connectors/oauth/start/route";
 import { catalogById, composioConnectorTarget } from "../src/connectors/catalog";
 import { setComposioBrokerForTests } from "../src/connectors/composio/broker";
+import { completeComposioConnect } from "../src/connectors/composio/flow";
+import type { PendingOAuth } from "../src/connectors/oauth/pending";
 import { resolveComposioToolkitVersions } from "../src/connectors/composio/sdk";
 import type { ComposioBroker, ComposioToolSummary } from "../src/connectors/composio/types";
 import { noteConnectorOutcome } from "../src/connectors/runtime";
@@ -310,6 +312,74 @@ it("rejects a Composio account that is only INITIATED", async () => {
   expect(await store.listComposioConnections("user_test")).toHaveLength(0);
 });
 
+it("keeps one catalog connector when two Composio sign-ins finish together", async () => {
+  const store = await openComposio();
+  let arrived = 0;
+  let release: () => void = () => undefined;
+  const bothListed = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tools = [
+    {
+      slug: "NOTION_SEARCH",
+      description: "Search pages",
+      inputSchema: { type: "object", properties: { query: { type: "string" } } },
+      readOnlyHint: true,
+    },
+  ];
+  const broker = fakeBroker({
+    redirectUrl: "https://connect.composio.dev/link/notion-test",
+    connectedAccountId: "ca_shared",
+    label: "Grove",
+    tools,
+  });
+  broker.getConnectedAccount = async (input) => ({
+    id: input.connectedAccountId,
+    status: "ACTIVE",
+    label: input.userId,
+  });
+  broker.listTools = async () => {
+    arrived += 1;
+    if (arrived >= 2) release();
+    await bothListed;
+    return tools;
+  };
+  setComposioBrokerForTests(broker);
+  const [first, second] = await Promise.all([
+    completeComposioConnect(finish("user_a", "ca_a")),
+    completeComposioConnect(finish("user_b", "ca_b")),
+  ]);
+  const connectors = await store.listConnectors();
+  expect(connectors).toHaveLength(1);
+  expect(connectors[0]?.catalogId).toBe("notion");
+  expect(first.connector.id).toBe(second.connector.id);
+  expect(await store.getComposioConnection("user_a", "notion")).toMatchObject({
+    status: "connected",
+    connectedAccountId: "ca_a",
+  });
+  expect(await store.getComposioConnection("user_b", "notion")).toMatchObject({
+    status: "connected",
+    connectedAccountId: "ca_b",
+  });
+});
+
+it("leaves the user unconnected when the catalog connector cannot be saved", async () => {
+  const store = await openComposio();
+  setComposioBrokerForTests(notionBroker());
+  const missing = "11111111-1111-4111-8111-111111111111";
+  await expect(
+    completeComposioConnect({
+      ...finish("user_test", "ca_notion_1"),
+      pending: {
+        ...finish("user_test", "ca_notion_1").pending,
+        connectorId: missing,
+      },
+    }),
+  ).rejects.toThrow(/no longer exists/);
+  expect(await store.listComposioConnections("user_test")).toHaveLength(0);
+  expect(await store.listConnectors()).toHaveLength(0);
+});
+
 it("pins Notion and GitHub toolkit versions unless the environment overrides them", () => {
   expect(resolveComposioToolkitVersions({})).toMatchObject({
     notion: "20250909_00",
@@ -353,6 +423,28 @@ it("rejects a failed Composio sign-in without storing a connection", async () =>
   expect(await store.listConnectors()).toHaveLength(0);
   expect(await store.listComposioConnections("user_test")).toHaveLength(0);
 });
+
+function finish(
+  userId: string,
+  connectedAccountId: string,
+): Parameters<typeof completeComposioConnect>[0] {
+  const pending: PendingOAuth = {
+    state: `state-${userId}`,
+    catalogId: "notion",
+    redirectUri: "http://localhost:3000/connectors/oauth/callback",
+    issuedAt: Date.now(),
+    broker: "composio",
+    userId,
+    connectedAccountId,
+  };
+  return {
+    pending,
+    userId,
+    returnedState: pending.state,
+    status: "success",
+    connectedAccountId,
+  };
+}
 
 async function openComposio(): Promise<ConversationStore> {
   process.env.APP_ORIGIN = "http://localhost:3000";

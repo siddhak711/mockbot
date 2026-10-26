@@ -221,4 +221,12 @@ CREATE INDEX IF NOT EXISTS composio_connections_user_idx
   ON composio_connections (user_id);
 `,
   },
+  {
+    id: "008_connector_catalog",
+    sql: `
+CREATE UNIQUE INDEX IF NOT EXISTS connectors_catalog_id_idx
+  ON connectors (catalog_id)
+  WHERE catalog_id IS NOT NULL;
+`,
+  },
 ];

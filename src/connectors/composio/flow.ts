@@ -95,6 +95,14 @@ export async function completeComposioConnect(options: {
   if (account.status !== "ACTIVE") {
     throw new Error(`${entry.name} sign-in is not active yet.`);
   }
+  const listed = await listToolsSafely(broker, toolkit, options.signal);
+  const connector = await saveComposioConnector({
+    entry,
+    toolkit,
+    connectorId: options.pending.connectorId,
+    tools: listed.tools,
+    error: listed.error,
+  });
   const { store } = await getAppContext();
   await store.upsertComposioConnection({
     userId: options.userId,
@@ -103,14 +111,6 @@ export async function completeComposioConnect(options: {
     connectedAccountId: account.id,
     accountLabel: account.label,
     status: "connected",
-  });
-  const listed = await listToolsSafely(broker, toolkit, options.signal);
-  const connector = await saveComposioConnector({
-    entry,
-    toolkit,
-    connectorId: options.pending.connectorId,
-    tools: listed.tools,
-    error: listed.error,
   });
   return { connector, account: account.label };
 }
@@ -198,12 +198,11 @@ async function saveComposioConnector(options: {
     if (!saved) throw new Error("That connector no longer exists.");
     return saved;
   }
-  return store.createConnector({
+  return store.insertCatalogConnector({
     name: options.entry.name,
     transport: "http",
     target,
     secretRef: null,
-    secretCipher: null,
     catalogId: options.entry.id,
     authType: "oauth",
     accountLabel: null,

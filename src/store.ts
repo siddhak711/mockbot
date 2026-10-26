@@ -504,6 +504,63 @@ export class ConversationStore {
     return mapConnector(row);
   }
 
+  /**
+   * One shared row per catalog app. A concurrent insert loses and returns the row that won.
+   */
+  async insertCatalogConnector(input: {
+    name: string;
+    transport: ConnectorTransport;
+    target: string;
+    secretRef: string | null;
+    catalogId: string;
+    authType?: ConnectorAuth;
+    accountLabel?: string | null;
+    status?: ConnectorStatus;
+    statusDetail?: string | null;
+    tools?: Record<string, ConnectorToolSetting>;
+    seenTools?: string[];
+    secretCipher?: string | null;
+  }): Promise<ConnectorRecord> {
+    const id = crypto.randomUUID();
+    const inserted = await this.db.query<ConnectorRow>(
+      `INSERT INTO connectors (
+         id, name, transport, target, secret_ref, catalog_id, auth_type, account_label,
+         status, status_detail, tools, seen_tools, secret_cipher
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13)
+       ON CONFLICT (catalog_id) WHERE catalog_id IS NOT NULL DO NOTHING
+       RETURNING ${CONNECTOR_COLUMNS}`,
+      [
+        id,
+        input.name,
+        input.transport,
+        input.target,
+        input.secretRef,
+        input.catalogId,
+        input.authType ?? "none",
+        input.accountLabel ?? null,
+        input.status ?? "connected",
+        input.statusDetail ?? null,
+        JSON.stringify(input.tools ?? {}),
+        JSON.stringify(input.seenTools ?? []),
+        input.secretCipher ?? null,
+      ],
+    );
+    const created = inserted.rows[0];
+    if (created) return mapConnector(created);
+    const existing = await this.db.query<ConnectorRow>(
+      `SELECT ${CONNECTOR_COLUMNS}
+       FROM connectors
+       WHERE catalog_id = $1
+       ORDER BY created_at ASC, id ASC
+       LIMIT 1`,
+      [input.catalogId],
+    );
+    const row = existing.rows[0];
+    if (!row) throw new Error("Failed to create connector");
+    return mapConnector(row);
+  }
+
   async saveOAuthConnector(
     id: string,
     input: {

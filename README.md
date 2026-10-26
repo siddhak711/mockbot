@@ -69,7 +69,7 @@ The same names are listed in `.env.example`. If the Google variables are missing
 
 ### Existing rows
 
-Migration `006_auth` adds `users`, `accounts`, `sessions`, and `verification_tokens`, and nullable `user_id` on `conversations`, `agents`, and `memories`. It does not assign existing rows and it does not edit production by hand. The app migrator applies it on startup, the same way as the earlier migrations. Migration `007_composio_connections` stores each user's Composio connected-account id for a catalog app.
+Migration `006_auth` adds `users`, `accounts`, `sessions`, and `verification_tokens`, and nullable `user_id` on `conversations`, `agents`, and `memories`. It does not assign existing rows and it does not edit production by hand. The app migrator applies it on startup, the same way as the earlier migrations. Migration `007_composio_connections` stores each user's Composio connected-account id for a catalog app. Migration `008_connector_catalog` keeps one connector row per catalog app.
 
 Rows with `user_id` still null are orphans from before accounts, or from a path that does not know the caller (the routines worker). The **earliest account**, ordered by `users.created_at` then `id`, adopts those rows the next time that account loads the app. Later accounts do not see them. Each account also gets its own lead agent named Mockbot. The legacy lead id `agent_default` stays the lead for the account that adopted it. Another account's lead has its own id and can still delegate.
 
