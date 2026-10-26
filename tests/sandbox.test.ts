@@ -9,8 +9,8 @@ import { MockProvider } from "../src/llm";
 import { commandTimeoutMs, resolveWorkspacePath, toSandboxPath } from "../src/sandbox/limits";
 import { openComputer } from "../src/sandbox/open";
 import { planComputerTurn } from "../src/sandbox/plan";
-import type { ExecOutcome, SandboxRuntime } from "../src/sandbox/runtime";
-import { ComputerSupervisor } from "../src/sandbox/supervisor";
+import type { ExecOutcome, SandboxEntry, SandboxRuntime } from "../src/sandbox/runtime";
+import { ComputerSupervisor, DIFF_MAX_BYTES, DIFF_MAX_FILES } from "../src/sandbox/supervisor";
 import { SandboxStore } from "../src/sandbox/store";
 import { createComputerTools } from "../src/sandbox/tools";
 import { SandboxTurnProvider } from "../src/sandbox/turn";
@@ -390,6 +390,61 @@ describe("sandbox", { concurrent: false }, () => {
     await supervisor.close();
   });
 
+  it("does not diff node_modules or .git, and records nothing when the tree is over the cap", async () => {
+    const fleet = new FakeFleet();
+    const store = await SandboxStore.open("memory://");
+    const runtime = new DaytonaRuntime(fleet, store, "secret");
+    const supervisor = new ComputerSupervisor(store, runtime, 1_000);
+    await supervisor.invoke("agent", "write", { path: "app.txt", content: "old" });
+    await supervisor.invoke("agent", "write", {
+      path: "node_modules/pkg/index.js",
+      content: "module",
+    });
+    await supervisor.invoke("agent", "write", { path: ".git/config", content: "git" });
+    fleet.reads.length = 0;
+
+    const edited = await supervisor.invoke("agent", "exec", { command: "echo hi" });
+    expect(edited.run.changedFiles).toEqual([]);
+    expect(fleet.reads.some((path) => path.includes("node_modules"))).toBe(false);
+    expect(fleet.reads.some((path) => path.includes(".git"))).toBe(false);
+    expect(fleet.reads.some((path) => path.endsWith("app.txt"))).toBe(true);
+    await supervisor.close();
+
+    const capped = await SandboxStore.open("memory://");
+    await capped.ensureComputer("agent", "daytona");
+    await capped.setSandboxId("agent", "sbx-cap");
+    const wide = new CappedRuntime(DIFF_MAX_FILES + 1, 1);
+    const wideSupervisor = new ComputerSupervisor(capped, wide, 1_000);
+    const tooMany = await wideSupervisor.invoke("agent", "exec", { command: "echo hi" });
+    expect(tooMany.run.changedFiles).toEqual([]);
+    expect(wide.reads).toBe(0);
+
+    const heavyStore = await SandboxStore.open("memory://");
+    await heavyStore.ensureComputer("agent", "daytona");
+    await heavyStore.setSandboxId("agent", "sbx-heavy");
+    const heavy = new CappedRuntime(1, DIFF_MAX_BYTES + 1);
+    const heavySupervisor = new ComputerSupervisor(heavyStore, heavy, 1_000);
+    const tooBig = await heavySupervisor.invoke("agent", "exec", { command: "echo hi" });
+    expect(tooBig.run.changedFiles).toEqual([]);
+    expect(heavy.reads).toBe(0);
+    await wideSupervisor.close();
+    await heavySupervisor.close();
+  });
+
+  it("aborts the file diff after a command when the signal fires", async () => {
+    const store = await SandboxStore.open("memory://");
+    await store.ensureComputer("agent", "daytona");
+    await store.setSandboxId("agent", "sbx-abort");
+    const controller = new AbortController();
+    const runtime = new AbortAfterExecRuntime(controller);
+    const supervisor = new ComputerSupervisor(store, runtime, 1_000);
+    await expect(
+      supervisor.invoke("agent", "exec", { command: "echo hi" }, controller.signal),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(await store.listRuns("agent")).toEqual([]);
+    await supervisor.close();
+  });
+
   it("lists nested Daytona files in the snapshot", async () => {
     const fleet = new FakeFleet();
     const store = await SandboxStore.open("memory://");
@@ -619,11 +674,87 @@ describe("sandbox", { concurrent: false }, () => {
     }
   }
 
+  class CappedRuntime implements SandboxRuntime {
+    readonly kind = "daytona" as const;
+    reads = 0;
+
+    constructor(
+      private readonly count: number,
+      private readonly size: number,
+    ) {}
+
+    list(): Promise<{ ok: true; entries: SandboxEntry[] }> {
+      const entries: SandboxEntry[] = Array.from({ length: this.count }, (_, index) => ({
+        name: `file-${index}.txt`,
+        kind: "file",
+        size: this.size,
+        modifiedAt: "2026-10-26T00:00:00.000Z",
+      }));
+      return Promise.resolve({ ok: true, entries });
+    }
+
+    read(): Promise<{ ok: true; content: string }> {
+      this.reads += 1;
+      return Promise.resolve({ ok: true, content: "x" });
+    }
+
+    write(): Promise<{ ok: true }> {
+      return Promise.resolve({ ok: true });
+    }
+
+    prepare(): Promise<void> {
+      return Promise.resolve();
+    }
+
+    exec(): Promise<ExecOutcome> {
+      return Promise.resolve({ stdout: "hi\n", stderr: "", exitCode: 0, timedOut: false });
+    }
+  }
+
+  class AbortAfterExecRuntime implements SandboxRuntime {
+    readonly kind = "daytona" as const;
+    reads = 0;
+
+    constructor(private readonly controller: AbortController) {}
+
+    list(): Promise<{ ok: true; entries: SandboxEntry[] }> {
+      return Promise.resolve({ ok: true, entries: [{ name: "a.txt", kind: "file" }] });
+    }
+
+    read(
+      _agentId: string,
+      _path: string,
+      signal?: AbortSignal,
+    ): Promise<{ ok: true; content: string }> {
+      this.reads += 1;
+      if (this.reads > 1 && signal) {
+        this.controller.abort();
+        return Promise.reject(
+          Object.assign(new Error("The operation was aborted"), { name: "AbortError" }),
+        );
+      }
+      return Promise.resolve({ ok: true, content: "same" });
+    }
+
+    write(): Promise<{ ok: true }> {
+      return Promise.resolve({ ok: true });
+    }
+
+    prepare(): Promise<void> {
+      return Promise.resolve();
+    }
+
+    exec(): Promise<ExecOutcome> {
+      return Promise.resolve({ stdout: "hi\n", stderr: "", exitCode: 0, timedOut: false });
+    }
+  }
+
   class FakeFleet implements RemoteSandboxFleet {
     readonly creates: Array<{ id: string; agentId: string; envVars?: unknown }> = [];
     readonly execs: Array<{ command: string; cwd: string; timeoutSec: number }> = [];
     readonly starts: string[] = [];
     readonly reconnects: string[] = [];
+    readonly reads: string[] = [];
     bootMs = 0;
     failNextStart = false;
     readonly #sandboxes = new Map<string, Map<string, string>>();
@@ -656,6 +787,7 @@ describe("sandbox", { concurrent: false }, () => {
       const files = this.#sandboxes.get(id);
       if (!files) throw new Error("missing sandbox");
       const execs = this.execs;
+      const reads = this.reads;
       return {
         id,
         ensureRunning: async () => {
@@ -686,6 +818,7 @@ describe("sandbox", { concurrent: false }, () => {
           };
         },
         async read(path: string) {
+          reads.push(path);
           const content = files.get(path);
           if (content === undefined) return { ok: false as const, error: `No such file: ${path}` };
           return { ok: true as const, content };

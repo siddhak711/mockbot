@@ -93,8 +93,8 @@ describe("run classification", () => {
 
 describe("computer trace", () => {
   const runs = [
-    run({ id: "cat", tool: "exec", command: "cat hello.txt", stdout: "hello" }),
     run({ id: "echo", tool: "exec", command: "echo hi", stdout: "hi" }),
+    run({ id: "cat", tool: "exec", command: "cat hello.txt", stdout: "hello" }),
     run({ id: "read", tool: "read", arguments: { path: "src/app.ts" }, stdout: "export {}" }),
     run({
       id: "build",
@@ -162,6 +162,26 @@ describe("computer trace", () => {
     expect(screen.getByText("notes/deep.txt")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Hide all files" }));
     expect(screen.queryByText("notes/deep.txt")).toBeNull();
+  });
+
+  it("expands explored commands when the selected run is inside them", () => {
+    const noiseFirst = [
+      run({ id: "cat", tool: "exec", command: "cat hello.txt", stdout: "hello" }),
+      run({
+        id: "write",
+        tool: "write",
+        arguments: { path: "a.ts" },
+        stdout: "Wrote a.ts",
+        changedFiles: ["a.ts"],
+      }),
+    ];
+    render(<ComputerPane snapshot={{ ...snapshot(), runs: noiseFirst }} />);
+    const list = screen.getByRole("list", { name: "Sandbox runs" });
+    expect(within(list).getByText("cat hello.txt")).toBeTruthy();
+    expect(within(list).getByText("Hide")).toBeTruthy();
+
+    fireEvent.click(screen.getByText("Hide"));
+    expect(within(list).queryByText("cat hello.txt")).toBeNull();
   });
 
   it("truncates long output until it is expanded", () => {

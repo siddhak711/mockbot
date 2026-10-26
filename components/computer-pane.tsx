@@ -45,6 +45,10 @@ export function ComputerPane({
   }, [latestId]);
 
   const selectedRun = runs.find((run) => run.id === selectedRunId) ?? runs[0] ?? null;
+
+  useEffect(() => {
+    if (selectedRun && classifyRun(selectedRun) === "noise") setExploredOpen(true);
+  }, [selectedRun]);
   const selectedActivity =
     activities.find((activity) => activity.id === selectedId) ?? activities[activities.length - 1];
   const provider =

@@ -69,11 +69,13 @@ export class DaytonaRuntime implements SandboxRuntime {
     }
   }
 
-  async read(agentId: string, path: string) {
+  async read(agentId: string, path: string, signal?: AbortSignal) {
     try {
-      const handle = await this.#require(agentId);
-      return await handle.read(toSandboxPath(path));
+      throwIfAborted(signal);
+      const handle = await withSignal(this.#require(agentId), signal);
+      return await withSignal(handle.read(toSandboxPath(path)), signal);
     } catch (error) {
+      if (isAbortError(error)) throw error;
       return { ok: false as const, error: redact(errorText(error), this.secret) };
     }
   }
@@ -229,6 +231,8 @@ class SdkFleet implements RemoteSandboxFleet {
             entries: entries.map((entry) => ({
               name: entry.name,
               kind: entry.isDir ? ("dir" as const) : ("file" as const),
+              size: entry.size,
+              modifiedAt: entry.modifiedAt,
             })),
           };
         } catch (error) {
