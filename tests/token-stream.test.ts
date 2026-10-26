@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { liveAssistantId } from "../components/transcript";
+import { assistantHasVisibleBody, liveAssistantId } from "../components/transcript";
 import { runtimeStatusLabel, showThinkingRow, tokenStreamEntries } from "../src/token-stream";
 import type { Message, MessageTrace } from "../src/types";
 
@@ -94,4 +94,39 @@ it("binds the live turn to the assistant after the latest user message", () => {
     ),
   ).toBe("a2");
   expect(liveAssistantId(messages, false)).toBeNull();
+});
+
+it("treats an empty live assistant as invisible until tools or text arrive", () => {
+  const empty: Message = {
+    id: "a2",
+    conversationId: "c",
+    role: "assistant",
+    content: "",
+    createdAt: "t3",
+    trace: {
+      started: true,
+      role: "assistant",
+      reasoning: "planning",
+      tools: [],
+      text: "",
+      finishReason: null,
+      ended: false,
+    },
+  };
+  expect(assistantHasVisibleBody(empty)).toBe(false);
+  expect(
+    assistantHasVisibleBody({
+      ...empty,
+      content: "Hello",
+    }),
+  ).toBe(true);
+  expect(
+    assistantHasVisibleBody({
+      ...empty,
+      trace: {
+        ...empty.trace!,
+        tools: [{ index: 0, id: "1", name: "lookup", arguments: "{}", result: null }],
+      },
+    }),
+  ).toBe(true);
 });
