@@ -3,6 +3,12 @@ import { isAbortError, throwIfAborted, withSignal } from "./abort";
 import { toSandboxPath } from "./limits";
 import type { ExecOutcome, SandboxEntry, SandboxRuntime } from "./runtime";
 import type { SandboxStore } from "./store";
+import {
+  daytonaCreateOptions,
+  provisionSandboxToolchain,
+  sandboxImage,
+  type SandboxCommandResult,
+} from "./toolchain";
 
 export type RemoteRead = { ok: true; content: string } | { ok: false; error: string };
 
@@ -42,9 +48,14 @@ export function readDaytonaSettings(
 
 export function daytonaCreateParams(agentId: string): {
   language: "python";
+  image: ReturnType<typeof sandboxImage>;
   labels: { app: "mockbot"; agentId: string };
 } {
-  return { language: "python", labels: { app: "mockbot", agentId } };
+  return {
+    language: "python",
+    image: sandboxImage(),
+    labels: { app: "mockbot", agentId },
+  };
 }
 
 export class DaytonaRuntime implements SandboxRuntime {
@@ -194,7 +205,7 @@ class SdkFleet implements RemoteSandboxFleet {
   ) {}
 
   async create(agentId: string): Promise<RemoteSandbox> {
-    const sandbox = await this.daytona.create(daytonaCreateParams(agentId));
+    const sandbox = await this.daytona.create(daytonaCreateParams(agentId), daytonaCreateOptions());
     return this.adapt(sandbox);
   }
 
@@ -215,6 +226,9 @@ class SdkFleet implements RemoteSandboxFleet {
     const isTimeout = this.isTimeout;
     const started = this.started;
     await sandbox.process.executeCommand("mkdir -p workspace", undefined, undefined, 15);
+    await provisionSandboxToolchain((command, timeoutSec) =>
+      runSandboxCommand(sandbox, command, timeoutSec),
+    );
     return {
       id: sandbox.id,
       async ensureRunning() {
@@ -278,6 +292,15 @@ class SdkFleet implements RemoteSandboxFleet {
       },
     };
   }
+}
+
+async function runSandboxCommand(
+  sandbox: Sandbox,
+  command: string,
+  timeoutSec: number,
+): Promise<SandboxCommandResult> {
+  const response = await sandbox.process.executeCommand(command, undefined, undefined, timeoutSec);
+  return { exitCode: response.exitCode, stdout: response.result ?? "", stderr: "" };
 }
 
 function quotePosix(value: string): string {
