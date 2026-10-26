@@ -101,18 +101,6 @@ export function SparkleIcon() {
   );
 }
 
-export function GearIcon() {
-  return (
-    <Icon>
-      <circle cx="12" cy="12" r="3" />
-      <path
-        d="M12 4v2M12 18v2M4 12h2M18 12h2M6.2 6.2l1.4 1.4M16.4 16.4l1.4 1.4M17.8 6.2l-1.4 1.4M7.6 16.4l-1.4 1.4"
-        strokeLinecap="round"
-      />
-    </Icon>
-  );
-}
-
 export function ArrowLeftIcon() {
   return (
     <Icon>
