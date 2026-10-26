@@ -1,9 +1,11 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { isPinnedToBottom } from "../src/chat-scroll";
 import type { SpriteState } from "../src/sprite";
 import { showThinkingRow } from "../src/token-stream";
 import type { LivePhase, Message } from "../src/types";
 import type { ToolActivity } from "../src/tools/display";
 import { AssistantStream } from "./assistant-stream";
+import { DownIcon } from "./icons";
 import { Mochi } from "./mochi";
 import { ToolActivityCards } from "./tool-activity";
 
@@ -24,14 +26,15 @@ export function liveAssistantId(messages: readonly Message[], streaming: boolean
   return null;
 }
 
-/** True when the assistant article would paint something besides an empty shell. */
+/** True when the assistant article would paint text or an approval decision. */
 export function assistantHasVisibleBody(
   message: Message,
   activities: readonly ToolActivity[] = [],
 ): boolean {
   if (message.content.trim().length > 0) return true;
-  if (message.trace && message.trace.tools.length > 0) return true;
-  return activities.some((activity) => activity.messageId === message.id);
+  return activities.some(
+    (activity) => activity.messageId === message.id && activity.state === "approval",
+  );
 }
 
 export function Transcript({
@@ -59,114 +62,138 @@ export function Transcript({
   reconnectFor?: (activity: ToolActivity) => string | null;
   onReconnect?: (activity: ToolActivity) => void;
 }) {
-  const endRef = useRef<HTMLDivElement>(null);
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const pinnedRef = useRef(true);
+  const wasStreaming = useRef(streaming);
+  const anchorRef = useRef(messages[0]?.id ?? "");
+  const [pinned, setPinned] = useState(true);
   const liveId = liveAssistantId(messages, streaming);
   const liveMessage = liveId ? messages.find((message) => message.id === liveId) : null;
   const pendingThink =
     streaming && (!liveMessage || showThinkingRow(true, livePhase, Boolean(liveMessage.content)));
 
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ block: "end" });
-  }, [messages, streaming, activities, livePhase, pendingThink]);
+  const stickToBottom = useCallback(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, []);
 
-  if (messages.length === 0) {
-    return (
-      <div className="transcript">
-        <div className="transcript-empty">
-          <Mochi state="idle" size={64} label="Mochi, ready" />
-          <h2>Start a conversation</h2>
-          <p>
-            Ask Mockbot to remember a fact. It can use that fact in a later chat. Replies stream as
-            a clean answer; open the Trace tab for start/end tokens and reasoning. Tool calls show
-            up when the model sends them. Create another agent, then send{" "}
-            <code>delegate to Name: task</code>.
-          </p>
-        </div>
-      </div>
-    );
+  useLayoutEffect(() => {
+    const anchor = messages[0]?.id ?? "";
+    const started = streaming && !wasStreaming.current;
+    wasStreaming.current = streaming;
+    if (anchorRef.current !== anchor || started) {
+      anchorRef.current = anchor;
+      pinnedRef.current = true;
+      setPinned(true);
+    }
+    if (!pinnedRef.current) return;
+    stickToBottom();
+  }, [messages, streaming, livePhase, pendingThink, activities, stickToBottom]);
+
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const next = isPinnedToBottom({
+        scrollTop: el.scrollTop,
+        scrollHeight: el.scrollHeight,
+        clientHeight: el.clientHeight,
+      });
+      pinnedRef.current = next;
+      setPinned((current) => (current === next ? current : next));
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
+
+  const showReturn = !pinned && messages.length > 0;
+
+  function stickAndPin() {
+    pinnedRef.current = true;
+    setPinned(true);
+    stickToBottom();
   }
 
   return (
-    <div className="transcript">
-      <div className="transcript-layout">
-        <aside className="token-rail" aria-label="Token stream shortcuts">
-          <button
-            type="button"
-            className="token-rail-btn"
-            onClick={onOpenTrace}
-            disabled={!onOpenTrace}
-          >
-            Trace
-          </button>
-        </aside>
-        <div className="transcript-column">
-          {messages.map((message) => {
-            const live = message.id === liveId;
-            if (message.role === "user") {
+    <div className="transcript-frame">
+      <div className="transcript" ref={scrollerRef} data-pinned={pinned ? "true" : "false"}>
+        {messages.length === 0 ? (
+          <div className="transcript-empty">
+            <Mochi state="idle" size={64} label="Mochi, ready" />
+            <h2>Start a conversation</h2>
+            <p>
+              Ask Mockbot to remember a fact. It can use that fact in a later chat. Replies stream
+              as a clean answer. Open the Trace tab for the full raw transcript, including the
+              system prompt and every tool call. Create another agent, then send{" "}
+              <code>delegate to Name: task</code>.
+            </p>
+          </div>
+        ) : (
+          <div className="transcript-column">
+            {messages.map((message) => {
+              const live = message.id === liveId;
+              if (message.role === "user") {
+                return (
+                  <article key={message.id} className="message user" aria-label="You">
+                    <p className="user-text">{message.content}</p>
+                  </article>
+                );
+              }
+              const approvals = activities.filter(
+                (activity) => activity.messageId === message.id && activity.state === "approval",
+              );
+              if (!assistantHasVisibleBody(message, approvals)) {
+                return null;
+              }
               return (
-                <article key={message.id} className="message user" aria-label="You">
-                  <p className="user-text">{message.content}</p>
+                <article
+                  key={message.id}
+                  className="message assistant"
+                  aria-label={live ? "Reply still streaming" : "Mockbot"}
+                >
+                  {approvals.length > 0 ? (
+                    <ToolActivityCards
+                      activities={approvals}
+                      decidingId={decidingId}
+                      onDecide={onDecide}
+                      onSelect={onSelectTool}
+                      reconnectFor={reconnectFor}
+                      onReconnect={onReconnect}
+                    />
+                  ) : null}
+                  <AssistantStream
+                    message={message}
+                    live={live}
+                    livePhase={live ? livePhase : null}
+                    spriteState={live ? spriteState : "idle"}
+                    onOpenTrace={onOpenTrace}
+                    showThinking={false}
+                  />
                 </article>
               );
-            }
-            const messageActivities = activities.filter(
-              (activity) => activity.messageId === message.id,
-            );
-            // Empty shells stay hidden after the live turn too: a stop or a finish
-            // with no text and no tools should not leave a blank article behind.
-            if (!assistantHasVisibleBody(message, messageActivities)) {
-              return null;
-            }
-            return (
-              <article
-                key={message.id}
-                className="message assistant"
-                aria-label={live ? "Reply still streaming" : "Mockbot"}
-              >
-                <ToolActivityCards
-                  activities={messageActivities}
-                  decidingId={decidingId}
-                  onDecide={onDecide}
-                  onSelect={onSelectTool}
-                  reconnectFor={reconnectFor}
-                  onReconnect={onReconnect}
-                />
-                <AssistantStream
-                  message={message}
-                  live={live}
-                  livePhase={live ? livePhase : null}
-                  spriteState={live ? spriteState : "idle"}
-                  onOpenTrace={onOpenTrace}
-                  showThinking={false}
-                />
-              </article>
-            );
-          })}
-          {pendingThink ? (
-            <div className="thinking" aria-live="polite" aria-label="Thinking">
-              <Mochi state={spriteState} size={24} />
-              <span className="thinking-label">Thinking</span>
-              <span className="thinking-shimmer" aria-hidden="true" />
-              {onOpenTrace ? (
-                <button type="button" className="thinking-trace" onClick={onOpenTrace}>
-                  Trace
-                </button>
-              ) : null}
-            </div>
-          ) : null}
-          <div ref={endRef} />
-        </div>
-        <aside className="token-rail" aria-label="Token stream shortcuts">
-          <button
-            type="button"
-            className="token-rail-btn"
-            onClick={onOpenTrace}
-            disabled={!onOpenTrace}
-          >
-            Trace
-          </button>
-        </aside>
+            })}
+            {pendingThink ? (
+              <div className="thinking" aria-live="polite" aria-label="Thinking">
+                <Mochi state={spriteState} size={24} />
+                <span className="thinking-label">Thinking</span>
+                <span className="thinking-shimmer" aria-hidden="true" />
+                {onOpenTrace ? (
+                  <button type="button" className="thinking-trace" onClick={onOpenTrace}>
+                    Trace
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        )}
       </div>
+      {showReturn ? (
+        <button type="button" className="return-latest" onClick={stickAndPin}>
+          <DownIcon />
+          <span>Return to latest</span>
+        </button>
+      ) : null}
     </div>
   );
 }
