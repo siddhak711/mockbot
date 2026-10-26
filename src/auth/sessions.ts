@@ -33,6 +33,10 @@ export async function createDatabaseSession(
   return { sessionToken, expires };
 }
 
+export async function deleteDatabaseSession(db: Sql, sessionToken: string): Promise<void> {
+  await db.query(`DELETE FROM sessions WHERE session_token = $1`, [sessionToken]);
+}
+
 export async function readSessionUser(db: Sql, sessionToken: string): Promise<SignedInUser | null> {
   const result = await db.query<SessionUserRow>(
     `SELECT u.id, u.name, u.email, u.image, s.session_token, s.expires

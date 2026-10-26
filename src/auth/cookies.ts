@@ -60,6 +60,42 @@ export function readSessionToken(request: Request): string | null {
   return null;
 }
 
+type CookieReader = { get(name: string): { value: string } | undefined };
+
+export function sessionTokenFromCookies(jar: CookieReader): string | null {
+  for (const name of SESSION_COOKIE_NAMES) {
+    const value = jar.get(name)?.value;
+    if (value) return value;
+  }
+  return null;
+}
+
+export function clearedSessionCookie(name: string): {
+  name: string;
+  value: string;
+  options: {
+    httpOnly: true;
+    sameSite: "lax";
+    path: "/";
+    maxAge: 0;
+    expires: Date;
+    secure?: true;
+  };
+} {
+  return {
+    name,
+    value: "",
+    options: {
+      httpOnly: true,
+      sameSite: "lax",
+      path: "/",
+      maxAge: 0,
+      expires: new Date(0),
+      ...(name === SECURE_SESSION_COOKIE ? { secure: true as const } : {}),
+    },
+  };
+}
+
 export function sessionCookieHeader(token: string, expires: Date, request: Request): string {
   const secure = secureSessionCookies(request);
   const parts = [

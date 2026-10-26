@@ -54,7 +54,7 @@ export function UserMenu({ user, detail }: { user: SignedInUser; detail?: string
         <div className="menu user-pop" id={menuId} role="menu" aria-label="Account">
           <form action={signOutAction}>
             <button type="submit" role="menuitem">
-              Sign out
+              Log out
             </button>
           </form>
         </div>

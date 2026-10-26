@@ -100,6 +100,11 @@ it("renders the theme toggle in the sidebar header", () => {
   expect(footer?.textContent).toContain("Ada");
   expect(footer?.textContent).toContain("ada@example.com");
   expect(footer?.textContent).toContain("deepseek/deepseek-v4.1-flash");
+
+  fireEvent.click(screen.getByRole("button", { name: /ada@example.com/i }));
+  const logout = screen.getByRole("menuitem", { name: "Log out" });
+  expect(footer?.contains(logout)).toBe(true);
+  expect(logout.closest("form")?.getAttribute("action")).toBeTruthy();
 });
 
 it("opens a new-agent dialog and closes it from Escape, the backdrop, and the X", () => {
