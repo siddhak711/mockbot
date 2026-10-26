@@ -83,7 +83,9 @@ async function refreshCatalogToken(
 ): Promise<StoredOAuthToken> {
   const key = connector.id || token.accessToken;
   const existing = refreshing.get(key);
-  if (existing && !force) return existing;
+  // A 401 retry must wait for the refresh already in flight. Starting another
+  // spends the same rotating refresh token and Notion rejects the second one.
+  if (existing) return existing;
   const run = refreshStoredOAuthToken({
     catalogId: connector.catalogId || "",
     token,

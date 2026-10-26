@@ -1,6 +1,7 @@
 import { catalogById, catalogIsWired, catalogTarget, type CatalogEntry } from "../catalog";
 import { discoverTool, resolveToolSettings } from "../policy";
 import type { ConnectorRecord } from "../../connectors";
+import { requireApiUser } from "../../auth/guard";
 import { getAppContext } from "../../context";
 import { listMcpTools, type McpToolInfo } from "../../mcp/client";
 import { secretsFor } from "../../mcp/secrets";
@@ -28,6 +29,8 @@ import { serializeOAuthToken, type StoredOAuthToken } from "./token";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export async function handleOAuthStart(request: Request): Promise<Response> {
+  const actor = await requireApiUser(request);
+  if (!actor.ok) return actor.response;
   let body: unknown;
   try {
     body = await request.json();
@@ -80,6 +83,8 @@ export async function handleOAuthStart(request: Request): Promise<Response> {
 }
 
 export async function handleOAuthCallback(request: Request): Promise<Response> {
+  const actor = await requireApiUser(request);
+  if (!actor.ok) return actor.response;
   const url = new URL(request.url);
   const origin = publicOrigin(request, process.env);
   const secure = origin.startsWith("https:");

@@ -19,6 +19,41 @@ afterEach(async () => {
   await resetAppContext();
 });
 
+it("rejects a forged session cookie on catalog OAuth start and callback", async () => {
+  const previous = process.env.MOCKBOT_REQUIRE_AUTH;
+  process.env.MOCKBOT_REQUIRE_AUTH = "1";
+  const store = await ConversationStore.open();
+  setAppContext({
+    store,
+    provider: new MockProvider({ delayMs: 0 }),
+    tools: createDefaultTools({}),
+  });
+  const cookie = "authjs.session-token=forged-session";
+  try {
+    const start = await startOAuth(
+      new Request("http://localhost:3000/api/connectors/oauth/start", {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie },
+        body: JSON.stringify({ catalogId: "notion" }),
+      }),
+    );
+    expect(start.status).toBe(401);
+    expect(await start.json()).toEqual({ error: "Unauthorized" });
+
+    const callback = await oauthCallback(
+      new Request("http://localhost:3000/connectors/oauth/callback?code=notion-code&state=forged", {
+        headers: { cookie },
+      }),
+    );
+    expect(callback.status).toBe(401);
+    expect(await callback.json()).toEqual({ error: "Unauthorized" });
+    expect(await store.listConnectors()).toHaveLength(0);
+  } finally {
+    if (previous === undefined) delete process.env.MOCKBOT_REQUIRE_AUTH;
+    else process.env.MOCKBOT_REQUIRE_AUTH = previous;
+  }
+});
+
 it("marks only Notion and GitHub as connectable catalog providers", () => {
   expect(catalogIsWired(catalogById("notion")!)).toBe(true);
   expect(catalogIsWired(catalogById("github")!)).toBe(true);
@@ -681,6 +716,105 @@ it("refreshes once after Notion returns 401 and retries the tool", async () => {
     expect(result?.content).toContain("after refresh");
     expect(seen).toEqual(["Bearer ntn_stale", "Bearer ntn_retry"]);
   } finally {
+    globalThis.fetch = original;
+    await server.close();
+    clearOAuthEnv();
+  }
+});
+
+it("shares one refresh when two Notion calls get 401 at the same time", async () => {
+  withOAuthEnv();
+  const store = await ConversationStore.open();
+  setAppContext({
+    store,
+    provider: new MockProvider({ delayMs: 0 }),
+    tools: createDefaultTools({}),
+  });
+  let unauthorized = 0;
+  const server = await listen((req, res) => {
+    const authorization = req.headers.authorization ?? "";
+    if (authorization === "Bearer ntn_stale") {
+      unauthorized += 1;
+      res.statusCode = 401;
+      res.end(JSON.stringify({ message: "unauthorized" }));
+      return;
+    }
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ results: [{ title: "after refresh" }] }));
+  });
+  const original = globalThis.fetch;
+  let refreshes = 0;
+  let releaseRefresh: () => void = () => undefined;
+  const refreshHeld = new Promise<void>((resolve) => {
+    releaseRefresh = resolve;
+  });
+  globalThis.fetch = (async (
+    input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1],
+  ) => {
+    const url = requestUrl(input);
+    if (!url.startsWith("https://api.notion.com/v1/oauth/token")) {
+      return original(input, init);
+    }
+    refreshes += 1;
+    if (refreshes === 1) await refreshHeld;
+    return new Response(
+      JSON.stringify({
+        access_token: "ntn_retry",
+        refresh_token: "ntn_rotated",
+        expires_in: 3600,
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }) as typeof fetch;
+  try {
+    await store.createConnector({
+      name: "Notion",
+      transport: "http",
+      target: server.url,
+      secretRef: null,
+      catalogId: "notion",
+      authType: "oauth",
+      secretCipher: await encryptSecret(
+        JSON.stringify({
+          v: 1,
+          kind: "oauth",
+          accessToken: "ntn_stale",
+          refreshToken: "ntn_refresh",
+          expiresAt: Date.now() + 3_600_000,
+        }),
+      ),
+      tools: {},
+    });
+    const registry = new ToolRegistry();
+    await refreshMcpTools({ registry, connectors: await store.listConnectors(), env: process.env });
+    const search = registry.get("notion_search");
+    const page = registry.get("notion_get_page");
+    const pending = Promise.all([
+      search?.invoke({ query: "plan" }, {}),
+      page?.invoke({ page_id: "page-1" }, {}),
+    ]);
+    const deadline = Date.now() + 1_000;
+    while (Date.now() < deadline && (unauthorized < 2 || refreshes < 1)) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(unauthorized).toBe(2);
+    expect(refreshes).toBe(1);
+    releaseRefresh();
+    const [searched, read] = await pending;
+    expect(searched?.isError).toBe(false);
+    expect(read?.isError).toBe(false);
+    expect(searched?.content).toContain("after refresh");
+    expect(read?.content).toContain("after refresh");
+    expect(refreshes).toBe(1);
+    const stored = parseOAuthToken(
+      await decryptSecret((await store.listConnectors())[0]?.secretCipher ?? ""),
+    );
+    expect(stored?.accessToken).toBe("ntn_retry");
+    expect(stored?.refreshToken).toBe("ntn_rotated");
+  } finally {
+    releaseRefresh();
     globalThis.fetch = original;
     await server.close();
     clearOAuthEnv();
