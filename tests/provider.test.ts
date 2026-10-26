@@ -34,6 +34,22 @@ it("selects the mock provider unless openai and an API key are both set", () => 
   });
   expect(provider.id).toBe("openai");
   expect(provider.model).toBe("deepseek/deepseek-v4.1-flash");
+  const aliased = selectProvider({
+    LLM_PROVIDER: "openrouter",
+    LLM_API_KEY: SECRET,
+    LLM_BASE_URL: "https://openrouter.ai/api/v1",
+    LLM_MODEL: "deepseek/deepseek-v4.1-flash",
+  });
+  expect(aliased.id).toBe("openai");
+  expect(aliased.model).toBe("deepseek/deepseek-v4.1-flash");
+  expect(() => selectProvider({ LLM_PROVIDER: "nope" })).toThrow(/Unknown LLM_PROVIDER/);
+  expect(
+    selectProvider({
+      LLM_PROVIDER: "openrouter",
+      LLM_API_KEY: SECRET,
+      LLM_BASE_URL: "not a url",
+    }).id,
+  ).toBe("mock");
 });
 
 it("sends the turn to the configured base URL and keeps the key off the client response", async () => {

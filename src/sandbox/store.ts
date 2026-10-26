@@ -1,5 +1,6 @@
-import { mkdir } from "node:fs/promises";
-import { PGlite } from "@electric-sql/pglite";
+import { openDatabase, type ProcessEnv } from "../db/open";
+import { openPglite } from "../db/pglite";
+import type { Sql, SqlDriver } from "../db/sql";
 import type { ComputerInfo, ComputerToolName, SandboxProviderKind, SandboxRun } from "./types";
 
 const SCHEMA = `
@@ -114,19 +115,39 @@ function mapRun(row: RunRow): SandboxRun {
 }
 
 export class SandboxStore {
-  private constructor(private readonly db: PGlite) {}
+  readonly driver: SqlDriver;
 
+  private constructor(private readonly db: Sql) {
+    this.driver = db.driver;
+  }
+
+  /** Shared database connection. Tables are created on first open. */
+  get connection(): Sql {
+    return this.db;
+  }
+
+  /** Embedded Postgres for dev and tests. `memory://` stays in memory. */
   static async open(dataDir = "memory://"): Promise<SandboxStore> {
-    const persistent = dataDir !== "memory://" && !dataDir.startsWith("memory:");
-    if (persistent) await mkdir(dataDir, { recursive: true });
-    const db = new PGlite(persistent ? dataDir : "memory://");
-    await db.waitReady;
-    await db.exec(SCHEMA);
+    return SandboxStore.fromSql(await openPglite(dataDir));
+  }
+
+  /** Shared Postgres from openDatabase. Creates the sandbox tables on first connection. */
+  static async connect(env: ProcessEnv): Promise<SandboxStore> {
+    return SandboxStore.fromSql(await openDatabase(env));
+  }
+
+  private static async fromSql(db: Sql): Promise<SandboxStore> {
+    try {
+      await db.exec(SCHEMA);
+    } catch (error) {
+      await db.close();
+      throw error;
+    }
     return new SandboxStore(db);
   }
 
   async close(): Promise<void> {
-    if (!this.db.closed) await this.db.close();
+    await this.db.close();
   }
 
   async ensureComputer(
