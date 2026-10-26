@@ -371,6 +371,25 @@ describe("sandbox", { concurrent: false }, () => {
     await supervisor.close();
   });
 
+  it("records files a command creates or edits", async () => {
+    const fleet = new FakeFleet();
+    const store = await SandboxStore.open("memory://");
+    const runtime = new DaytonaRuntime(fleet, store, "secret");
+    const supervisor = new ComputerSupervisor(store, runtime, 1_000);
+    await supervisor.invoke("agent", "write", { path: "keep.txt", content: "same" });
+    await supervisor.invoke("agent", "write", { path: "note.txt", content: "old" });
+
+    const revised = await supervisor.invoke("agent", "exec", { command: "revise" });
+    expect(revised.run.changedFiles).toEqual(["created.txt", "note.txt"]);
+
+    const reread = await supervisor.invoke("agent", "exec", { command: "revise" });
+    expect(reread.run.changedFiles).toEqual([]);
+
+    const printed = await supervisor.invoke("agent", "exec", { command: "echo hi" });
+    expect(printed.run.changedFiles).toEqual([]);
+    await supervisor.close();
+  });
+
   it("lists nested Daytona files in the snapshot", async () => {
     const fleet = new FakeFleet();
     const store = await SandboxStore.open("memory://");
@@ -677,6 +696,11 @@ describe("sandbox", { concurrent: false }, () => {
         exec: async (command: string, cwd: string, timeoutSec: number) => {
           if (!this.#running.has(id)) throw new Error("Sandbox is stopped");
           execs.push({ command, cwd, timeoutSec });
+          if (command === "revise") {
+            files.set(`${cwd}/note.txt`, "new");
+            files.set(`${cwd}/created.txt`, "fresh");
+            return { stdout: "ok\n", stderr: "", exitCode: 0, timedOut: false };
+          }
           if (command.startsWith("echo ")) {
             return { stdout: `${command.slice(5)}\n`, stderr: "", exitCode: 0, timedOut: false };
           }

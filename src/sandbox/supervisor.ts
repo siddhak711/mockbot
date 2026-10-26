@@ -165,11 +165,15 @@ export class ComputerSupervisor {
     if (command.length > MAX_COMMAND_CHARS) {
       return this.#fail(agentId, "exec", command, args, "Command is too long.", []);
     }
+    let before: Map<string, string> | null = null;
+    let ran = false;
     let outcome: ExecOutcome;
     try {
       throwIfAborted(signal);
       await this.runtime.prepare(agentId, signal);
       throwIfAborted(signal);
+      before = await this.#readTree(agentId, signal);
+      ran = true;
       outcome = await deadline(
         this.runtime.exec(agentId, command, this.timeoutMs, signal),
         this.timeoutMs,
@@ -179,7 +183,8 @@ export class ComputerSupervisor {
       if (isAbortError(error) || signal?.aborted)
         throw isAbortError(error) ? error : abortFrom(signal);
       const message = error instanceof Error ? error.message : "Sandbox command failed";
-      return this.#fail(agentId, "exec", command, { command }, message, []);
+      const changed = ran ? await this.#changedSince(agentId, before) : [];
+      return this.#fail(agentId, "exec", command, { command }, message, changed);
     }
     const finished: ExecOutcome = outcome.timedOut
       ? { stdout: killedMessage(this.timeoutMs), stderr: "", exitCode: null, timedOut: true }
@@ -189,6 +194,7 @@ export class ComputerSupervisor {
           exitCode: outcome.exitCode,
           timedOut: false,
         };
+    const changed = await this.#changedSince(agentId, before);
     const run = await this.#record(
       agentId,
       "exec",
@@ -198,9 +204,43 @@ export class ComputerSupervisor {
       finished.stderr,
       finished.exitCode,
       finished.timedOut,
-      [],
+      changed,
     );
     return { result: this.#shown(formatExecResult(command, finished)), run };
+  }
+
+  async #readTree(agentId: string, signal?: AbortSignal): Promise<Map<string, string> | null> {
+    throwIfAborted(signal);
+    let listed: ComputerFile[];
+    try {
+      listed = await this.#files(agentId);
+    } catch (error) {
+      if (isAbortError(error) || signal?.aborted) {
+        throw isAbortError(error) ? error : abortFrom(signal);
+      }
+      return null;
+    }
+    const contents = new Map<string, string>();
+    for (const file of listed) {
+      throwIfAborted(signal);
+      if (file.kind !== "file") continue;
+      try {
+        const read = await this.runtime.read(agentId, file.path);
+        if (read.ok) contents.set(file.path, read.content);
+      } catch (error) {
+        if (isAbortError(error) || signal?.aborted) {
+          throw isAbortError(error) ? error : abortFrom(signal);
+        }
+      }
+    }
+    return contents;
+  }
+
+  async #changedSince(agentId: string, before: Map<string, string> | null): Promise<string[]> {
+    if (!before) return [];
+    const after = await this.#readTree(agentId);
+    if (!after) return [];
+    return addedOrModified(before, after);
   }
 
   async #fail(
@@ -273,6 +313,16 @@ function abortFrom(signal?: AbortSignal): Error {
   const reason = signal?.reason;
   if (reason instanceof Error && reason.name === "AbortError") return reason;
   return Object.assign(new Error("The operation was aborted"), { name: "AbortError" });
+}
+
+function addedOrModified(before: Map<string, string>, after: Map<string, string>): string[] {
+  const changed: string[] = [];
+  for (const [path, content] of after) {
+    const previous = before.get(path);
+    if (previous === undefined || previous !== content) changed.push(path);
+  }
+  changed.sort((left, right) => left.localeCompare(right));
+  return changed;
 }
 
 function stringArg(value: unknown, fallback: string): string {
