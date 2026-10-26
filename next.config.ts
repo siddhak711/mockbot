@@ -5,8 +5,9 @@ const nextConfig: NextConfig = {
   devIndicators: false,
   serverExternalPackages: [
     "@electric-sql/pglite",
-    "@modelcontextprotocol/client",
+    "@neondatabase/serverless",
     "@daytonaio/sdk",
+    "@modelcontextprotocol/client",
   ],
   outputFileTracingIncludes: {
     "/**": ["./src/db/migrations/**/*.sql"],

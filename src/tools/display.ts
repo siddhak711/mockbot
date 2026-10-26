@@ -44,9 +44,13 @@ export function formatToolPayload(raw: string): string {
   }
 }
 
+export const BLOCKED_MEMORY_OUTPUT = "Blocked. A secret was not stored.";
+
 export function toolKind(name: string, args: Record<string, unknown> | null): ToolActivityKind {
-  if (name === "web_search" || name === "tool_search") return "search";
+  if (name === "web_search" || name === "tool_search" || name === "memory_search") return "search";
   if (name === "web_fetch" || name === "github") return "read";
+  if (name === "memory_write" || name === "memory_update" || name === "memory_delete")
+    return "draft";
   if (name === "google_calendar") return args?.action === "list" ? "read" : "draft";
   return "generic";
 }
@@ -64,6 +68,10 @@ export function toolTitle(name: string, args: Record<string, unknown> | null): s
   if (name === "google_calendar") {
     return args?.action === "create" ? "Create a calendar event" : "Checked the calendar";
   }
+  if (name === "memory_search") return "Searching memory";
+  if (name === "memory_write") return "Saving a memory";
+  if (name === "memory_update") return "Updating a memory";
+  if (name === "memory_delete") return "Forgetting a memory";
   if (name === "write")
     return typeof args?.path === "string" ? `Write ${args.path}` : "Write a file";
   if (name === "read") return typeof args?.path === "string" ? `Read ${args.path}` : "Read a file";
@@ -96,12 +104,20 @@ export function toolDetail(name: string, args: Record<string, unknown> | null): 
     }
     return "Primary calendar";
   }
+  if (name.startsWith("memory_")) {
+    if (typeof args.query === "string") return args.query;
+    if (typeof args.key === "string") return args.key;
+  }
   if (typeof args.message === "string" && args.message) return args.message;
   const first = Object.values(args).find((value) => typeof value === "string");
   return typeof first === "string" ? first : "";
 }
 
 export function approvalSummary(name: string, args: Record<string, unknown> | null): string {
+  if (name === "memory_delete") {
+    const key = typeof args?.key === "string" && args.key.trim() ? args.key.trim() : "this memory";
+    return `Forget “${key}”? This removes it from later chats.`;
+  }
   if (name === "google_calendar" && args?.action === "create") {
     const attendees = Array.isArray(args.attendees) ? args.attendees.map(String) : [];
     const summary =
@@ -110,6 +126,31 @@ export function approvalSummary(name: string, args: Record<string, unknown> | nu
   }
   const action = typeof args?.action === "string" ? args.action : "run";
   return `Allow ${name} to ${action}? This can send, post, delete, or pay.`;
+}
+
+export function activityTitle(
+  name: string,
+  phase: "running" | "done",
+  isError: boolean,
+  blockedWrite: boolean,
+): string {
+  if (blockedWrite) return "Memory write blocked";
+  const label =
+    name === "memory_search"
+      ? "Searching memory"
+      : name === "memory_delete"
+        ? "Forgetting a memory"
+        : name === "memory_update"
+          ? "Updating a memory"
+          : name === "memory_write"
+            ? "Saving a memory"
+            : name;
+  if (phase === "running" || !isError) return label;
+  if (name === "memory_delete") return "Could not forget that memory";
+  if (name === "memory_search") return "Memory search failed";
+  if (name === "memory_update") return "Could not update that memory";
+  if (name === "memory_write") return "Could not save that memory";
+  return `${name} failed`;
 }
 
 export function describeTool(
@@ -128,6 +169,10 @@ export function describeTool(
 export function toToolActivity(tool: StoredToolCall): ToolActivity {
   const described = describeTool(tool.name, tool.arguments);
   const output = tool.output ?? "";
+  const blocked = tool.name === "memory_write" && output === BLOCKED_MEMORY_OUTPUT;
+  const title = tool.name.startsWith("memory_")
+    ? activityTitle(tool.name, "done", tool.status === "error", blocked)
+    : described.title;
   return {
     id: tool.id,
     messageId: tool.messageId,
@@ -137,6 +182,7 @@ export function toToolActivity(tool: StoredToolCall): ToolActivity {
     preview: output ? previewText(output) : "",
     state: tool.status,
     ...described,
+    title,
   };
 }
 

@@ -1,10 +1,20 @@
-import type { ToolActivity } from "../src/tools/display";
+import {
+  BLOCKED_MEMORY_OUTPUT,
+  parseToolArgs,
+  toolTitle,
+  type ToolActivity,
+} from "../src/tools/display";
 import type { ToolTrace } from "../src/types";
 
 export type { ToolActivity };
 
 export function ToolCallCard({ tool, pending }: { tool: ToolTrace; pending: boolean }) {
-  const title = tool.name || "Tool call";
+  const title =
+    tool.name === "memory_write" && tool.result === BLOCKED_MEMORY_OUTPUT
+      ? "Memory write blocked"
+      : tool.name
+        ? toolTitle(tool.name, parseToolArgs(tool.arguments))
+        : "Tool call";
   return (
     <div
       className={pending ? "card live" : "card"}

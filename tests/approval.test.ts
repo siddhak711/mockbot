@@ -58,6 +58,18 @@ it("requires approval for send, post, delete, pay, and calendar invites", () => 
   expect(requiresApproval(tool({ name: "notes", approval: "always" }), { action: "list" })).toBe(
     true,
   );
+  expect(
+    requiresApproval(tool({ name: "memory_search", approval: "never" }), { query: "blue" }),
+  ).toBe(false);
+  expect(
+    requiresApproval(tool({ name: "memory_write", approval: "never" }), {
+      key: "color",
+      text: "blue",
+    }),
+  ).toBe(false);
+  expect(
+    requiresApproval(tool({ name: "memory_delete", approval: "always" }), { key: "color" }),
+  ).toBe(true);
 });
 
 it("resolves an approval once and times out or stops when nobody decides", async () => {

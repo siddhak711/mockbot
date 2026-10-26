@@ -1,4 +1,6 @@
+import type { ConversationStore } from "../store";
 import { clip, isAbortError } from "./http";
+import { createMemoryTools } from "./memory";
 import { MAX_EXPOSED_TOOLS, type ToolContext, type ToolDefinition, type ToolResult } from "./types";
 
 function exposureOf(tool: ToolDefinition): "pinned" | "default" | "hidden" {
@@ -118,11 +120,22 @@ export async function runTool(
   try {
     const result = await tool.invoke(args, context);
     const content = result.content.trim() ? clip(result.content) : "The tool returned no content.";
-    return { content, isError: result.isError };
+    return {
+      content,
+      isError: result.isError,
+      ...(result.blocked ? { blocked: result.blocked } : {}),
+    };
   } catch (error) {
     if (isAbortError(error)) throw error;
     const message = error instanceof Error ? error.message : "The tool failed";
     return { content: message, isError: true };
+  }
+}
+
+export function registerMemoryTools(registry: ToolRegistry, store: ConversationStore): void {
+  for (const tool of createMemoryTools(store)) {
+    if (registry.get(tool.name)) continue;
+    registry.register(tool);
   }
 }
 

@@ -5,15 +5,22 @@ import { buildAgentSystemPrompt } from "./agents/prompt";
 import { runWithDelegate } from "./agents/stream";
 import { toolsForSpeaker } from "./agents/tool";
 import type { AgentMemoryPort, ComputerPort, ConnectorPort } from "./agents/types";
+import { findSecrets } from "./memory/scrub";
 import { encodeSse, ssePadding } from "./sse";
 import { titleFromMessage, type ConversationStore } from "./store";
 import type { LlmProvider } from "./llm";
 import { requiresApproval, type ApprovalGate } from "./tools/approval";
 import { runTool, type ToolRegistry } from "./tools/registry";
-import { describeTool, STOPPED_TOOL_OUTPUT } from "./tools/display";
+import {
+  activityTitle,
+  BLOCKED_MEMORY_OUTPUT,
+  describeTool,
+  STOPPED_TOOL_OUTPUT,
+} from "./tools/display";
 import type { ToolContext } from "./tools/types";
+import { buildModelInput } from "./turn";
 import { applyStreamEvent, emptyTrace, hasVisibleStream } from "./trace";
-import type { LlmMessage, LlmStreamEvent, LlmToolCall, Message, MessageTrace } from "./types";
+import type { LlmStreamEvent, LlmToolCall, MessageTrace } from "./types";
 
 const MAX_MESSAGE_LENGTH = 20_000;
 const MAX_ROUNDS = 8;
@@ -71,29 +78,6 @@ function mergeName(current: string, chunk: string): string {
   if (!chunk) return current;
   if (!current || chunk === current || chunk.startsWith(current)) return chunk;
   return current + chunk;
-}
-
-function toLlmHistory(system: string, messages: Message[]): LlmMessage[] {
-  const history: LlmMessage[] = [{ role: "system", content: system }];
-  for (const message of messages) {
-    if (message.role === "user") {
-      if (message.content.length > 0) history.push({ role: "user", content: message.content });
-      continue;
-    }
-    const tools = message.tools ?? [];
-    const activity = tools
-      .map((tool) => {
-        const output = tool.output ? tool.output.slice(0, 500) : tool.status;
-        return `${tool.name} (${tool.status}): ${output}`;
-      })
-      .join("\n");
-    const content = [message.content.trim(), activity ? `Previous tool activity:\n${activity}` : ""]
-      .filter(Boolean)
-      .join("\n\n");
-    if (!content) continue;
-    history.push({ role: "assistant", content });
-  }
-  return history;
 }
 
 function denialText(reason: "user" | "timeout"): string {
@@ -172,17 +156,21 @@ export async function streamChatTurn(options: {
   }
 
   const user = await options.store.addMessage(conversation.id, "user", message);
-  const stored = await options.store.getConversation(conversation.id);
   const speaker = (await agents.get(conversation.agentId)) ?? (await agents.get(LEAD_AGENT_ID));
   if (!speaker) return Response.json({ error: "Agent not found" }, { status: 404 });
   const [memories, grants] = await Promise.all([
     memory.list(speaker.id),
     agents.listGrants(speaker.id),
   ]);
-  const history = toLlmHistory(
-    buildAgentSystemPrompt({ agent: speaker, memories, grants, child: false }),
-    stored?.messages ?? [],
-  );
+  const prepared = await buildModelInput({
+    store: options.store,
+    conversationId: conversation.id,
+    agentId: conversation.agentId,
+    agentPrompt: buildAgentSystemPrompt({ agent: speaker, memories, grants, child: false }),
+  });
+  if (!prepared) return Response.json({ error: "Conversation not found" }, { status: 404 });
+  const history = prepared.messages;
+  const memoryDeps = prepared.deps;
 
   const { store, provider, approvals, signal } = options;
   const tools = toolsForSpeaker(options.tools, speaker.id, {
@@ -199,6 +187,7 @@ export async function streamChatTurn(options: {
   const promoted = new Set<string>();
   const toolContext: ToolContext = {
     signal,
+    memory: memoryDeps,
     promote(names) {
       for (const name of names) promoted.add(name);
     },
@@ -503,14 +492,40 @@ export async function streamChatTurn(options: {
           ...toolContext,
           signal: signal?.aborted ? undefined : toolContext.signal,
         });
-        return finish(call, result.isError ? "error" : "done", result.content);
+        if (!call.name.startsWith("memory_")) memoryDeps.toolOutputs.push(result.content);
+        const blocked = result.blocked === "secret";
+        const shown = blocked ? BLOCKED_MEMORY_OUTPUT : result.content;
+        const activity = toolActivity(
+          {
+            id: call.id,
+            name: call.name,
+            output: shown,
+            isError: Boolean(result.isError),
+            blocked: result.blocked,
+          },
+          "done",
+        );
+        return finish(
+          call,
+          result.isError ? "error" : "done",
+          shown,
+          result.content,
+          call.name.startsWith("memory_") ? activity.title : undefined,
+        );
       }
 
       async function finish(
         call: PendingCall,
         status: PendingCall["status"],
         output: string,
+        modelOutput = output,
+        title?: string,
       ): Promise<string> {
+        const resolvedTitle =
+          title ??
+          (call.name.startsWith("memory_")
+            ? activityTitle(call.name, "done", status === "error", output === BLOCKED_MEMORY_OUTPUT)
+            : undefined);
         call.status = status;
         call.output = output;
         call.result = output;
@@ -519,6 +534,7 @@ export async function streamChatTurn(options: {
           name: call.name,
           status,
           output,
+          ...(resolvedTitle ? { title: resolvedTitle } : {}),
           assistantMessageId: assistantId,
         });
         await saveCall(call);
@@ -530,7 +546,7 @@ export async function streamChatTurn(options: {
             content: output,
           }),
         );
-        return output;
+        return modelOutput;
       }
     },
     async cancel() {
@@ -561,5 +577,35 @@ function toLlmToolCall(call: PendingCall): LlmToolCall {
     id: call.id,
     type: "function",
     function: { name: call.name, arguments: call.arguments || "{}" },
+  };
+}
+
+export function toolActivity(
+  call: { id: string; name: string; output: string; isError: boolean; blocked?: "secret" },
+  phase: "running" | "done",
+): {
+  id: string;
+  title: string;
+  detail: string;
+  state: "running" | "done";
+  kind: "search" | "draft";
+} {
+  const secret = phase === "done" && findSecrets(call.output).length > 0;
+  const blockedWrite = phase === "done" && call.blocked === "secret";
+  const title = activityTitle(call.name, phase, call.isError, blockedWrite);
+  const detail =
+    phase === "running"
+      ? "Running"
+      : blockedWrite
+        ? "Blocked. A secret was not stored."
+        : secret
+          ? "Finished. The result was not shown."
+          : call.output.slice(0, 240);
+  return {
+    id: call.id,
+    title,
+    detail,
+    state: phase === "running" ? "running" : "done",
+    kind: call.name === "memory_search" ? "search" : "draft",
   };
 }

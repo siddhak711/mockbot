@@ -1,0 +1,141 @@
+import { afterEach, expect, it } from "vitest";
+import { POST as createAgent } from "../app/api/agents/route";
+import { GET } from "../app/api/memories/route";
+import { DELETE, PATCH } from "../app/api/memories/[id]/route";
+import { DEFAULT_AGENT_ID } from "../src/agent";
+import { resetAppContext, setAppContext } from "../src/context";
+import { MockProvider } from "../src/llm";
+import { ConversationStore } from "../src/store";
+import type { Memory } from "../src/types";
+
+const params = (id: string) => ({ params: Promise.resolve({ id }) });
+
+afterEach(async () => {
+  await resetAppContext();
+});
+
+it("lists, edits, and deletes memories for this agent only", async () => {
+  const store = await ConversationStore.open();
+  setAppContext({ store, provider: new MockProvider({ delayMs: 0 }) });
+  const conversation = await store.createConversation("Source");
+  const message = await store.addMessage(
+    conversation.id,
+    "user",
+    "Remember that my city is Lisbon",
+  );
+  const written = await store.memories.write({
+    agentId: DEFAULT_AGENT_ID,
+    key: "city",
+    content: "my city is Lisbon",
+    kind: "profile",
+    sourceMessageId: message.id,
+    createdBy: "model",
+  });
+  await store.memories.write({
+    agentId: "other-agent",
+    key: "city",
+    content: "Atlantis harbor",
+    kind: "profile",
+    createdBy: "user",
+  });
+
+  const listed = (await (await GET()).json()) as { memories: Memory[] };
+  expect(listed.memories.map((memory) => memory.content)).toEqual(["my city is Lisbon"]);
+  expect(listed.memories[0]?.sourceSnippet).toContain("Lisbon");
+  expect(JSON.stringify(listed)).not.toContain("Atlantis");
+
+  const edited = await PATCH(
+    new Request("http://localhost/api/memories/" + written.memory.id, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "my city is Porto", kind: "profile" }),
+    }),
+    params(written.memory.id),
+  );
+  expect(edited.status).toBe(200);
+  const afterEdit = (await (await GET()).json()) as { memories: Memory[] };
+  expect(afterEdit.memories.map((memory) => memory.content)).toEqual(["my city is Porto"]);
+  expect(afterEdit.memories[0]?.history.map((version) => version.content)).toContain(
+    "my city is Lisbon",
+  );
+
+  const secret = await PATCH(
+    new Request("http://localhost/api/memories/" + afterEdit.memories[0]!.id, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "sk-test-1234567890abcdefghij" }),
+    }),
+    params(afterEdit.memories[0]!.id),
+  );
+  expect(secret.status).toBe(400);
+  expect(await secret.text()).not.toContain("sk-test");
+  const still = await store.memories.listLive(DEFAULT_AGENT_ID);
+  expect(still.map((memory) => memory.content)).toEqual(["my city is Porto"]);
+
+  const historyId = afterEdit.memories[0]?.history[0]?.id;
+  expect(historyId).toBeTruthy();
+  const stale = await DELETE(new Request("http://localhost"), params(historyId!));
+  expect(stale.status).toBe(409);
+  expect(await store.memories.listLive(DEFAULT_AGENT_ID)).toHaveLength(1);
+  expect(await store.memories.softDeleteById(DEFAULT_AGENT_ID, historyId!)).toBeNull();
+
+  const removed = await DELETE(new Request("http://localhost"), params(still[0]!.id));
+  expect(removed.status).toBe(204);
+  const afterDelete = (await (await GET()).json()) as { memories: Memory[] };
+  expect(afterDelete.memories).toEqual([]);
+  expect(await store.memories.search({ agentId: DEFAULT_AGENT_ID, query: "Porto" })).toEqual([]);
+});
+
+it("lists and deletes a second agent's memory through the API", async () => {
+  const store = await ConversationStore.open();
+  setAppContext({ store, provider: new MockProvider({ delayMs: 0 }) });
+  const created = await createAgent(
+    new Request("http://localhost/api/agents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Researcher",
+        instructions: "You study groves.",
+      }),
+    }),
+  );
+  expect(created.status).toBe(201);
+  const agentId = ((await created.json()) as { agent: { id: string } }).agent.id;
+  await store.memories.write({
+    agentId: DEFAULT_AGENT_ID,
+    key: "city",
+    content: "Lisbon",
+    kind: "profile",
+    createdBy: "user",
+  });
+  const child = await store.memories.write({
+    agentId,
+    key: "grove",
+    content: "the grove code is 42",
+    kind: "fact",
+    createdBy: "user",
+  });
+
+  const missing = await GET(new Request("http://localhost/api/memories?agentId=missing-agent"));
+  expect(missing.status).toBe(404);
+
+  const listed = await GET(new Request(`http://localhost/api/memories?agentId=${agentId}`));
+  expect(listed.status).toBe(200);
+  const body = (await listed.json()) as { memories: Memory[] };
+  expect(body.memories.map((memory) => memory.content)).toEqual(["the grove code is 42"]);
+
+  const removed = await DELETE(
+    new Request(`http://localhost/api/memories/${child.memory.id}?agentId=${agentId}`),
+    params(child.memory.id),
+  );
+  expect(removed.status).toBe(204);
+  const after = (await (
+    await GET(new Request(`http://localhost/api/memories?agentId=${agentId}`))
+  ).json()) as { memories: Memory[] };
+  expect(after.memories).toEqual([]);
+
+  const lead = (await (
+    await GET(new Request(`http://localhost/api/memories?agentId=${DEFAULT_AGENT_ID}`))
+  ).json()) as { memories: Memory[] };
+  expect(lead.memories.map((memory) => memory.content)).toEqual(["Lisbon"]);
+});

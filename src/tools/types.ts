@@ -14,14 +14,26 @@ export type JsonSchema = {
   additionalProperties?: boolean;
 };
 
+export type ToolBlockReason = "secret";
+
 export type ToolResult = {
   content: string;
   isError?: boolean;
+  blocked?: ToolBlockReason;
+};
+
+export type MemoryToolDeps = {
+  agentId: string;
+  conversationId: string;
+  sourceMessageId: string | null;
+  userMessages: string[];
+  toolOutputs: string[];
 };
 
 export type ToolContext = {
   signal?: AbortSignal;
   promote?: (names: string[]) => void;
+  memory?: MemoryToolDeps;
 };
 
 export type PreparedArgs = { args: Record<string, unknown> } | { error: string };

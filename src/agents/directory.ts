@@ -1,4 +1,4 @@
-import type { PGlite } from "@electric-sql/pglite";
+import type { Sql } from "../db/sql";
 import { SYSTEM_PROMPT } from "../llm";
 import type { ConversationStore } from "../store";
 import { LEAD_AGENT_ID, LEAD_AGENT_NAME } from "./ids";
@@ -87,7 +87,7 @@ function validatedAgent(input: { name: string; instructions: string; memoryNote?
 }
 
 export class AgentDirectory {
-  private constructor(private readonly db: PGlite) {}
+  private constructor(private readonly db: Sql) {}
 
   static async attach(store: ConversationStore): Promise<AgentDirectory> {
     await applyAgentSchema(store.connection);

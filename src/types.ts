@@ -64,6 +64,34 @@ export type LlmMessage = {
 
 export type ProviderId = "mock" | "openai";
 
+export type MemoryKind = "profile" | "fact";
+
+export type MemoryVersion = {
+  id: string;
+  agentId: string;
+  kind: MemoryKind;
+  key: string;
+  content: string;
+  sourceMessageId: string | null;
+  sourceSnippet: string | null;
+  supersedes: string | null;
+  validFrom: string;
+  validTo: string | null;
+  deletedAt: string | null;
+  createdBy: string;
+};
+
+export type Memory = MemoryVersion & {
+  history: MemoryVersion[];
+};
+
+export type ConversationSummary = {
+  conversationId: string;
+  summary: string;
+  uptoMessageId: string;
+  updatedAt: string;
+};
+
 export type LivePhase = "start" | "reasoning" | "tool" | "text" | "end";
 
 export type LlmStreamEvent =

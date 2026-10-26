@@ -1,12 +1,15 @@
-import { mkdir } from "node:fs/promises";
-import { PGlite } from "@electric-sql/pglite";
 import { LEAD_AGENT_ID } from "./agents/ids";
 import { applyAgentSchema } from "./agents/migration";
 import type { ConnectorRecord, ConnectorTransport } from "./connectors";
-import { applyMigrations } from "./db/migrate";
+import { migrate } from "./db/migrate";
+import { openDatabase, type ProcessEnv } from "./db/open";
+import { openPglite } from "./db/pglite";
+import type { Sql, SqlDriver } from "./db/sql";
+import { MemoryRepository } from "./memory/repository";
 import { parseTrace } from "./trace";
 import type {
   Conversation,
+  ConversationSummary,
   Message,
   MessageTrace,
   Role,
@@ -40,6 +43,13 @@ type ToolCallRow = {
   status: ToolCallStatus;
   output: string | null;
   created_at: Date | string;
+};
+
+type SummaryRow = {
+  conversation_id: string;
+  summary: string;
+  upto_msg: string;
+  updated_at: Date | string;
 };
 
 type ConnectorRow = {
@@ -117,25 +127,47 @@ export function titleFromMessage(message: string): string {
 }
 
 export class ConversationStore {
-  private constructor(private readonly db: PGlite) {}
+  readonly memories: MemoryRepository;
+  readonly driver: SqlDriver;
 
-  /** Shared embedded database. The agent directory keeps its tables here. */
-  get connection(): PGlite {
+  private constructor(private readonly db: Sql) {
+    this.driver = db.driver;
+    this.memories = new MemoryRepository(db);
+  }
+
+  /** Shared database connection. The agent directory keeps its tables here. */
+  get connection(): Sql {
     return this.db;
   }
 
   static async open(dataDir?: string): Promise<ConversationStore> {
-    const persistent = dataDir && !dataDir.startsWith("memory:");
-    if (persistent) await mkdir(dataDir, { recursive: true });
-    const db = new PGlite(persistent ? dataDir : "memory://");
-    await db.waitReady;
-    await applyMigrations(db);
-    await applyAgentSchema(db);
+    return ConversationStore.fromSql(await openPglite(dataDir));
+  }
+
+  static async connect(env: ProcessEnv): Promise<ConversationStore> {
+    return ConversationStore.fromSql(await openDatabase(env));
+  }
+
+  private static async fromSql(db: Sql): Promise<ConversationStore> {
+    try {
+      await migrate(db);
+      await applyAgentSchema(db);
+    } catch (error) {
+      await db.close();
+      throw error;
+    }
     return new ConversationStore(db);
   }
 
   async close(): Promise<void> {
-    if (!this.db.closed) await this.db.close();
+    await this.db.close();
+  }
+
+  async migrationIds(): Promise<string[]> {
+    const result = await this.db.query<{ id: string }>(
+      "SELECT id FROM schema_migrations ORDER BY id",
+    );
+    return result.rows.map((row) => row.id);
   }
 
   async createConversation(title: string, agentId = LEAD_AGENT_ID): Promise<Conversation> {
@@ -161,10 +193,15 @@ export class ConversationStore {
 
   async getConversation(
     id: string,
+    agentId?: string,
   ): Promise<{ conversation: Conversation; messages: Message[] } | null> {
     const conversations = await this.db.query<ConversationRow>(
-      `SELECT id, title, agent_id, created_at, updated_at FROM conversations WHERE id = $1`,
-      [id],
+      agentId
+        ? `SELECT id, title, agent_id, created_at, updated_at
+           FROM conversations
+           WHERE id = $1 AND agent_id = $2`
+        : `SELECT id, title, agent_id, created_at, updated_at FROM conversations WHERE id = $1`,
+      agentId ? [id, agentId] : [id],
     );
     const conversation = conversations.rows[0];
     if (!conversation) return null;
@@ -218,6 +255,11 @@ export class ConversationStore {
     content: string,
     trace: MessageTrace | null = null,
   ): Promise<Message> {
+    const owned = await this.db.query<{ id: string }>(
+      `SELECT id FROM conversations WHERE id = $1`,
+      [conversationId],
+    );
+    if (!owned.rows[0]) throw new Error("Conversation not found");
     const id = crypto.randomUUID();
     const inserted = await this.db.query<MessageRow>(
       `INSERT INTO messages (id, conversation_id, role, content, trace)
@@ -239,10 +281,6 @@ export class ConversationStore {
       content,
       traceParam(trace),
     ]);
-  }
-
-  async deleteMessage(id: string): Promise<void> {
-    await this.db.query(`DELETE FROM messages WHERE id = $1`, [id]);
   }
 
   async saveToolCall(input: {
@@ -271,6 +309,46 @@ export class ConversationStore {
         input.status,
         input.output,
       ],
+    );
+  }
+
+  async getSummary(
+    conversationId: string,
+    agentId = LEAD_AGENT_ID,
+  ): Promise<ConversationSummary | null> {
+    const result = await this.db.query<SummaryRow>(
+      `SELECT s.conversation_id, s.summary, s.upto_msg, s.updated_at
+       FROM conversation_summaries s
+       JOIN conversations c ON c.id = s.conversation_id
+       WHERE s.conversation_id = $1 AND c.agent_id = $2`,
+      [conversationId, agentId],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    return {
+      conversationId: row.conversation_id,
+      summary: row.summary,
+      uptoMessageId: row.upto_msg,
+      updatedAt: asIso(row.updated_at),
+    };
+  }
+
+  async saveSummary(
+    conversationId: string,
+    agentId: string,
+    summary: string,
+    uptoMessageId: string,
+  ): Promise<void> {
+    await this.db.query(
+      `INSERT INTO conversation_summaries (conversation_id, summary, upto_msg)
+       SELECT $1, $2, $3
+       FROM conversations
+       WHERE id = $1 AND agent_id = $4
+       ON CONFLICT (conversation_id) DO UPDATE SET
+         summary = EXCLUDED.summary,
+         upto_msg = EXCLUDED.upto_msg,
+         updated_at = NOW()`,
+      [conversationId, summary, uptoMessageId, agentId],
     );
   }
 

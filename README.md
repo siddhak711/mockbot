@@ -18,7 +18,7 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). With no API key, chat uses the built-in mock provider. Each mock turn streams a start token, a short reasoning trace, the answer, and an end token (`finish stop`). The live mock does not invent a tool call except when a message asks for a handoff. Tool-call cards still render when a stream includes them. Conversations are stored in embedded Postgres (PGlite) under `.data/pglite`. A refresh restores the conversation list, titles, and every streamed phase. The token-by-token animation is live only. Stopping a turn keeps the partial reasoning and answer that have already been saved.
+Open [http://localhost:3000](http://localhost:3000). With no API key, chat uses the built-in mock provider. Each mock turn streams a start token, a short reasoning trace, the answer, and an end token (`finish stop`). The live mock does not invent a connector tool call. Asking it to remember a fact calls `memory_write`. A message that asks for a handoff calls `delegate`. Tool-call cards still render when a stream includes them. Conversations and memories are stored in embedded Postgres (PGlite) under `.data/pglite`. A refresh restores the conversation list, titles, memories, and every streamed phase. The token-by-token animation is live only. Stopping a turn keeps the partial reasoning and answer that have already been saved.
 
 The first agent is Mockbot, seeded with the original assistant prompt. Create another agent in the sidebar (name, instructions, an optional memory note, and optional computer or connector ids). Select an agent to start a chat as that agent. From Mockbot, send:
 
@@ -28,7 +28,17 @@ delegate to Researcher: What is the grove code?
 
 The lead transcript shows the `delegate` call and the child result. Only Mockbot can delegate, and it cannot delegate to itself. The child conversation is in the same list, labeled with the child agent. The child uses its own memory note and can read a computer only when that computer id was granted. A connector or computer it was not granted is refused, and the lead conversation stays usable. A task that says `use connector <id>` asks for that connector.
 
-`npm run build` then `npm start` runs the production server.
+`npm run build` then `npm start` runs the production server. Production and Vercel require `DATABASE_URL`. Use the pooled Neon connection string from the Vercel Marketplace Neon integration (`-pooler` in the host). Mockbot uses Neon's HTTP serverless driver there. It does not open PGlite, a `/tmp` database, or a blob snapshot in production. A hosted runtime without `DATABASE_URL` refuses to start.
+
+## Memory
+
+Ask the agent to remember a fact, for example "Remember that my favorite color is blue". The mock provider calls `memory_write`. Open a new conversation and ask for the fact again. Profile memories are injected into the system prompt, and matching facts are recalled the same way. They are not inserted as a fake user message.
+
+The Memory button opens a panel that lists each live memory, the source snippet, and older versions. Edit and delete there. A delete is a soft delete, and a deleted memory is not retrieved again. The model can also call `memory_update`, `memory_delete`, and `memory_search`.
+
+Writes that look like an API key, JWT, card number, or other high-entropy secret are blocked and are not stored. The model only saves facts grounded in what you said in that conversation.
+
+When a conversation grows past about 60% of `LLM_CONTEXT_TOKENS` (default 8192), older turns are summarized into `conversation_summaries` and the recent tail stays verbatim.
 
 ## Switch providers
 
@@ -198,6 +208,9 @@ The same form is on the Routines page.
 - `GET /api/conversations/:id` reads one conversation, its messages, and the tool calls stored on each assistant turn.
 - `PATCH /api/conversations/:id` with `{ "title": "..." }` renames it.
 - `DELETE /api/conversations/:id` deletes it.
+- `GET /api/memories` lists this agent's memories, including history.
+- `PATCH /api/memories/:id` with `{ "content": "...", "kind": "profile" }` records a correction.
+- `DELETE /api/memories/:id` soft-deletes a memory.
 - `GET /api/computer` returns the agent's computer, workspace files, and recent runs (command, output, exit code, changed files).
 - `POST /api/computer` with `{ "tool": "list" | "read" | "write" | "exec", ... }` runs one computer tool. `write` takes `path` and `content`. `exec` takes `command`. The response is the tool result and the stored run. The Daytona key is not included.
 - `GET /api/agents` lists agents and their grants.

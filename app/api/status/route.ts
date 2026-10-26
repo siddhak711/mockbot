@@ -4,9 +4,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(): Promise<Response> {
-  const { provider } = await getAppContext();
+  const { provider, store } = await getAppContext();
   return Response.json({
     provider: provider.id,
     model: provider.model,
+    database: store.driver,
   });
 }

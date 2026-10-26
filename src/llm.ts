@@ -1,15 +1,11 @@
+import { planMockTurn } from "./memory/mock-turn";
+import { SYSTEM_PROMPT } from "./memory/prompt";
 import type { LlmMessage, LlmStreamEvent, ProviderId } from "./types";
+
+export { SYSTEM_PROMPT };
 import { readOpenAiEvents } from "./openai-events";
 import { SseParser } from "./sse";
 import type { ToolDefinition } from "./tools/types";
-
-export const SYSTEM_PROMPT = [
-  "You are Mockbot, a concise personal assistant. Reply in markdown when it helps.",
-  "",
-  "You can call tools. Prefer a tool when it can answer the question. At most 15 tools are listed at once. If you need something that is not listed, call tool_search with a short query, then call the tool it returns.",
-  "",
-  "Read-only tools run immediately. Tools that send, post, delete, pay, or invite someone wait until the person approves them. If they deny a tool, do not retry it unless they ask again.",
-].join("\n");
 
 const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
 const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
@@ -244,6 +240,7 @@ export class MockProvider implements LlmProvider {
       scriptToolCall?: boolean;
       /** Test-only. Runs the scripted registry demo. The live mock leaves this unset. */
       demoTools?: boolean;
+      onMessages?: (messages: LlmMessage[]) => void;
     } = {},
   ) {}
 
@@ -251,6 +248,7 @@ export class MockProvider implements LlmProvider {
     messages: LlmMessage[],
     input?: StreamOptions | AbortSignal,
   ): AsyncIterable<LlmStreamEvent> {
+    this.options.onMessages?.(messages);
     const { signal, tools = [] } = streamOptions(input);
     const userText = lastUserText(messages);
     if (this.options.demoTools && !this.options.reply && !this.options.tools) {
@@ -286,6 +284,22 @@ export class MockProvider implements LlmProvider {
 
     const scriptedTools = this.options.tools?.(messages) ?? null;
     const customReply = this.options.reply?.(messages);
+    if (
+      scriptedTools == null &&
+      !this.options.reply &&
+      tools.some((tool) => tool.name === "memory_write")
+    ) {
+      const plan = planMockTurn(messages, new Set(tools.map((tool) => tool.name)));
+      if (plan.type === "tool") {
+        yield* this.#emitCall({ name: plan.name, args: plan.args }, signal);
+        return;
+      }
+      if (plan.type === "text") {
+        yield* this.#chunkText(plan.text, signal);
+        return;
+      }
+    }
+
     const text = customReply ?? buildMockReply(userText);
     const size = Math.max(1, this.options.chunkSize ?? 24);
     const delay = this.options.delayMs ?? 0;

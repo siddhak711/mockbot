@@ -1,4 +1,4 @@
-import type { PGlite, Transaction } from "@electric-sql/pglite";
+import type { Sql } from "../db/sql";
 import type { ConversationStore } from "../store";
 import { CronError, nextCron } from "./cron";
 import { ROUTINES_MIGRATION } from "./migration";
@@ -12,7 +12,7 @@ import {
   validatePrompt,
 } from "./validate";
 
-type Queryable = Pick<PGlite, "query"> | Transaction;
+type Queryable = Pick<Sql, "query">;
 
 type RoutineRow = {
   id: string;
@@ -146,7 +146,7 @@ export class RoutineStore {
     return new RoutineStore(conversations);
   }
 
-  private get db(): PGlite {
+  private get db(): Sql {
     return this.conversations.connection;
   }
 

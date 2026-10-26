@@ -4,6 +4,7 @@ import { POST as sendChat } from "../app/api/chat/route";
 import { LEAD_AGENT_ID, LEAD_AGENT_NAME } from "../src/agents/ids";
 import { resetAppContext, setAppContext } from "../src/context";
 import { SYSTEM_PROMPT, MockProvider } from "../src/llm";
+import { BASE_SYSTEM_PROMPT } from "../src/memory/prompt";
 import { ConversationStore } from "../src/store";
 import { deltas, readSse } from "./helpers";
 
@@ -112,7 +113,7 @@ it("leaves no agent behind when a grant id is invalid", async () => {
   ]);
 });
 
-it("keeps the milestone 1 system prompt on an ordinary lead turn", async () => {
+it("includes the milestone 1 prompt and the memory rules on an ordinary lead turn", async () => {
   let system = "";
   const store = await ConversationStore.open();
   setAppContext({
@@ -136,5 +137,6 @@ it("keeps the milestone 1 system prompt on an ordinary lead turn", async () => {
   expect(response.status).toBe(200);
   const events = await readSse(response);
   expect(deltas(events)).toBe("ok");
-  expect(system).toBe(SYSTEM_PROMPT);
+  expect(system).toBe(BASE_SYSTEM_PROMPT);
+  expect(system.startsWith(SYSTEM_PROMPT)).toBe(true);
 });

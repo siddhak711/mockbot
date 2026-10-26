@@ -11,7 +11,7 @@ import { SandboxTurnProvider } from "./sandbox/turn";
 import { ConversationStore } from "./store";
 import { ApprovalGate } from "./tools/approval";
 import { createDefaultTools } from "./tools/builtins";
-import type { ToolRegistry } from "./tools/registry";
+import { registerMemoryTools, type ToolRegistry } from "./tools/registry";
 
 export type AppContext = {
   store: ConversationStore;
@@ -65,6 +65,7 @@ export function setAppContext(context: {
   connector?: ConnectorPort;
 }): void {
   const tools = context.tools ?? createDefaultTools({});
+  if (!context.tools) registerMemoryTools(tools, context.store);
   if (context.sandbox) registerComputerTools(tools, context.sandbox);
   current = {
     store: context.store,
@@ -109,8 +110,7 @@ export async function getAppContext(): Promise<AppContext> {
     return current;
   }
   if (!shared.opening) {
-    const dataDir = process.env.DATA_DIR?.trim() || ".data/pglite";
-    shared.opening = openApp(dataDir);
+    shared.opening = openApp();
   }
   try {
     const opened = await shared.opening;
@@ -124,12 +124,13 @@ export async function getAppContext(): Promise<AppContext> {
   }
 }
 
-async function openApp(dataDir: string): Promise<AppContext> {
-  const store = await ConversationStore.open(dataDir);
+async function openApp(): Promise<AppContext> {
+  const store = await ConversationStore.connect(process.env);
   let sandbox: ComputerSupervisor | undefined;
   try {
     sandbox = await openComputer({ env: process.env });
     const tools = createDefaultTools(process.env);
+    registerMemoryTools(tools, store);
     registerComputerTools(tools, sandbox);
     const agents = await AgentDirectory.attach(store);
     const inner = withAgentMock(selectProvider(process.env));
