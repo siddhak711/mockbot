@@ -147,7 +147,7 @@ export function AgentPanel({
                       autoFocus
                     />
                   </label>
-                  <label>
+                  <label className="agent-instructions">
                     Instructions
                     <textarea
                       aria-label="Agent instructions"

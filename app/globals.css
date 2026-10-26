@@ -1693,8 +1693,15 @@ summary:focus-visible {
   line-height: 20px;
 }
 
-.agent-dialog .agent-form textarea {
+.agent-dialog .agent-instructions {
+  flex: 1;
   min-height: 180px;
+}
+
+.agent-dialog .agent-instructions textarea {
+  flex: 1;
+  min-height: 160px;
+  height: 100%;
 }
 
 .agent-dialog .agent-error {
