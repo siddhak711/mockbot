@@ -65,6 +65,8 @@ export function ConversationList({
     <aside className={open ? "sidebar open" : "sidebar"}>
       <div className="side-head">
         <TrafficLights />
+        <span className="grow" />
+        <ThemeToggle />
       </div>
       <button type="button" className="nav-action" onClick={onNew} disabled={busy}>
         <ComposeIcon />
@@ -162,7 +164,6 @@ export function ConversationList({
             </button>
           </span>
         ) : null}
-        <ThemeToggle />
       </footer>
     </aside>
   );

@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import type { ComputerSnapshot, SandboxRun } from "../src/sandbox/types";
 import { formatToolPayload, type ToolActivity } from "../src/tools/display";
+import { IconTip } from "./icon-tip";
+import { HidePanelIcon } from "./icons";
 
 export function ComputerPane({
   activities = [],
@@ -146,9 +148,9 @@ export function ComputerPane({
           <p className="computer-kicker">{provider}</p>
         </div>
         {onHide ? (
-          <button type="button" className="ghost-text" onClick={onHide}>
-            Hide
-          </button>
+          <IconTip label="Hide" onClick={onHide}>
+            <HidePanelIcon />
+          </IconTip>
         ) : null}
       </header>
       {content}
