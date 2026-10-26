@@ -21,7 +21,17 @@ export async function GET(request?: Request): Promise<Response> {
   const actor = await requireApiUser(request);
   if (!actor.ok) return actor.response;
   const { store } = await getAppContext();
-  const connectors = (await store.listConnectors()).map(toPublicConnector);
+  const connections = await store.listComposioConnections(actor.user.id);
+  const byCatalog = new Map(connections.map((item) => [item.catalogId, item]));
+  const connectors = (await store.listConnectors()).map((record) => {
+    const visible = toPublicConnector(record);
+    const connection = record.catalogId ? byCatalog.get(record.catalogId) : undefined;
+    if (!connection) return visible;
+    return {
+      ...visible,
+      accountLabel: connection.accountLabel ?? visible.accountLabel,
+    };
+  });
   return Response.json({ connectors });
 }
 
@@ -153,7 +163,7 @@ function createCatalogConnector(catalogId: string, _accountLabel: unknown): Resp
   }
   return Response.json(
     {
-      error: `Connect ${entry.name} with OAuth. Start at /api/connectors/oauth/start.`,
+      error: `Connect ${entry.name} with Composio OAuth. Start at /api/connectors/oauth/start.`,
     },
     { status: 400 },
   );

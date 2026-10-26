@@ -34,6 +34,7 @@
     "vitest": "^5.0.5"
   },
   "dependencies": {
+    "@composio/core": "^0.27.0",
     "@daytonaio/sdk": "^0.226.1",
     "@electric-sql/pglite": "^0.5.11",
     "@modelcontextprotocol/client": "^2.4.0",

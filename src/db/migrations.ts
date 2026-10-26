@@ -201,4 +201,24 @@ CREATE UNIQUE INDEX IF NOT EXISTS agents_name_unscoped_idx
   WHERE user_id IS NULL;
 `,
   },
+  {
+    id: "007_composio_connections",
+    sql: `
+CREATE TABLE IF NOT EXISTS composio_connections (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  catalog_id TEXT NOT NULL,
+  toolkit TEXT NOT NULL,
+  connected_account_id TEXT NOT NULL,
+  account_label TEXT,
+  status TEXT NOT NULL DEFAULT 'connected',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (user_id, catalog_id)
+);
+
+CREATE INDEX IF NOT EXISTS composio_connections_user_idx
+  ON composio_connections (user_id);
+`,
+  },
 ];

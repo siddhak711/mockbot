@@ -2,6 +2,8 @@ import type { ConnectorRecord, ConnectorToolSetting } from "../connectors";
 import { connectorSlug } from "../connectors";
 import { adapterForCatalog } from "../connectors/adapters";
 import type { AdapterResult, ProviderAdapter } from "../connectors/adapters/types";
+import { getComposioBroker } from "../connectors/composio/broker";
+import { composioToolkitForConnector } from "../connectors/composio/config";
 import { catalogById, isLegacyCatalogTarget } from "../connectors/catalog";
 import { discoverTool, type ToolRisk } from "../connectors/policy";
 import { clip } from "../tools/http";
@@ -21,6 +23,8 @@ type RefreshOptions = {
   registry: ToolRegistry;
   connectors: readonly ConnectorRecord[];
   env: Record<string, string | undefined>;
+  /** Signed-in user. Composio tools run with this user's connected account. */
+  userId?: string;
   signal?: AbortSignal;
   onToolResult?: (connectorId: string, result: { isError: boolean; content: string }) => void;
   onTools?: (
@@ -70,10 +74,11 @@ export async function assignMcpToolNames(options: {
   registry: ToolRegistry;
   connectors: readonly ConnectorRecord[];
   env: Record<string, string | undefined>;
+  userId?: string;
   signal?: AbortSignal;
 }): Promise<{ names: Map<string, AssignedToolName[]>; batches: ListedBatch[] }> {
-  const { registry, connectors, env, signal } = options;
-  const batches = await listEnabledTools(connectors, env, signal);
+  const { registry, connectors, env, userId, signal } = options;
+  const batches = await listEnabledTools(connectors, env, userId, signal);
   return {
     names: assignConnectorToolNames(registry.namesExcept("mcp"), batches),
     batches,
@@ -81,9 +86,15 @@ export async function assignMcpToolNames(options: {
 }
 
 export async function refreshMcpTools(options: RefreshOptions): Promise<void> {
-  const { registry, connectors, env, signal, onToolResult, onTools } = options;
+  const { registry, connectors, env, userId, signal, onToolResult, onTools } = options;
   const secrets = await secretsFor(connectors, env);
-  const { names, batches } = await assignMcpToolNames({ registry, connectors, env, signal });
+  const { names, batches } = await assignMcpToolNames({
+    registry,
+    connectors,
+    env,
+    userId,
+    signal,
+  });
   registry.removeSource("mcp");
   for (const batch of batches) {
     if (batch.paused || batch.error) continue;
@@ -99,7 +110,7 @@ export async function refreshMcpTools(options: RefreshOptions): Promise<void> {
       const setting = merged[tool.name];
       if (!setting || !setting.enabled || setting.skipped) continue;
       registry.register(
-        toToolDefinition(batch.connector, tool, name, setting, env, secrets, onToolResult),
+        toToolDefinition(batch.connector, tool, name, setting, env, secrets, userId, onToolResult),
         "mcp",
       );
     }
@@ -112,11 +123,13 @@ export async function previewMcpTools(
   env: Record<string, string | undefined>,
   registry: ToolRegistry,
   signal?: AbortSignal,
+  userId?: string,
 ): Promise<AssignedToolName[]> {
   const { names, batches } = await assignMcpToolNames({
     registry,
     connectors,
     env,
+    userId,
     signal,
   });
   const listed = batches.find((batch) => batch.connector.id === connector.id);
@@ -127,6 +140,7 @@ export async function previewMcpTools(
 async function listEnabledTools(
   connectors: readonly ConnectorRecord[],
   env: Record<string, string | undefined>,
+  userId?: string,
   signal?: AbortSignal,
 ): Promise<ListedBatch[]> {
   const secrets = await secretsFor(connectors, env);
@@ -148,6 +162,10 @@ async function listEnabledTools(
           error: new Error("Reconnect this connector. Catalog sign-in is no longer simulated."),
         };
       }
+      const toolkit = composioToolkitForConnector(connector.catalogId, env);
+      if (toolkit) {
+        return listComposioTools(connector, toolkit, userId, env, signal);
+      }
       const adapter = adapterFor(connector);
       if (adapter) return { connector, tools: adapter.listTools().slice(0, 32) };
       try {
@@ -158,6 +176,47 @@ async function listEnabledTools(
       }
     }),
   );
+}
+
+async function listComposioTools(
+  connector: ConnectorRecord,
+  toolkit: string,
+  userId: string | undefined,
+  env: Record<string, string | undefined>,
+  signal?: AbortSignal,
+): Promise<ListedBatch> {
+  if (signal?.aborted) {
+    return {
+      connector,
+      tools: [],
+      error: Object.assign(new Error("The operation was aborted"), { name: "AbortError" }),
+    };
+  }
+  if (!userId || !connector.catalogId) {
+    return { connector, tools: [], paused: true };
+  }
+  const { getAppContext } = await import("../context");
+  const { store } = await getAppContext();
+  const connection = await store.getComposioConnection(userId, connector.catalogId);
+  if (!connection || connection.status !== "connected") {
+    return { connector, tools: [], paused: true };
+  }
+  try {
+    const broker = await getComposioBroker(env);
+    const tools = await broker.listTools(toolkit);
+    return {
+      connector,
+      tools: tools.map((tool) => ({
+        name: tool.slug,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+        readOnlyHint: tool.readOnlyHint,
+        destructiveHint: tool.destructiveHint,
+      })),
+    };
+  } catch (error) {
+    return { connector, tools: [], error };
+  }
 }
 
 function adapterFor(connector: ConnectorRecord): ProviderAdapter | null {
@@ -259,8 +318,12 @@ async function executeCatalogTool(
   args: Record<string, unknown>,
   env: Record<string, string | undefined>,
   secrets: string[],
+  userId?: string,
   signal?: AbortSignal,
 ): Promise<AdapterResult> {
+  const toolkit = composioToolkitForConnector(connector.catalogId, env);
+  if (toolkit)
+    return executeComposioTool(connector, toolkit, remoteName, args, env, userId, signal);
   const adapter = adapterFor(connector);
   if (adapter) {
     const resolved = await resolveConnectorSecret(connector, env);
@@ -278,6 +341,35 @@ async function executeCatalogTool(
   return callMcpTool(connector, remoteName, args, env, secrets, signal);
 }
 
+async function executeComposioTool(
+  connector: ConnectorRecord,
+  toolkit: string,
+  remoteName: string,
+  args: Record<string, unknown>,
+  env: Record<string, string | undefined>,
+  userId?: string,
+  signal?: AbortSignal,
+): Promise<AdapterResult> {
+  if (!userId || !connector.catalogId) {
+    return { content: `Connect ${connector.name} before using its tools.`, isError: true };
+  }
+  const { getAppContext } = await import("../context");
+  const { store } = await getAppContext();
+  const connection = await store.getComposioConnection(userId, connector.catalogId);
+  if (!connection || connection.toolkit !== toolkit) {
+    return { content: `Connect ${connector.name} before using its tools.`, isError: true };
+  }
+  const broker = await getComposioBroker(env);
+  return broker.executeTool({
+    userId,
+    toolkit,
+    connectedAccountId: connection.connectedAccountId,
+    slug: remoteName,
+    arguments: args,
+    signal,
+  });
+}
+
 function authFailed(result: AdapterResult): boolean {
   if (result.authExpired) return true;
   if (!result.isError) return false;
@@ -291,6 +383,7 @@ function toToolDefinition(
   setting: ConnectorToolSetting,
   env: Record<string, string | undefined>,
   secrets: string[],
+  userId?: string,
   onToolResult?: (connectorId: string, result: { isError: boolean; content: string }) => void,
 ): ToolDefinition {
   const remoteName = tool.name;
@@ -314,6 +407,7 @@ function toToolDefinition(
         args,
         env,
         secrets,
+        userId,
         context.signal,
       );
       if (authFailed(result)) {
@@ -326,6 +420,7 @@ function toToolDefinition(
               args,
               env,
               secrets,
+              userId,
               context.signal,
             );
           }

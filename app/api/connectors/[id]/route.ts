@@ -43,7 +43,9 @@ export async function DELETE(request: Request, context: RouteContext): Promise<R
   if (!actor.ok) return actor.response;
   const { id } = await context.params;
   const { store } = await getAppContext();
+  const existing = (await store.listConnectors()).find((item) => item.id === id) ?? null;
   const deleted = await store.deleteConnector(id);
   if (!deleted) return Response.json({ error: "Connector not found" }, { status: 404 });
+  if (existing?.catalogId) await store.deleteComposioConnectionsForCatalog(existing.catalogId);
   return new Response(null, { status: 204 });
 }

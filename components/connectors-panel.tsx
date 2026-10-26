@@ -537,7 +537,7 @@ export function ConnectorsPanel({
       setMode("auth-failed");
       return;
     }
-    if (entry?.oauth) {
+    if (entry?.composio?.enabled || entry?.oauth) {
       // Open during the click. A popup opened after the start request is blocked.
       const popup = window.open("about:blank", "mockbot-oauth", "popup,width=520,height=720");
       if (!popup) {
@@ -1729,7 +1729,11 @@ function OauthSheet({
               </li>
             ))}
           </ul>
-          <p className="t2">Opens {name} sign-in in a window</p>
+          <p className="t2">
+            {entry?.composio?.enabled
+              ? `Opens ${name} sign-in through Composio`
+              : `Opens ${name} sign-in in a window`}
+          </p>
         </>
       )}
       <div className="sheet-actions">
