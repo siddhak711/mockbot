@@ -2799,10 +2799,6 @@ a.icon-btn {
   font-weight: 600;
 }
 
-.settings-anchor {
-  position: relative;
-}
-
 .toast {
   position: fixed;
   left: 50%;
@@ -2837,13 +2833,6 @@ a.icon-btn {
   font-family: var(--mono);
   font-size: 12px;
   line-height: 20px;
-}
-
-.settings-pop {
-  position: absolute;
-  right: 8px;
-  bottom: 48px;
-  z-index: 5;
 }
 
 .back-btn {
