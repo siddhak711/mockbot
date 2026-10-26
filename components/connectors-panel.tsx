@@ -99,6 +99,9 @@ export function ConnectorsPanel({
   const popupWatch = useRef<ReturnType<typeof setInterval> | null>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
   const listReturn = useRef<"list" | "done" | null>(null);
+  const onCloseRef = useRef(onClose);
+  const caretPlacedOn = useRef<HTMLInputElement | null>(null);
+  onCloseRef.current = onClose;
   const [search, setSearch] = useState(preview ? previewSearch(preview) : initialQuery);
   const [category, setCategory] = useState<CatalogCategory>("popular");
   const [hint, setHint] = useState("");
@@ -192,7 +195,10 @@ export function ConnectorsPanel({
   }, [search, mode, open, preview]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      caretPlacedOn.current = null;
+      return;
+    }
     const node = dialogRef.current;
     if (!node) return;
     const focusable = () =>
@@ -204,9 +210,13 @@ export function ConnectorsPanel({
     const timer = window.setTimeout(() => {
       if (mode === "add" || mode === "detecting" || mode === "invalid" || mode === "no-results") {
         const field = searchRef.current;
-        field?.focus();
-        const caret = field?.value.length ?? 0;
-        field?.setSelectionRange(caret, caret);
+        if (!field) return;
+        const remounted = caretPlacedOn.current !== field;
+        if (document.activeElement !== field) field.focus();
+        if (remounted) {
+          field.setSelectionRange(field.value.length, field.value.length);
+          caretPlacedOn.current = field;
+        }
       } else {
         focusable()[0]?.focus();
       }
@@ -227,7 +237,7 @@ export function ConnectorsPanel({
           abandonAdd();
           return;
         }
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (event.key === "/" && document.activeElement?.tagName !== "INPUT") {
@@ -252,7 +262,7 @@ export function ConnectorsPanel({
       window.clearTimeout(timer);
       node.removeEventListener("keydown", onKey);
     };
-  }, [open, mode, onClose]);
+  }, [open, mode]);
 
   useEffect(() => {
     if (!toast) return;
@@ -273,8 +283,9 @@ export function ConnectorsPanel({
 
   const entries = useMemo(() => {
     const base = catalogInCategory(category);
-    return search.trim() ? searchCatalog(search, base) : base;
-  }, [category, search]);
+    const query = mode === "done" ? "" : search;
+    return query.trim() ? searchCatalog(query, base) : base;
+  }, [category, mode, search]);
   const availableEntries = useMemo(
     () =>
       entries.filter(
@@ -484,7 +495,8 @@ export function ConnectorsPanel({
   }
 
   function showOauth(entry: CatalogEntry | null, name: string, existingId?: string) {
-    listReturn.current = mode === "list" || mode === "done" ? mode : null;
+    if (mode === "list" || mode === "done") listReturn.current = mode;
+    else if (mode !== "oauth") listReturn.current = null;
     if (existingId) oauthExisting.current.start(existingId);
     else oauthExisting.current.clear();
     setDraft((current) => {
@@ -706,7 +718,8 @@ export function ConnectorsPanel({
     entries.length === 0;
   const visibleMode = noResults ? "no-results" : mode;
   const done = shownConnectors.find((connector) => connector.id === doneId) ?? shownConnectors[0];
-  const catalogSearching = Boolean(search.trim()) && detectInput(search).kind === "search";
+  const catalogSearching =
+    mode !== "done" && Boolean(search.trim()) && detectInput(search).kind === "search";
   const availableCatalog =
     preview === "loading" || (!ready && !preview) ? (
       <SkeletonGrid />
@@ -721,8 +734,8 @@ export function ConnectorsPanel({
             setSearch(value);
             setHint("");
           }}
-          onPaste={(text) => {
-            if (detectInput(text).kind !== "search") setMode("add");
+          onPaste={(value) => {
+            if (detectInput(value).kind !== "search") setMode("add");
           }}
           onSubmit={() => {
             const detected = detectInput(search);

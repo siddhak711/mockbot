@@ -146,8 +146,12 @@ export function SearchField({
         spellCheck={false}
         onChange={(event) => onChange(event.target.value)}
         onPaste={(event) => {
+          if (!onPaste) return;
           const text = event.clipboardData?.getData("text") ?? "";
-          if (text) onPaste?.(text);
+          const start = event.currentTarget.selectionStart ?? event.currentTarget.value.length;
+          const end = event.currentTarget.selectionEnd ?? start;
+          const value = `${event.currentTarget.value.slice(0, start)}${text}${event.currentTarget.value.slice(end)}`;
+          onPaste(value);
         }}
         onKeyDown={(event) => {
           if (event.key === "Enter") {
