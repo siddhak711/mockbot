@@ -1,16 +1,11 @@
 import { randomBytes } from "node:crypto";
-import { catalogById } from "../../../src/connectors/catalog";
-import {
-  discoverTool,
-  resolveToolSettings,
-  type DiscoveredTool,
-} from "../../../src/connectors/policy";
+import { catalogById, catalogIsWired } from "../../../src/connectors/catalog";
+import { resolveToolSettings, type DiscoveredTool } from "../../../src/connectors/policy";
 import { probeConnector } from "../../../src/connectors/probe";
 import {
   parseConnectorInput,
   toPublicConnector,
   type ConnectorRecord,
-  type ConnectorToolSetting,
 } from "../../../src/connectors";
 import { getAppContext } from "../../../src/context";
 import { assignMcpToolNames } from "../../../src/mcp/sync";
@@ -145,39 +140,18 @@ export async function POST(request: Request): Promise<Response> {
   }
 }
 
-async function createCatalogConnector(catalogId: string, accountLabel: unknown): Promise<Response> {
+function createCatalogConnector(catalogId: string, _accountLabel: unknown): Response {
   const entry = catalogById(catalogId);
   if (!entry) return Response.json({ error: "Unknown connector." }, { status: 400 });
-  const account = typeof accountLabel === "string" ? accountLabel.trim().slice(0, 80) : "";
-  const discovered = entry.tools.map((tool) =>
-    discoverTool(
-      tool.name,
-      tool.description,
-      { type: "object", properties: {} },
-      {
-        readOnlyHint: tool.risk === "read",
-        destructiveHint: tool.risk === "destructive",
-      },
-    ),
+  if (!catalogIsWired(entry)) {
+    return Response.json({ error: `${entry.name} is not available yet.` }, { status: 400 });
+  }
+  return Response.json(
+    {
+      error: `Connect ${entry.name} with OAuth. Start at /api/connectors/oauth/start.`,
+    },
+    { status: 400 },
   );
-  const settings: Record<string, ConnectorToolSetting> = resolveToolSettings(
-    discovered,
-    undefined,
-    "defaults",
-  );
-  const { store } = await getAppContext();
-  const connector = await store.createConnector({
-    name: entry.name,
-    transport: "http",
-    target: `https://catalog.mockbot.local/${entry.id}`,
-    secretRef: null,
-    secretCipher: await encryptSecret(randomBytes(32).toString("base64url")),
-    catalogId: entry.id,
-    authType: "oauth",
-    accountLabel: account || "workspace",
-    tools: settings,
-  });
-  return Response.json({ connector: toPublicConnector(connector) }, { status: 201 });
 }
 
 function connectorCreateFailure(error: unknown, signal: AbortSignal): Response {

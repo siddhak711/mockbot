@@ -2085,6 +2085,11 @@ a.icon-btn {
   background: var(--hover);
 }
 
+.connector-tile .btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .connector-tile-top {
   display: flex;
   align-items: center;

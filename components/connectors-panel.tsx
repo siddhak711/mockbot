@@ -9,6 +9,8 @@ import {
   CATALOG_CATEGORIES,
   catalogById,
   catalogInCategory,
+  catalogIsWired,
+  catalogTarget,
   searchCatalog,
   type CatalogCategory,
   type CatalogEntry,
@@ -471,7 +473,7 @@ export function ConnectorsPanel({
         return {
           name: entry.name,
           transport: "http",
-          target: `https://catalog.mockbot.local/${entry.id}`,
+          target: catalogTarget(entry) ?? "",
           auth: "oauth",
           apiKey: "",
           tools: entry.tools.map((tool) => ({
@@ -493,26 +495,60 @@ export function ConnectorsPanel({
     setMode("oauth");
   }
 
-  function continueOauth() {
+  async function continueOauth() {
     if (preview) return;
     const name = draft?.name ?? "Connector";
     const entry = draft?.catalogId ? (catalogById(draft.catalogId) ?? null) : null;
     const existingId = oauthExisting.current.id;
-    const popup = window.open(
-      `/connectors/oauth?name=${encodeURIComponent(name)}`,
-      "mockbot-oauth",
-      "popup,width=420,height=560",
-    );
+    if (entry && !catalogIsWired(entry)) {
+      setAuthError(`${entry.name} is not available yet.`);
+      setMode("auth-failed");
+      return;
+    }
+    if (entry?.oauth) {
+      setWaiting(true);
+      setAuthError(null);
+      try {
+        const response = await fetch("/api/connectors/oauth/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            catalogId: entry.id,
+            ...(existingId ? { connectorId: existingId } : {}),
+          }),
+        });
+        const body = (await response.json().catch(() => null)) as {
+          authorizeUrl?: string;
+          error?: string;
+        } | null;
+        if (!response.ok || !body?.authorizeUrl) {
+          setWaiting(false);
+          setAuthError(body?.error ?? `Could not start ${name} sign-in.`);
+          setMode("auth-failed");
+          return;
+        }
+        openOauthPopup(body.authorizeUrl, name, true, existingId);
+      } catch {
+        setWaiting(false);
+        setAuthError(`Could not start ${name} sign-in.`);
+        setMode("auth-failed");
+      }
+      return;
+    }
+    openOauthPopup(`/connectors/oauth?name=${encodeURIComponent(name)}`, name, false, existingId);
+  }
+
+  function openOauthPopup(url: string, name: string, catalog: boolean, existingId: string | null) {
+    const popup = window.open(url, "mockbot-oauth", "popup,width=520,height=720");
     if (!popup) {
-      setAuthError(
-        `${name} returned "access_denied". You may have closed the window or declined access.`,
-      );
+      setWaiting(false);
+      setAuthError(`Allow the ${name} sign-in window, then try again.`);
       setMode("auth-failed");
       return;
     }
     setWaiting(true);
     let settled = false;
-    const finish = (ok: boolean, account?: string) => {
+    const finish = (ok: boolean, account?: string, connectorId?: string, message?: string) => {
       if (settled) return;
       settled = true;
       window.removeEventListener("message", onMessage);
@@ -521,28 +557,49 @@ export function ConnectorsPanel({
       setWaiting(false);
       if (!ok) {
         setAuthError(
-          `${name} returned "access_denied". You may have closed the window or declined access.`,
+          message ||
+            `${name} returned "access_denied". You may have closed the window or declined access.`,
         );
         setMode("auth-failed");
+        return;
+      }
+      if (catalog) {
+        oauthExisting.current.clear();
+        void onChanged().then(() => {
+          if (existingId) {
+            setToast(`${name} reconnected`);
+            setMode("list");
+            return;
+          }
+          setDoneId(connectorId || null);
+          setToast(`${name} connected`);
+          setMode("done");
+        });
         return;
       }
       if (existingId) {
         void markReconnected(existingId, name);
         return;
       }
-      if (entry) void finishCatalog(entry, account || "workspace");
-      else void connectPastedOauth();
+      void connectPastedOauth();
     };
     const onMessage = (event: MessageEvent) => {
       if (event.origin !== window.location.origin) return;
-      const data = event.data as { type?: string; ok?: boolean; account?: string };
+      const data = event.data as {
+        type?: string;
+        ok?: boolean;
+        account?: string;
+        connectorId?: string;
+        message?: string;
+      };
       if (!data || data.type !== "mockbot-oauth") return;
-      finish(Boolean(data.ok), data.account);
+      finish(Boolean(data.ok), data.account, data.connectorId, data.message);
     };
     window.addEventListener("message", onMessage);
     if (popupWatch.current != null) clearInterval(popupWatch.current);
     popupWatch.current = setInterval(() => {
-      if (popup.closed) finish(false);
+      if (!popup.closed) return;
+      window.setTimeout(() => finish(false), 300);
     }, 400);
   }
 
@@ -565,29 +622,6 @@ export function ConnectorsPanel({
     await onChanged();
     setToast(`${name} reconnected`);
     setMode("list");
-  }
-
-  async function finishCatalog(entry: CatalogEntry, account: string) {
-    const response = await fetch("/api/connectors", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ catalogId: entry.id, accountLabel: account }),
-    });
-    const body = (await response.json().catch(() => null)) as {
-      connector?: ConnectorRecord;
-      error?: unknown;
-      message?: unknown;
-    } | null;
-    if (!response.ok || !body?.connector) {
-      setAuthError(serverProvidedError(body) ?? `Could not connect ${entry.name}.`);
-      setMode("auth-failed");
-      return;
-    }
-    oauthExisting.current.clear();
-    await onChanged();
-    setDoneId(body.connector.id);
-    setToast(`${entry.name} connected`);
-    setMode("done");
   }
 
   async function connectPastedOauth() {
@@ -841,7 +875,7 @@ export function ConnectorsPanel({
                         >
                           Manage
                         </button>
-                      ) : (
+                      ) : catalogIsWired(entry) ? (
                         <button
                           type="button"
                           className="btn secondary"
@@ -849,6 +883,13 @@ export function ConnectorsPanel({
                         >
                           Connect
                         </button>
+                      ) : (
+                        <>
+                          <button type="button" className="btn secondary" disabled>
+                            Connect
+                          </button>
+                          <span className="pill">Not available yet</span>
+                        </>
                       )}
                       {connected ? <span className="pill success">● Connected</span> : null}
                     </article>
@@ -1609,7 +1650,7 @@ function previewDraft(preview: string): Draft | null {
       ? {
           name: entry.name,
           transport: "http",
-          target: "https://catalog.mockbot.local/notion",
+          target: catalogTarget(entry) ?? "",
           auth: "oauth",
           apiKey: "",
           tools: [],
