@@ -7,6 +7,7 @@ import {
   formatWriteResult,
   killedMessage,
 } from "./format";
+import { mockToolContent } from "./mock";
 import {
   byteLength,
   clip,
@@ -115,7 +116,7 @@ export class ComputerSupervisor {
       .map((entry) => (entry.kind === "dir" ? `${entry.name}/` : entry.name))
       .join("\n");
     const run = await this.#record(agentId, "list", null, args, stdout, "", 0, false, []);
-    return { result: formatListResult(listed.entries), run };
+    return { result: this.#shown(formatListResult(listed.entries)), run };
   }
 
   async #read(agentId: string, args: Record<string, unknown>): Promise<ComputerInvocation> {
@@ -129,7 +130,7 @@ export class ComputerSupervisor {
     if (!file.ok) return this.#fail(agentId, "read", null, args, file.error, []);
     const stdout = clip(file.content);
     const run = await this.#record(agentId, "read", null, args, stdout, "", 0, false, []);
-    return { result: formatReadResult(resolved.path, stdout), run };
+    return { result: this.#shown(formatReadResult(resolved.path, stdout)), run };
   }
 
   async #write(agentId: string, args: Record<string, unknown>): Promise<ComputerInvocation> {
@@ -151,7 +152,7 @@ export class ComputerSupervisor {
     const run = await this.#record(agentId, "write", null, args, stdout, "", 0, false, [
       resolved.path,
     ]);
-    return { result: formatWriteResult(resolved.path), run };
+    return { result: this.#shown(formatWriteResult(resolved.path)), run };
   }
 
   async #exec(
@@ -199,7 +200,7 @@ export class ComputerSupervisor {
       finished.timedOut,
       [],
     );
-    return { result: formatExecResult(command, finished), run };
+    return { result: this.#shown(formatExecResult(command, finished)), run };
   }
 
   async #fail(
@@ -221,7 +222,7 @@ export class ComputerSupervisor {
       false,
       changedFiles,
     );
-    return { result: formatFailure(message), run };
+    return { result: this.#shown(formatFailure(message)), run };
   }
 
   async #record(
@@ -250,6 +251,11 @@ export class ComputerSupervisor {
       timedOut,
       changedFiles,
     });
+  }
+
+  #shown(result: ComputerToolResult): ComputerToolResult {
+    if (this.runtime.kind !== "mock") return result;
+    return { ...result, content: mockToolContent(result.content) };
   }
 
   #agent(agentId: string): string {

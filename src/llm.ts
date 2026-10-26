@@ -625,7 +625,12 @@ export function selectProvider(env: Record<string, string | undefined> = process
   }
   const configured = env.LLM_BASE_URL?.trim();
   const baseUrl = httpBaseUrl(configured);
-  if (configured && !baseUrl) return mock();
+  if (configured && !baseUrl) {
+    console.warn(
+      "LLM is using a mock implementation because LLM_BASE_URL is not a valid http(s) URL.",
+    );
+    return mock();
+  }
   return new OpenAiCompatibleProvider({
     apiKey,
     baseUrl: baseUrl || DEFAULT_OPENAI_BASE_URL,

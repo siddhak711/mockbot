@@ -12,25 +12,50 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 it("uses deterministic web, github, and calendar results when keys are missing", async () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   const fetchImpl = vi.fn<typeof fetch>();
-  const tools = createDefaultTools({}, fetchImpl);
-  const search = await tools.get("web_search")!.invoke({ query: "mockbot" }, {});
-  const page = await tools.get("web_fetch")!.invoke({ url: "https://example.com/docs" }, {});
-  const issues = await tools
-    .get("github")!
-    .invoke({ action: "list_issues", owner: "mockbot", repo: "mockbot" }, {});
-  const calendar = await tools.get("google_calendar")!.invoke({ action: "list" }, {});
+  try {
+    const tools = createDefaultTools({}, fetchImpl);
+    const search = await tools.get("web_search")!.invoke({ query: "mockbot" }, {});
+    const again = await tools.get("web_search")!.invoke({ query: "mockbot again" }, {});
+    const page = await tools.get("web_fetch")!.invoke({ url: "https://example.com/docs" }, {});
+    const issues = await tools
+      .get("github")!
+      .invoke({ action: "list_issues", owner: "mockbot", repo: "mockbot" }, {});
+    const calendar = await tools.get("google_calendar")!.invoke({ action: "list" }, {});
 
-  expect(fetchImpl).not.toHaveBeenCalled();
-  expect(search.content).toContain("mockbot");
-  expect(search.content).toContain('"provider": "mock"');
-  expect(page.content).toContain("https://example.com/docs");
-  expect(issues.content).toContain("Show tool calls in the transcript");
-  expect(calendar.content).toContain("Calendar OAuth is not connected");
-  expect(calendar.content).toContain("Mockbot planning");
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(search.content).toContain("mockbot");
+    expect(search.content).toContain('"provider": "mock"');
+    expect(page.content).toContain("https://example.com/docs");
+    expect(page.content).toContain('"provider": "mock"');
+    expect(issues.content).toContain("Show tool calls in the transcript");
+    expect(issues.content).toContain('"provider": "mock"');
+    expect(calendar.content).toContain("Calendar OAuth is not connected");
+    expect(calendar.content).toContain("Mockbot planning");
+    expect(calendar.content).toContain('"provider": "mock"');
+    expect(again.content).toContain('"provider": "mock"');
+    const searchWarnings = warn.mock.calls.filter((call) => String(call[0]).includes("web_search"));
+    expect(searchWarnings).toHaveLength(1);
+    expect(warn).toHaveBeenCalledWith(
+      "web_search is using a mock implementation because TAVILY_API_KEY is not set.",
+    );
+    expect(warn).toHaveBeenCalledWith(
+      "web_fetch is using a mock implementation because TAVILY_API_KEY is not set.",
+    );
+    expect(warn).toHaveBeenCalledWith(
+      "github is using a mock implementation because GITHUB_TOKEN is not set.",
+    );
+    expect(warn).toHaveBeenCalledWith(
+      "google_calendar is using a mock implementation because GOOGLE_CALENDAR_ACCESS_TOKEN is not set.",
+    );
+  } finally {
+    warn.mockRestore();
+  }
 });
 
 it("calls Tavily, GitHub, and Calendar when credentials are set and redacts them", async () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
     const url = String(input);
     const body = typeof init?.body === "string" ? init.body : "";
@@ -92,6 +117,10 @@ it("calls Tavily, GitHub, and Calendar when credentials are set and redacts them
   expect(error.isError).toBe(true);
   expect(error.content).toContain("[redacted]");
   expect(error.content).not.toContain(SECRET);
+  expect(search.content).toContain('"provider": "tavily"');
+  expect(search.content).not.toContain('"provider": "mock"');
+  expect(warn).not.toHaveBeenCalled();
+  warn.mockRestore();
 });
 
 function abortError(): Error {

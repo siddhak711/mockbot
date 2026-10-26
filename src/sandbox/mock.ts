@@ -8,6 +8,13 @@ const SANDBOX_ENV = {
   PWD: "/workspace",
 };
 
+/** Marks a sandbox tool result so the UI can badge a mock fallback. */
+export function mockToolContent(content: string): string {
+  const marker = '{"provider":"mock"}';
+  if (content === marker || content.startsWith(`${marker}\n`)) return content;
+  return `${marker}\n${content}`;
+}
+
 export class MockSandboxRuntime implements SandboxRuntime {
   readonly kind = "mock" as const;
 

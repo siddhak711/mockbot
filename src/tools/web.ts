@@ -1,4 +1,5 @@
 import { asRecord, jsonResult, present, readJson, toolFetchInit } from "./http";
+import { warnMockFallback } from "./mock-fallback";
 import type { FetchLike, ToolDefinition } from "./types";
 
 const SEARCH_URL = "https://api.tavily.com/search";
@@ -116,7 +117,10 @@ export function webSearchTool(
     async invoke(args, context) {
       const query = String(args.query ?? "");
       const apiKey = present(env.TAVILY_API_KEY);
-      if (!apiKey) return { content: jsonResult(mockSearch(query)) };
+      if (!apiKey) {
+        warnMockFallback("web_search", "TAVILY_API_KEY");
+        return { content: jsonResult(mockSearch(query)) };
+      }
       const response = await readJson(
         fetchImpl,
         SEARCH_URL,
@@ -167,7 +171,10 @@ export function webFetchTool(
     async invoke(args, context) {
       const url = String(args.url ?? "");
       const apiKey = present(env.TAVILY_API_KEY);
-      if (!apiKey) return { content: jsonResult(mockFetch(url)) };
+      if (!apiKey) {
+        warnMockFallback("web_fetch", "TAVILY_API_KEY");
+        return { content: jsonResult(mockFetch(url)) };
+      }
       const response = await readJson(
         fetchImpl,
         EXTRACT_URL,
