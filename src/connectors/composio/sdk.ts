@@ -8,21 +8,30 @@ import type {
   ComposioToolkitSummary,
 } from "./types";
 
-const ACTIVE = new Set(["ACTIVE", "INITIATED"]);
+/** Pinned Composio toolkit versions. Env COMPOSIO_TOOLKIT_VERSIONS overrides a slug. */
+export const DEFAULT_COMPOSIO_TOOLKIT_VERSIONS: Record<string, string> = {
+  notion: "20250909_00",
+  github: "20250909_00",
+};
+
+export function resolveComposioToolkitVersions(
+  env: Record<string, string | undefined>,
+): Record<string, string> {
+  return { ...DEFAULT_COMPOSIO_TOOLKIT_VERSIONS, ...toolkitVersions(env) };
+}
 
 export function createSdkComposioBroker(
   env: Record<string, string | undefined>,
   apiKey: string,
 ): ComposioBroker {
-  const versions = toolkitVersions(env);
+  const versions = resolveComposioToolkitVersions(env);
   const baseURL = env["COMPOSIO_BASE_URL"]?.trim();
   const composio = new Composio({
     apiKey,
     allowTracking: false,
+    toolkitVersions: versions,
     ...(baseURL ? { baseURL } : {}),
-    ...(versions ? { toolkitVersions: versions } : {}),
   });
-  const skipVersionCheck = !versions;
 
   return {
     async listToolkits(): Promise<ComposioToolkitSummary[]> {
@@ -50,14 +59,11 @@ export function createSdkComposioBroker(
       const page = await composio.connectedAccounts.list({
         userIds: [input.userId],
         toolkitSlugs: [input.toolkit],
-        statuses: ["ACTIVE", "INITIATED"],
+        statuses: ["ACTIVE"],
       });
       const match = page.items.find((item) => item.id === input.connectedAccountId);
-      if (!match) {
+      if (!match || match.status !== "ACTIVE") {
         throw new Error("That Composio account is not connected for this user.");
-      }
-      if (!ACTIVE.has(match.status)) {
-        throw new Error(`Composio reported ${match.status} for this account.`);
       }
       return {
         id: match.id,
@@ -88,6 +94,13 @@ export function createSdkComposioBroker(
     },
 
     async executeTool(input): Promise<ComposioToolResult> {
+      const version = versions[input.toolkit];
+      if (!version) {
+        return {
+          content: `Pin a Composio toolkit version for ${input.toolkit}.`,
+          isError: true,
+        };
+      }
       try {
         const result = await composio.tools.execute(
           input.slug,
@@ -95,7 +108,7 @@ export function createSdkComposioBroker(
             userId: input.userId,
             connectedAccountId: input.connectedAccountId,
             arguments: input.arguments,
-            ...(skipVersionCheck ? { dangerouslySkipVersionCheck: true as const } : {}),
+            version,
           },
           input.signal ? { signal: input.signal } : undefined,
         );
@@ -112,11 +125,9 @@ export function createSdkComposioBroker(
   };
 }
 
-function toolkitVersions(
-  env: Record<string, string | undefined>,
-): Record<string, string> | undefined {
+function toolkitVersions(env: Record<string, string | undefined>): Record<string, string> {
   const raw = env["COMPOSIO_TOOLKIT_VERSIONS"]?.trim();
-  if (!raw) return undefined;
+  if (!raw) return {};
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw) as unknown;

@@ -673,8 +673,19 @@ export class ConversationStore {
     return result.rows.map(mapComposioConnection);
   }
 
-  async deleteComposioConnectionsForCatalog(catalogId: string): Promise<void> {
-    await this.db.query(`DELETE FROM composio_connections WHERE catalog_id = $1`, [catalogId]);
+  async deleteComposioConnection(userId: string, catalogId: string): Promise<void> {
+    await this.db.query(`DELETE FROM composio_connections WHERE user_id = $1 AND catalog_id = $2`, [
+      userId,
+      catalogId,
+    ]);
+  }
+
+  async countComposioConnections(catalogId: string): Promise<number> {
+    const result = await this.db.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM composio_connections WHERE catalog_id = $1`,
+      [catalogId],
+    );
+    return Number(result.rows[0]?.count ?? 0);
   }
 
   async saveBrokerConnector(

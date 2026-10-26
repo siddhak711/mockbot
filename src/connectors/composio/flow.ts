@@ -92,6 +92,9 @@ export async function completeComposioConnect(options: {
     connectedAccountId,
     fallbackLabel: entry.name,
   });
+  if (account.status !== "ACTIVE") {
+    throw new Error(`${entry.name} sign-in is not active yet.`);
+  }
   const { store } = await getAppContext();
   await store.upsertComposioConnection({
     userId: options.userId,
@@ -105,7 +108,6 @@ export async function completeComposioConnect(options: {
   const connector = await saveComposioConnector({
     entry,
     toolkit,
-    accountLabel: account.label,
     connectorId: options.pending.connectorId,
     tools: listed.tools,
     error: listed.error,
@@ -149,7 +151,6 @@ async function listToolsSafely(
 async function saveComposioConnector(options: {
   entry: CatalogEntry;
   toolkit: string;
-  accountLabel: string;
   connectorId?: string;
   tools: {
     name: string;
@@ -188,7 +189,7 @@ async function saveComposioConnector(options: {
   const status = options.error ? "error" : "connected";
   if (current) {
     const saved = await store.saveBrokerConnector(current.id, {
-      accountLabel: options.accountLabel,
+      accountLabel: null,
       target,
       tools: settings,
       status,
@@ -205,7 +206,7 @@ async function saveComposioConnector(options: {
     secretCipher: null,
     catalogId: options.entry.id,
     authType: "oauth",
-    accountLabel: options.accountLabel,
+    accountLabel: null,
     status,
     statusDetail: options.error,
     tools: settings,

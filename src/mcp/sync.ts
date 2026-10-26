@@ -26,7 +26,10 @@ type RefreshOptions = {
   /** Signed-in user. Composio tools run with this user's connected account. */
   userId?: string;
   signal?: AbortSignal;
-  onToolResult?: (connectorId: string, result: { isError: boolean; content: string }) => void;
+  onToolResult?: (
+    connectorId: string,
+    result: { isError: boolean; content: string; authExpired?: boolean },
+  ) => void;
   onTools?: (
     connectorId: string,
     tools: Record<string, ConnectorToolSetting>,
@@ -147,7 +150,10 @@ async function listEnabledTools(
   const enabled = connectors.filter((connector) => connector.enabled);
   return Promise.all(
     enabled.map(async (connector) => {
-      if (connector.status === "reconnect") return { connector, tools: [], paused: true };
+      const toolkit = composioToolkitForConnector(connector.catalogId, env);
+      if (!toolkit && connector.status === "reconnect") {
+        return { connector, tools: [], paused: true };
+      }
       if (signal?.aborted) {
         return {
           connector,
@@ -162,7 +168,6 @@ async function listEnabledTools(
           error: new Error("Reconnect this connector. Catalog sign-in is no longer simulated."),
         };
       }
-      const toolkit = composioToolkitForConnector(connector.catalogId, env);
       if (toolkit) {
         return listComposioTools(connector, toolkit, userId, env, signal);
       }
@@ -356,7 +361,7 @@ async function executeComposioTool(
   const { getAppContext } = await import("../context");
   const { store } = await getAppContext();
   const connection = await store.getComposioConnection(userId, connector.catalogId);
-  if (!connection || connection.toolkit !== toolkit) {
+  if (!connection || connection.toolkit !== toolkit || connection.status !== "connected") {
     return { content: `Connect ${connector.name} before using its tools.`, isError: true };
   }
   const broker = await getComposioBroker(env);
@@ -384,7 +389,10 @@ function toToolDefinition(
   env: Record<string, string | undefined>,
   secrets: string[],
   userId?: string,
-  onToolResult?: (connectorId: string, result: { isError: boolean; content: string }) => void,
+  onToolResult?: (
+    connectorId: string,
+    result: { isError: boolean; content: string; authExpired?: boolean },
+  ) => void,
 ): ToolDefinition {
   const remoteName = tool.name;
   const description = clip(
@@ -430,7 +438,11 @@ function toToolDefinition(
         }
       }
       const content = redactSecrets(result.content, secrets);
-      onToolResult?.(connector.id, { content, isError: result.isError });
+      onToolResult?.(connector.id, {
+        content,
+        isError: result.isError,
+        authExpired: result.authExpired,
+      });
       return { content, isError: result.isError };
     },
   };

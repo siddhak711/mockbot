@@ -1430,11 +1430,13 @@ function ConnectorCard({
   ).length;
   const account = connector.accountLabel || connector.name;
   const detail =
-    status === "reconnect"
-      ? connector.statusDetail || "Tools are paused."
-      : status === "error"
-        ? connector.statusDetail || "The last call failed."
-        : `${account} · ${count} tools on · write tools ask first`;
+    status === "not connected"
+      ? "Not connected"
+      : status === "reconnect"
+        ? connector.statusDetail || "Tools are paused."
+        : status === "error"
+          ? connector.statusDetail || "The last call failed."
+          : `${account} · ${count} tools on · write tools ask first`;
   return (
     <article
       className={status === "reconnect" ? "connector-card warn" : "connector-card"}
@@ -1451,6 +1453,7 @@ function ConnectorCard({
           <div className="t1">{connector.name}</div>
           <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
             {status === "connected" ? <span className="pill success">● Connected</span> : null}
+            {status === "not connected" ? <span className="pill">● Not connected</span> : null}
             {status === "error" ? <span className="pill danger">● Error</span> : null}
             {status === "reconnect" ? <span className="pill warn">● Reconnect needed</span> : null}
           </div>
@@ -1459,6 +1462,11 @@ function ConnectorCard({
         {status === "connected" && onManage ? (
           <button type="button" className="btn secondary" onClick={onManage}>
             Manage
+          </button>
+        ) : null}
+        {status === "not connected" && onReconnect ? (
+          <button type="button" className="btn primary" onClick={onReconnect}>
+            Connect
           </button>
         ) : null}
         {status === "reconnect" && onReconnect ? (

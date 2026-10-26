@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { catalogById, catalogIsWired } from "../../../src/connectors/catalog";
+import { composioToolkitForConnector } from "../../../src/connectors/composio/config";
 import { resolveToolSettings, type DiscoveredTool } from "../../../src/connectors/policy";
 import { probeConnector } from "../../../src/connectors/probe";
 import {
@@ -25,11 +26,24 @@ export async function GET(request?: Request): Promise<Response> {
   const byCatalog = new Map(connections.map((item) => [item.catalogId, item]));
   const connectors = (await store.listConnectors()).map((record) => {
     const visible = toPublicConnector(record);
-    const connection = record.catalogId ? byCatalog.get(record.catalogId) : undefined;
-    if (!connection) return visible;
+    if (!record.catalogId || !composioToolkitForConnector(record.catalogId, process.env)) {
+      return visible;
+    }
+    const connection = byCatalog.get(record.catalogId);
+    const linked = connection?.status === "connected" || connection?.status === "reconnect";
+    if (!connection || !linked) {
+      return {
+        ...visible,
+        accountLabel: null,
+        status: "not connected" as const,
+        statusDetail: null,
+      };
+    }
     return {
       ...visible,
-      accountLabel: connection.accountLabel ?? visible.accountLabel,
+      accountLabel: connection.accountLabel,
+      status: connection.status,
+      statusDetail: connection.status === "reconnect" ? "Tools are paused." : null,
     };
   });
   return Response.json({ connectors });
