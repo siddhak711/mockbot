@@ -1,12 +1,23 @@
-import type { ColorScheme } from "./theme";
+import { LEAD_AGENT_ID } from "./agents/ids";
 import type { LivePhase, ToolCallStatus } from "./types";
 
-export type SpriteState = "idle" | "thinking" | "working" | "done" | "error";
+export const SPRITE_STATES = ["idle", "thinking", "working", "done", "error"] as const;
+export type SpriteState = (typeof SPRITE_STATES)[number];
+
+/** Violet is the mockbot identity. The other four are crew colors. */
+export const SPRITE_COLORS = ["violet", "blue", "green", "pink", "teal"] as const;
+export type SpriteColor = (typeof SPRITE_COLORS)[number];
+
+export const DEFAULT_SPRITE_COLOR: SpriteColor = "violet";
+
+const CREW_COLORS = ["blue", "green", "pink", "teal"] as const;
 
 /** Suggested hold from the sprite spec: done, then idle. */
 export const DONE_HOLD_MS = 2000;
 
+/** Raster sprites stay readable at 24px. 32px is the preferred chrome size. */
 export const SPRITE_MIN_PX = 24;
+export const SPRITE_PREFERRED_PX = 32;
 
 export type SpriteActivity = {
   messageId: string;
@@ -35,9 +46,49 @@ export function spritePixels(size: number): number {
   return Math.max(SPRITE_MIN_PX, Math.round(size));
 }
 
-export function spriteSrc(state: SpriteState, scheme: ColorScheme, reducedMotion: boolean): string {
-  const motion = reducedMotion ? ".static" : "";
-  return `/sprites/mochi/svg/mochi-${state}-${scheme}${motion}.svg`;
+/**
+ * Lead and the default mockbot stay violet. Every other agent keeps one crew
+ * color derived from its id, so the avatar does not change between renders.
+ */
+export function spriteColorForAgent(
+  agent: { id: string; isLead?: boolean } | null | undefined,
+): SpriteColor {
+  if (!agent || agent.isLead || agent.id === LEAD_AGENT_ID) return DEFAULT_SPRITE_COLOR;
+  let hash = 0;
+  for (let index = 0; index < agent.id.length; index += 1) {
+    hash = (Math.imul(hash, 33) + agent.id.charCodeAt(index)) >>> 0;
+  }
+  return CREW_COLORS[hash % CREW_COLORS.length] ?? "blue";
+}
+
+export function spriteAnimSrc(color: SpriteColor, state: SpriteState): string {
+  return `/sprites/crown3d/anim/${color}-${state}.webp`;
+}
+
+export function spriteStaticSrc(color: SpriteColor, state: SpriteState, scale: 1 | 2 | 3): string {
+  return `/sprites/crown3d/static/${color}-${state}@${scale}x.png`;
+}
+
+/** Animated WebP, or the @1x static PNG when motion is reduced. */
+export function spriteSrc(
+  state: SpriteState,
+  color: SpriteColor = DEFAULT_SPRITE_COLOR,
+  reducedMotion = false,
+): string {
+  if (reducedMotion) return spriteStaticSrc(color, state, 1);
+  return spriteAnimSrc(color, state);
+}
+
+/** @1x/@2x/@3x candidates. Only the static PNGs have a reduced-motion file. */
+export function spriteSrcSet(
+  state: SpriteState,
+  color: SpriteColor = DEFAULT_SPRITE_COLOR,
+  reducedMotion = false,
+): string | undefined {
+  if (!reducedMotion) return undefined;
+  return [1, 2, 3]
+    .map((scale) => `${spriteStaticSrc(color, state, scale as 1 | 2 | 3)} ${scale}x`)
+    .join(", ");
 }
 
 export function liveAssistantId(
@@ -74,7 +125,7 @@ export function shouldStartDoneHold(input: {
 
 export type SpriteAlertKind = "turn" | "workspace";
 
-/** A banner string, and whether it belongs to Mochi or only to the page. */
+/** A banner string, and whether it belongs to the bot sprite or only to the page. */
 export type SpriteAlert = {
   message: string;
   kind: SpriteAlertKind;
@@ -83,7 +134,7 @@ export type SpriteAlert = {
 };
 
 /**
- * Mochi's error face is only a failed chat turn.
+ * The bot's error face is only a failed chat turn.
  * Rename, delete, and approval alerts stay on the page, and a turn error
  * does not follow the user into another conversation.
  */
@@ -127,7 +178,7 @@ export function doneHoldStillApplies(hold: DoneHoldKey | null, view: DoneHoldKey
 }
 
 /**
- * Map a run onto Mochi's five states.
+ * Map a run onto the crown bot's five states.
  *
  * Covered by the sprite spec:
  * - idle when nothing is running

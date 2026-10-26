@@ -1,18 +1,26 @@
 import { expect, it } from "vitest";
+import { readdirSync } from "node:fs";
 import {
   DONE_HOLD_MS,
+  SPRITE_COLORS,
+  SPRITE_STATES,
   alertAfterConversationSwitch,
   alertMessageForView,
   doneHoldStillApplies,
   lastAssistantId,
   liveAssistantId,
   shouldStartDoneHold,
+  spriteAnimSrc,
+  spriteColorForAgent,
   spritePixels,
   spriteSrc,
+  spriteSrcSet,
   spriteStateForRun,
+  spriteStaticSrc,
   spriteTurnErrorForView,
   type SpriteRun,
 } from "../src/sprite";
+import { LEAD_AGENT_ID } from "../src/agents/ids";
 
 function run(patch: Partial<SpriteRun> = {}): SpriteRun {
   return {
@@ -168,15 +176,46 @@ it("ignores the previous assistant row until the live turn has its own", () => {
   expect(lastAssistantId([{ id: "u1", role: "user" }])).toBeNull();
 });
 
-it("serves a theme-specific sprite and the static file when motion is reduced", () => {
-  expect(spriteSrc("idle", "light", false)).toBe("/sprites/mochi/svg/mochi-idle-light.svg");
-  expect(spriteSrc("working", "dark", false)).toBe("/sprites/mochi/svg/mochi-working-dark.svg");
-  expect(spriteSrc("error", "light", true)).toBe("/sprites/mochi/svg/mochi-error-light.static.svg");
-  expect(spriteSrc("done", "dark", true)).toBe("/sprites/mochi/svg/mochi-done-dark.static.svg");
-  expect(spriteSrc("thinking", "light", false)).toBe("/sprites/mochi/svg/mochi-thinking-light.svg");
+it("serves the crown animation and the static png when motion is reduced", () => {
+  expect(spriteSrc("idle")).toBe("/sprites/crown3d/anim/violet-idle.webp");
+  expect(spriteAnimSrc("blue", "working")).toBe("/sprites/crown3d/anim/blue-working.webp");
+  expect(spriteSrc("working", "teal", false)).toBe("/sprites/crown3d/anim/teal-working.webp");
+  expect(spriteSrc("error", "pink", true)).toBe("/sprites/crown3d/static/pink-error@1x.png");
+  expect(spriteStaticSrc("green", "done", 2)).toBe("/sprites/crown3d/static/green-done@2x.png");
+  expect(spriteStaticSrc("violet", "thinking", 3)).toBe(
+    "/sprites/crown3d/static/violet-thinking@3x.png",
+  );
+  expect(spriteSrcSet("done", "blue", false)).toBeUndefined();
+  expect(spriteSrcSet("done", "blue", true)).toBe(
+    "/sprites/crown3d/static/blue-done@1x.png 1x, /sprites/crown3d/static/blue-done@2x.png 2x, /sprites/crown3d/static/blue-done@3x.png 3x",
+  );
 });
 
-it("ignores rename, delete, and expired-approval alerts when choosing Mochi's error face", () => {
+it("keeps violet for mockbot and a stable crew color for other agents", () => {
+  expect(spriteColorForAgent(null)).toBe("violet");
+  expect(spriteColorForAgent({ id: LEAD_AGENT_ID })).toBe("violet");
+  expect(spriteColorForAgent({ id: "agent_other", isLead: true })).toBe("violet");
+  const color = spriteColorForAgent({ id: "agent_research", isLead: false });
+  expect(color).not.toBe("violet");
+  expect(spriteColorForAgent({ id: "agent_research", isLead: false })).toBe(color);
+});
+
+it("ships one animation and three static scales for every color and state", () => {
+  const anim = readdirSync("public/sprites/crown3d/anim");
+  const still = readdirSync("public/sprites/crown3d/static");
+  for (const color of SPRITE_COLORS) {
+    for (const state of SPRITE_STATES) {
+      expect(anim).toContain(`${color}-${state}.webp`);
+      expect(still).toContain(`${color}-${state}@1x.png`);
+      expect(still).toContain(`${color}-${state}@2x.png`);
+      expect(still).toContain(`${color}-${state}@3x.png`);
+    }
+  }
+  expect(anim).toHaveLength(25);
+  expect(still).toHaveLength(75);
+});
+
+it("ignores rename, delete, and expired-approval alerts when choosing the bot's error face", () => {
   const workspace = (message: string) =>
     spriteTurnErrorForView({ message, kind: "workspace", ownerId: "c1" }, "c1");
   expect(workspace("Could not rename conversation")).toBeNull();
@@ -225,7 +264,7 @@ it("drops the done hold when the conversation or the turn changes", () => {
   expect(doneHoldStillApplies(null, hold)).toBe(false);
 });
 
-it("never draws Mochi below 24px", () => {
+it("never draws the bot below 24px", () => {
   expect(spritePixels(16)).toBe(24);
   expect(spritePixels(24)).toBe(24);
   expect(spritePixels(32.4)).toBe(32);
