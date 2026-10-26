@@ -53,12 +53,7 @@ export async function probeConnector(input: {
     env.MCP_PROBE_KEY = input.apiKey;
   }
   try {
-    const listed = await listMcpTools(
-      draft,
-      env,
-      input.apiKey ? [input.apiKey] : [],
-      input.signal,
-    );
+    const listed = await listMcpTools(draft, env, input.apiKey ? [input.apiKey] : [], input.signal);
     const peeked = input.transport === "http" ? await peek(input.target, input.signal) : null;
     return {
       ok: true,
@@ -83,10 +78,17 @@ export async function probeConnector(input: {
     if (message.startsWith("Set MCP_") || message.includes("could not be read")) {
       return { ok: false, code: "unreachable", message, elapsedMs };
     }
-    const peeked = input.transport === "http" ? await peek(input.target, input.signal).catch(() => null) : null;
+    const peeked =
+      input.transport === "http" ? await peek(input.target, input.signal).catch(() => null) : null;
     const auth = classifyAuth(peeked, message);
     if (input.apiKey && (auth === "apikey" || auth === "oauth" || isAuthFailure(message))) {
-      return { ok: false, code: "auth", auth: "apikey", message: "That key was rejected.", elapsedMs };
+      return {
+        ok: false,
+        code: "auth",
+        auth: "apikey",
+        message: "That key was rejected.",
+        elapsedMs,
+      };
     }
     if (!input.apiKey && (auth === "oauth" || auth === "apikey")) {
       return {

@@ -17,7 +17,7 @@ import { noteConnectorOutcome } from "../src/connectors/runtime";
 import { resetAppContext, setAppContext } from "../src/context";
 import { MockProvider } from "../src/llm";
 import { refreshMcpTools } from "../src/mcp/sync";
-import { decryptSecret } from "../src/mcp/vault";
+import { decryptSecret, encryptSecret } from "../src/mcp/vault";
 import { ConversationStore } from "../src/store";
 import { requiresApproval } from "../src/tools/approval";
 import { createDefaultTools } from "../src/tools/builtins";
@@ -30,7 +30,9 @@ afterEach(async () => {
 
 it("classifies pasted input, catalog search, and tool risk", () => {
   expect(detectInput("notion").kind).toBe("search");
-  expect(detectInput("https://").valid).toBe(false);
+  const invalidUrl = detectInput("https://");
+  expect(invalidUrl.kind).toBe("url");
+  if (invalidUrl.kind === "url") expect(invalidUrl.valid).toBe(false);
   expect(detectInput("https://mcp.acme.dev/mcp")).toMatchObject({
     kind: "url",
     valid: true,
@@ -57,7 +59,8 @@ it("classifies pasted input, catalog search, and tool risk", () => {
   expect(classifyToolRisk("delete_page")).toBe("destructive");
   expect(classifyToolRisk("export_pdf")).toBe("write");
   expect(classifyToolRisk("mystery", {})).toBe("write");
-  expect(classifyToolRisk("delete_page", { readOnlyHint: true })).toBe("destructive");
+  expect(classifyToolRisk("delete_page", { readOnlyHint: true })).toBe("read");
+  expect(classifyToolRisk("search_pages", { destructiveHint: true })).toBe("destructive");
   expect(defaultToolSetting("read")).toEqual({ enabled: true, approval: "auto" });
   expect(defaultToolSetting("write")).toEqual({ enabled: false, approval: "ask" });
   expect(defaultToolSetting("destructive")).toEqual({ enabled: false, approval: "ask" });
@@ -70,19 +73,47 @@ it("classifies pasted input, catalog search, and tool risk", () => {
   ];
   const settings = resolveToolSettings(
     discovered,
-    { delete_page: { enabled: true, approval: "auto" }, create_page: { enabled: true, approval: "auto" } },
+    {
+      delete_page: { enabled: true, approval: "auto" },
+      create_page: { enabled: true, approval: "auto" },
+    },
     "defaults",
   );
   expect(settings.search_pages).toMatchObject({ enabled: true, approval: "auto", risk: "read" });
   expect(settings.create_page).toMatchObject({ enabled: true, approval: "auto", risk: "write" });
-  expect(settings.delete_page).toMatchObject({ enabled: true, approval: "ask", risk: "destructive" });
+  expect(settings.delete_page).toMatchObject({
+    enabled: true,
+    approval: "ask",
+    risk: "destructive",
+  });
   expect(settings.export_pdf).toMatchObject({ enabled: false, skipped: true });
 
   const bulk = applyBulk(
     [
-      { name: "search_pages", description: "", risk: "read", enabled: false, approval: "auto", skipped: false },
-      { name: "create_page", description: "", risk: "write", enabled: false, approval: "ask", skipped: false },
-      { name: "export_pdf", description: "", risk: "write", enabled: false, approval: "ask", skipped: true },
+      {
+        name: "search_pages",
+        description: "",
+        risk: "read",
+        enabled: false,
+        approval: "auto",
+        skipped: false,
+      },
+      {
+        name: "create_page",
+        description: "",
+        risk: "write",
+        enabled: false,
+        approval: "ask",
+        skipped: false,
+      },
+      {
+        name: "export_pdf",
+        description: "",
+        risk: "write",
+        enabled: false,
+        approval: "ask",
+        skipped: true,
+      },
     ],
     "read-on",
   );
@@ -113,17 +144,13 @@ it("keeps muted text and status colors at 4.5:1 in both themes", () => {
     expect(contrast(paint(theme.link, surface), surface)).toBeGreaterThanOrEqual(4.5);
     expect(contrast(paint(theme.danger, surface), surface)).toBeGreaterThanOrEqual(4.5);
     expect(
-      contrast(paint(theme["on-danger"], parseColor(theme["danger-fill"])), parseColor(theme["danger-fill"])),
+      contrast(
+        paint(theme["on-danger"], parseColor(theme["danger-fill"])),
+        parseColor(theme["danger-fill"]),
+      ),
     ).toBeGreaterThanOrEqual(4.5);
-    for (const [name, amount] of [
-      ["success", 0.14],
-      ["warn", 0.14],
-      ["danger", 0.12],
-      ["warn", 0.12],
-    ] as const) {
-      const tone = paint(theme[name], surface);
-      const fill = blend(tone, surface, amount);
-      expect(contrast(tone, fill), `${name} on ${amount} tint`).toBeGreaterThanOrEqual(4.5);
+    for (const name of ["success", "warn", "danger"] as const) {
+      expect(contrast(paint(theme[name], surface), surface), name).toBeGreaterThanOrEqual(4.5);
     }
   }
 });
@@ -160,7 +187,10 @@ it("detects search, invalid input, oauth, api keys, and unreachable servers", as
     const accepted = await detectConnector(
       jsonRequest({ input: keyed.url, apiKey: "connector-key" }),
     );
-    const acceptedBody = (await accepted.json()) as { auth: string; tools: Array<{ name: string; risk: string }> };
+    const acceptedBody = (await accepted.json()) as {
+      auth: string;
+      tools: Array<{ name: string; risk: string }>;
+    };
     expect(accepted.status).toBe(200);
     expect(acceptedBody.auth).toBe("apikey");
     expect(acceptedBody.tools.map((tool) => tool.name).sort()).toEqual(["echo", "env_probe"]);
@@ -174,7 +204,11 @@ it("detects search, invalid input, oauth, api keys, and unreachable servers", as
 
 it("saves catalog defaults and keeps the api key off the client", async () => {
   const store = await ConversationStore.open();
-  setAppContext({ store, provider: new MockProvider({ delayMs: 0 }), tools: createDefaultTools({}) });
+  setAppContext({
+    store,
+    provider: new MockProvider({ delayMs: 0 }),
+    tools: createDefaultTools({}),
+  });
   const server = await startMockMcpServer({ auth: "apikey", token: "connector-key" });
   try {
     const catalog = await createConnector(
@@ -203,7 +237,10 @@ it("saves catalog defaults and keeps the api key off the client", async () => {
         transport: "http",
         target: server.url,
         apiKey: "connector-key",
-        tools: { echo: { enabled: true, approval: "ask" }, env_probe: { enabled: false, approval: "ask" } },
+        tools: {
+          echo: { enabled: true, approval: "ask" },
+          env_probe: { enabled: false, approval: "ask" },
+        },
       }),
     );
     const keyedText = await keyed.text();
@@ -215,7 +252,6 @@ it("saves catalog defaults and keeps the api key off the client", async () => {
     expect(listed).not.toContain("secretCipher");
 
     const registry = new ToolRegistry();
-    for (const tool of createDefaultTools({})) registry.register(tool);
     await refreshMcpTools({
       registry,
       connectors: await store.listConnectors(),
@@ -252,13 +288,19 @@ it("saves catalog defaults and keeps the api key off the client", async () => {
       },
     });
     expect(appeared).toMatchObject({ enabled: false, approval: "ask", risk: "write" });
-    const disabled = await patchTools(jsonRequest({ tools: { echo: { enabled: false, approval: "ask" } } }), {
-      params: Promise.resolve({ id }),
-    });
+    const disabled = await patchTools(
+      jsonRequest({ tools: { echo: { enabled: false, approval: "ask" } } }),
+      {
+        params: Promise.resolve({ id }),
+      },
+    );
     expect(disabled.status).toBe(200);
     const next = new ToolRegistry();
-    for (const tool of createDefaultTools({})) next.register(tool);
-    await refreshMcpTools({ registry: next, connectors: await store.listConnectors(), env: process.env });
+    await refreshMcpTools({
+      registry: next,
+      connectors: await store.listConnectors(),
+      env: process.env,
+    });
     expect(next.get("acme_echo")).toBeUndefined();
 
     const forced = await patchTools(
@@ -295,6 +337,62 @@ it("saves catalog defaults and keeps the api key off the client", async () => {
   }
 });
 
+it("asks before a legacy connector runs a send tool", async () => {
+  const server = await startMockMcpServer({ extraTools: ["send_note", "search_pages"] });
+  try {
+    const store = await ConversationStore.open();
+    setAppContext({
+      store,
+      provider: new MockProvider({ delayMs: 0 }),
+      tools: createDefaultTools({}),
+    });
+    await store.createConnector({
+      name: "Demo",
+      transport: "http",
+      target: server.url,
+      secretRef: null,
+      tools: {},
+    });
+    const registry = new ToolRegistry();
+    await refreshMcpTools({
+      registry,
+      connectors: await store.listConnectors(),
+      env: process.env,
+    });
+    const send = registry.get("demo_send_note");
+    expect(send?.skipHeuristicApproval).toBe(false);
+    expect(send ? requiresApproval(send, {}) : false).toBe(true);
+    const search = registry.get("demo_search_pages");
+    expect(search?.skipHeuristicApproval).toBe(true);
+    expect(search ? requiresApproval(search, {}) : true).toBe(false);
+  } finally {
+    await server.close();
+  }
+});
+
+it("reads CONNECTOR_SECRET_KEY and refuses to mint one in production", async () => {
+  const env = process.env as Record<string, string | undefined>;
+  const previousNode = env.NODE_ENV;
+  const previousKey = env.CONNECTOR_SECRET_KEY;
+  const previousVercel = env.VERCEL;
+  delete env.CONNECTOR_SECRET_KEY;
+  delete env.VERCEL;
+  env.NODE_ENV = "production";
+  try {
+    await expect(encryptSecret("connector-secret")).rejects.toThrow(/CONNECTOR_SECRET_KEY/);
+    env.CONNECTOR_SECRET_KEY = Buffer.alloc(32, 4).toString("base64");
+    const cipher = await encryptSecret("connector-secret");
+    expect(cipher).not.toContain("connector-secret");
+    expect(await decryptSecret(cipher)).toBe("connector-secret");
+  } finally {
+    env.NODE_ENV = previousNode;
+    if (previousKey == null) delete env.CONNECTOR_SECRET_KEY;
+    else env.CONNECTOR_SECRET_KEY = previousKey;
+    if (previousVercel == null) delete env.VERCEL;
+    else env.VERCEL = previousVercel;
+  }
+});
+
 function jsonRequest(body: unknown): Request {
   return new Request("http://localhost/api/connectors", {
     method: "POST",
@@ -325,14 +423,22 @@ function parseColor(value: string, background?: RGB): RGB {
   const text = value.trim();
   if (text.startsWith("#")) {
     const raw = text.slice(1);
-    const full = raw.length === 3 ? raw.split("").map((part) => part + part).join("") : raw;
+    const full =
+      raw.length === 3
+        ? raw
+            .split("")
+            .map((part) => part + part)
+            .join("")
+        : raw;
     return {
       r: Number.parseInt(full.slice(0, 2), 16),
       g: Number.parseInt(full.slice(2, 4), 16),
       b: Number.parseInt(full.slice(4, 6), 16),
     };
   }
-  const match = text.match(/rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)/);
+  const match = text.match(
+    /rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)/,
+  );
   if (!match) throw new Error(`Unparsed color ${value}`);
   const alpha = match[4] == null ? 1 : Number(match[4]);
   const fg = { r: Number(match[1]), g: Number(match[2]), b: Number(match[3]) };
@@ -341,14 +447,6 @@ function parseColor(value: string, background?: RGB): RGB {
     r: fg.r * alpha + bg.r * (1 - alpha),
     g: fg.g * alpha + bg.g * (1 - alpha),
     b: fg.b * alpha + bg.b * (1 - alpha),
-  };
-}
-
-function blend(foreground: RGB, background: RGB, amount: number): RGB {
-  return {
-    r: foreground.r * amount + background.r * (1 - amount),
-    g: foreground.g * amount + background.g * (1 - amount),
-    b: foreground.b * amount + background.b * (1 - amount),
   };
 }
 

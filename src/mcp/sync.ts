@@ -16,7 +16,10 @@ type RefreshOptions = {
   env: Record<string, string | undefined>;
   signal?: AbortSignal;
   onToolResult?: (connectorId: string, result: { isError: boolean; content: string }) => void;
-  onTools?: (connectorId: string, tools: Record<string, ConnectorToolSetting>) => Promise<void> | void;
+  onTools?: (
+    connectorId: string,
+    tools: Record<string, ConnectorToolSetting>,
+  ) => Promise<void> | void;
 };
 
 let queue: Promise<void> = Promise.resolve();
@@ -78,7 +81,7 @@ export async function refreshMcpTools(options: RefreshOptions): Promise<void> {
   for (const batch of batches) {
     if (batch.paused || batch.error) continue;
     const assigned = names.get(batch.connector.id) ?? [];
-    const merged = mergeSettings(batch.connector, batch.tools);
+    const merged = mergeSettings(batch.connector, batch.tools, secrets);
     if (onTools && settingsChanged(batch.connector.tools, merged)) {
       await onTools(batch.connector.id, merged);
     }
@@ -165,6 +168,7 @@ function catalogTools(connector: ConnectorRecord): RemoteTool[] {
 function mergeSettings(
   connector: ConnectorRecord,
   tools: readonly RemoteTool[],
+  secrets: readonly string[],
 ): Record<string, ConnectorToolSetting> {
   const hasPolicy = Boolean(connector.tools && Object.keys(connector.tools).length > 0);
   const merged: Record<string, ConnectorToolSetting> = {};
@@ -178,8 +182,9 @@ function mergeSettings(
     const risk = saved?.risk ?? discovered.risk;
     const base = hasPolicy
       ? defaultFor(risk)
-      : { enabled: !discovered.skipped, approval: "auto" as const };
-    let approval = saved?.approval === "auto" || saved?.approval === "ask" ? saved.approval : base.approval;
+      : { enabled: !discovered.skipped, approval: defaultFor(risk).approval };
+    let approval =
+      saved?.approval === "auto" || saved?.approval === "ask" ? saved.approval : base.approval;
     let enabled = saved ? saved.enabled : base.enabled;
     if (risk === "read") approval = "auto";
     if (risk === "destructive") approval = "ask";
@@ -188,7 +193,7 @@ function mergeSettings(
       enabled,
       approval,
       risk,
-      description: discovered.description || saved?.description || "",
+      description: redactSecrets(discovered.description || saved?.description || "", secrets),
       skipped: discovered.skipped,
     };
   }
@@ -263,7 +268,7 @@ function toToolDefinition(
     inputSchema,
     exposure: "default",
     approval: asks ? "always" : "never",
-    skipHeuristicApproval: !asks,
+    skipHeuristicApproval: setting.risk === "read",
     async invoke(args, context) {
       if (connector.catalogId) {
         return {

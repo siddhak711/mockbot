@@ -29,7 +29,9 @@ export async function POST(request: Request): Promise<Response> {
       onToolResult: (connectorId, result) => {
         void noteConnectorOutcome(store, connectorId, result);
       },
-      onTools: (connectorId, next) => store.updateConnectorTools(connectorId, next),
+      onTools: (connectorId, next) => {
+        void store.updateConnectorTools(connectorId, next);
+      },
     });
     return streamChatTurn({
       store,

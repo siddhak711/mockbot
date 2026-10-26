@@ -1,4 +1,8 @@
-import { parseToolSettingsBody, toPublicConnector, type ConnectorToolSetting } from "../../../../../src/connectors";
+import {
+  parseToolSettingsBody,
+  toPublicConnector,
+  type ConnectorToolSetting,
+} from "../../../../../src/connectors";
 import { classifyToolRisk } from "../../../../../src/connectors/policy";
 import { getAppContext } from "../../../../../src/context";
 

@@ -19,7 +19,8 @@ export async function POST(request: Request): Promise<Response> {
   const record = body as { input?: unknown; apiKey?: unknown };
   const input = typeof record.input === "string" ? record.input : "";
   const apiKey = typeof record.apiKey === "string" ? record.apiKey : "";
-  if (apiKey.length > 2_000) return Response.json({ error: "API key is too long." }, { status: 400 });
+  if (apiKey.length > 2_000)
+    return Response.json({ error: "API key is too long." }, { status: 400 });
   const detected = detectInput(input);
   if (detected.kind === "search") {
     return Response.json({
@@ -34,7 +35,12 @@ export async function POST(request: Request): Promise<Response> {
       { status: 400 },
     );
   }
-  const transport = detected.kind === "command" ? "stdio" : detected.kind === "config" ? detected.transport! : "http";
+  const transport =
+    detected.kind === "command"
+      ? "stdio"
+      : detected.kind === "config"
+        ? detected.transport!
+        : "http";
   const target = detected.target;
   try {
     const probe = await probeConnector({
@@ -80,6 +86,9 @@ export async function POST(request: Request): Promise<Response> {
     if (request.signal.aborted || isAbortError(error)) {
       return Response.json({ error: "The connection was cancelled." }, { status: 400 });
     }
-    return Response.json({ code: "unreachable", error: "Could not reach the MCP server." }, { status: 400 });
+    return Response.json(
+      { code: "unreachable", error: "Could not reach the MCP server." },
+      { status: 400 },
+    );
   }
 }

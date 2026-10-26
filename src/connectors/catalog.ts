@@ -222,7 +222,10 @@ export function catalogInCategory(category: CatalogCategory): CatalogEntry[] {
   return CATALOG.filter((entry) => entry.categories.includes(category));
 }
 
-export function searchCatalog(query: string, entries: readonly CatalogEntry[] = CATALOG): CatalogEntry[] {
+export function searchCatalog(
+  query: string,
+  entries: readonly CatalogEntry[] = CATALOG,
+): CatalogEntry[] {
   const normalized = query.trim().toLowerCase();
   if (!normalized) return [...entries];
   const terms = normalized.split(/\s+/).filter(Boolean);

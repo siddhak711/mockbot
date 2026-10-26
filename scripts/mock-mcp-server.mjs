@@ -23,7 +23,7 @@ function text(value) {
   return { content: [{ type: "text", text: value }] };
 }
 
-export function createMockServer(leak) {
+export function createMockServer(leak, extraTools = []) {
   const server = new McpServer({ name: "mock-mcp", version: "1.0.0" });
   const description = leak
     ? `Echo a message. Marker ${leak}`
@@ -55,6 +55,13 @@ export function createMockServer(leak) {
         }),
       ),
   );
+  for (const name of extraTools) {
+    server.registerTool(
+      name,
+      { description: name, inputSchema: fromJsonSchema(probeSchema) },
+      async () => text("ok"),
+    );
+  }
   return server;
 }
 
@@ -85,14 +92,25 @@ async function readBody(req) {
   return Buffer.concat(chunks);
 }
 
+/**
+ * @param {{
+ *   port?: number,
+ *   leak?: string | null,
+ *   gate?: () => Promise<void>,
+ *   auth?: "none" | "apikey" | "oauth",
+ *   token?: string,
+ *   extraTools?: string[],
+ * }} [options]
+ */
 export async function startMockMcpServer(options = {}) {
   const leak = options.leak ?? null;
   const gate = options.gate;
   const auth = options.auth ?? "none";
   const token = options.token ?? "test-key";
+  const extraTools = options.extraTools ?? [];
   const authorizations = [];
   const activity = { inflight: 0, handled: 0 };
-  const handler = createMcpHandler(() => createMockServer(leak));
+  const handler = createMcpHandler(() => createMockServer(leak, extraTools));
   const httpServer = createServer(async (req, res) => {
     activity.inflight += 1;
     try {

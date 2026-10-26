@@ -85,7 +85,9 @@ export function CommandPalette({
                 {command.label}
               </button>
             ))}
-            {matches.length === 0 ? <p className="t2">No commands match “{query.trim()}”.</p> : null}
+            {matches.length === 0 ? (
+              <p className="t2">No commands match “{query.trim()}”.</p>
+            ) : null}
           </div>
         </div>
       </div>

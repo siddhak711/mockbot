@@ -1,13 +1,20 @@
 import { randomBytes } from "node:crypto";
 import { catalogById } from "../../../src/connectors/catalog";
-import { discoverTool, resolveToolSettings } from "../../../src/connectors/policy";
+import {
+  discoverTool,
+  resolveToolSettings,
+  type DiscoveredTool,
+} from "../../../src/connectors/policy";
 import { probeConnector } from "../../../src/connectors/probe";
 import {
   parseConnectorInput,
   toPublicConnector,
+  type ConnectorRecord,
   type ConnectorToolSetting,
 } from "../../../src/connectors";
 import { getAppContext } from "../../../src/context";
+import { assignMcpToolNames } from "../../../src/mcp/sync";
+import { redactSecrets, resolveSecret } from "../../../src/mcp/secrets";
 import { encryptSecret } from "../../../src/mcp/vault";
 import { isAbortError } from "../../../src/tools/http";
 
@@ -43,9 +50,31 @@ export async function POST(request: Request): Promise<Response> {
   const parsed = parseConnectorInput(body);
   if (!parsed.ok) return Response.json({ error: parsed.error }, { status: 400 });
   const apiKey = typeof record.apiKey === "string" ? record.apiKey : "";
-  if (apiKey.length > 2_000) return Response.json({ error: "API key is too long." }, { status: 400 });
+  if (apiKey.length > 2_000)
+    return Response.json({ error: "API key is too long." }, { status: 400 });
 
-  const { store } = await getAppContext();
+  const resolved = apiKey
+    ? { ok: true as const, secret: apiKey }
+    : resolveSecret(parsed.value.secretRef, process.env);
+  if (!resolved.ok) return Response.json({ error: resolved.error }, { status: 400 });
+  const { store, tools: registry } = await getAppContext();
+  const existing = await store.listConnectors();
+  const draft: ConnectorRecord = {
+    id: crypto.randomUUID(),
+    name: parsed.value.name,
+    transport: parsed.value.transport,
+    target: parsed.value.target,
+    secretRef: apiKey ? null : parsed.value.secretRef,
+    enabled: true,
+    createdAt: new Date(0).toISOString(),
+    updatedAt: new Date(0).toISOString(),
+  };
+  const listing = assignMcpToolNames({
+    registry,
+    connectors: [...existing, draft],
+    env: process.env,
+    signal: request.signal,
+  });
   try {
     const probe = await probeConnector({
       transport: parsed.value.transport,
@@ -55,7 +84,10 @@ export async function POST(request: Request): Promise<Response> {
       apiKey: apiKey || undefined,
       signal: request.signal,
     });
-    if (request.signal.aborted) {
+    const listed = await listing;
+    const cancelled =
+      request.signal.aborted || listed.batches.some((batch) => isAbortError(batch.error));
+    if (cancelled) {
       return Response.json({ error: "The connection was cancelled." }, { status: 400 });
     }
     if (!probe.ok) {
@@ -65,8 +97,10 @@ export async function POST(request: Request): Promise<Response> {
     if (provided === "invalid") {
       return Response.json({ error: "tools must be an object." }, { status: 400 });
     }
+    const secrets = resolved.secret ? [resolved.secret] : [];
+    const discovered = probe.tools.map((tool) => redactDiscovered(tool, secrets));
     const settings = resolveToolSettings(
-      probe.tools,
+      discovered,
       provided ?? undefined,
       provided ? "defaults" : "legacy",
     );
@@ -82,6 +116,7 @@ export async function POST(request: Request): Promise<Response> {
       .map((tool) => ({ name: tool.name, remoteName: tool.name }));
     return Response.json({ connector: toPublicConnector(connector), tools }, { status: 201 });
   } catch (error) {
+    await listing.catch(() => undefined);
     if (request.signal.aborted || isAbortError(error)) {
       return Response.json({ error: "The connection was cancelled." }, { status: 400 });
     }
@@ -94,10 +129,15 @@ async function createCatalogConnector(catalogId: string, accountLabel: unknown):
   if (!entry) return Response.json({ error: "Unknown connector." }, { status: 400 });
   const account = typeof accountLabel === "string" ? accountLabel.trim().slice(0, 80) : "";
   const discovered = entry.tools.map((tool) =>
-    discoverTool(tool.name, tool.description, { type: "object", properties: {} }, {
-      readOnlyHint: tool.risk === "read",
-      destructiveHint: tool.risk === "destructive",
-    }),
+    discoverTool(
+      tool.name,
+      tool.description,
+      { type: "object", properties: {} },
+      {
+        readOnlyHint: tool.risk === "read",
+        destructiveHint: tool.risk === "destructive",
+      },
+    ),
   );
   const settings: Record<string, ConnectorToolSetting> = resolveToolSettings(
     discovered,
@@ -117,6 +157,10 @@ async function createCatalogConnector(catalogId: string, accountLabel: unknown):
     tools: settings,
   });
   return Response.json({ connector: toPublicConnector(connector) }, { status: 201 });
+}
+
+function redactDiscovered(tool: DiscoveredTool, secrets: readonly string[]): DiscoveredTool {
+  return { ...tool, description: redactSecrets(tool.description, secrets) };
 }
 
 function providedTools(

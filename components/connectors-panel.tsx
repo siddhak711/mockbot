@@ -20,9 +20,17 @@ import {
   type ListedTool,
   type ToolRisk,
 } from "../src/connectors/policy";
-import { ArrowLeftIcon, CheckIcon, CloseIcon, PlugIcon, SparkleIcon } from "./icons";
+import { ArrowLeftIcon, CloseIcon, PlugIcon, SearchIcon, SparkleIcon } from "./icons";
 import { Mochi } from "./mochi";
-import { Monogram, Notice, RiskPill, SearchField, Spinner, StepIcon, SwitchControl } from "./connector-bits";
+import {
+  Monogram,
+  Notice,
+  RiskPill,
+  SearchField,
+  Spinner,
+  StepIcon,
+  SwitchControl,
+} from "./connector-bits";
 
 type UiTool = ListedTool & { isNew?: boolean };
 
@@ -77,7 +85,7 @@ export function ConnectorsPanel({
   const searchRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const oauthExisting = useRef<string | null>(null);
-  const popupWatch = useRef<ReturnType<typeof window.setInterval> | null>(null);
+  const popupWatch = useRef<ReturnType<typeof setInterval> | null>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
   const [search, setSearch] = useState(initialQuery);
   const [category, setCategory] = useState<CatalogCategory>("popular");
@@ -137,7 +145,7 @@ export function ConnectorsPanel({
 
   useEffect(() => {
     return () => {
-      if (popupWatch.current != null) window.clearInterval(popupWatch.current);
+      if (popupWatch.current != null) clearInterval(popupWatch.current);
     };
   }, []);
 
@@ -158,9 +166,11 @@ export function ConnectorsPanel({
     const node = dialogRef.current;
     if (!node) return;
     const focusable = () =>
-      [...node.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled), a[href], [tabindex]:not([tabindex='-1'])")].filter(
-        (element) => !element.hasAttribute("disabled"),
-      );
+      [
+        ...node.querySelectorAll<HTMLElement>(
+          "button:not(:disabled), input:not(:disabled), a[href], [tabindex]:not([tabindex='-1'])",
+        ),
+      ].filter((element) => !element.hasAttribute("disabled"));
     const timer = window.setTimeout(() => {
       if (mode === "add" || mode === "detecting" || mode === "invalid" || mode === "no-results") {
         searchRef.current?.focus();
@@ -218,11 +228,16 @@ export function ConnectorsPanel({
     return () => window.clearTimeout(timer);
   }, [toast]);
 
-  const title = mode === "list" || mode === "done" || mode === "manage" || mode === "disconnect" || mode === "details"
-    ? mode === "manage" || mode === "disconnect"
-      ? (active?.name ?? "Connector")
-      : "Connectors"
-    : "Add a connector";
+  const title =
+    mode === "list" ||
+    mode === "done" ||
+    mode === "manage" ||
+    mode === "disconnect" ||
+    mode === "details"
+      ? mode === "manage" || mode === "disconnect"
+        ? (active?.name ?? "Connector")
+        : "Connectors"
+      : "Add a connector";
 
   const entries = useMemo(() => {
     const base = catalogInCategory(category);
@@ -232,8 +247,12 @@ export function ConnectorsPanel({
   function applyPreview(name: string) {
     setMode(previewMode(name));
     setSearch(previewSearch(name));
-    setUnreachable("Couldn't reach mcp.acme.dev (timed out after 10 s). Check the URL, VPN, or that the server is running.");
-    setAuthError('Notion returned "access_denied". You may have closed the window or declined access.');
+    setUnreachable(
+      "Couldn't reach mcp.acme.dev (timed out after 10 s). Check the URL, VPN, or that the server is running.",
+    );
+    setAuthError(
+      'Notion returned "access_denied". You may have closed the window or declined access.',
+    );
     setDraft(previewDraft(name));
     setLocalTools(previewTools(name));
     setSteps([
@@ -248,7 +267,12 @@ export function ConnectorsPanel({
 
   async function probe(value: string, apiKey = "") {
     const detected = detectInput(value);
-    if (detected.kind === "search" || !detected.valid || !("target" in detected) || !detected.target) {
+    if (
+      detected.kind === "search" ||
+      !detected.valid ||
+      !("target" in detected) ||
+      !detected.target
+    ) {
       setMode(detected.kind === "search" ? "add" : "invalid");
       return;
     }
@@ -300,7 +324,13 @@ export function ConnectorsPanel({
         })),
       };
       setDraft(next);
-      setSteps(doneSteps(body.transportLabel || "Streamable HTTP", body.auth ?? "none", body.elapsedMs ?? 0));
+      setSteps(
+        doneSteps(
+          body.transportLabel || "Streamable HTTP",
+          body.auth ?? "none",
+          body.elapsedMs ?? 0,
+        ),
+      );
       if (oauthExisting.current) {
         const id = oauthExisting.current;
         oauthExisting.current = null;
@@ -401,7 +431,10 @@ export function ConnectorsPanel({
         tools,
       }),
     });
-    const body = (await response.json().catch(() => null)) as { error?: string; connector?: ConnectorRecord } | null;
+    const body = (await response.json().catch(() => null)) as {
+      error?: string;
+      connector?: ConnectorRecord;
+    } | null;
     if (!response.ok || !body?.connector) {
       setUnreachable(body?.error ?? "Could not add the connector.");
       setMode("unreachable");
@@ -453,7 +486,9 @@ export function ConnectorsPanel({
       "popup,width=420,height=560",
     );
     if (!popup) {
-      setAuthError(`${name} returned "access_denied". You may have closed the window or declined access.`);
+      setAuthError(
+        `${name} returned "access_denied". You may have closed the window or declined access.`,
+      );
       setMode("auth-failed");
       return;
     }
@@ -463,11 +498,13 @@ export function ConnectorsPanel({
       if (settled) return;
       settled = true;
       window.removeEventListener("message", onMessage);
-      if (popupWatch.current != null) window.clearInterval(popupWatch.current);
+      if (popupWatch.current != null) clearInterval(popupWatch.current);
       popupWatch.current = null;
       setWaiting(false);
       if (!ok) {
-        setAuthError(`${name} returned "access_denied". You may have closed the window or declined access.`);
+        setAuthError(
+          `${name} returned "access_denied". You may have closed the window or declined access.`,
+        );
         setMode("auth-failed");
         return;
       }
@@ -485,8 +522,8 @@ export function ConnectorsPanel({
       finish(Boolean(data.ok), data.account);
     };
     window.addEventListener("message", onMessage);
-    if (popupWatch.current != null) window.clearInterval(popupWatch.current);
-    popupWatch.current = window.setInterval(() => {
+    if (popupWatch.current != null) clearInterval(popupWatch.current);
+    popupWatch.current = setInterval(() => {
       if (popup.closed) finish(false);
     }, 400);
   }
@@ -513,7 +550,10 @@ export function ConnectorsPanel({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ catalogId: entry.id, accountLabel: account }),
     });
-    const body = (await response.json().catch(() => null)) as { connector?: ConnectorRecord; error?: string } | null;
+    const body = (await response.json().catch(() => null)) as {
+      connector?: ConnectorRecord;
+      error?: string;
+    } | null;
     if (!response.ok || !body?.connector) {
       setAuthError(body?.error ?? `Could not connect ${entry.name}.`);
       setMode("auth-failed");
@@ -575,14 +615,24 @@ export function ConnectorsPanel({
     const columns = window.innerWidth <= 760 ? 1 : 3;
     if (event.key === "ArrowRight") setTileIndex((index) => Math.min(count - 1, index + 1));
     else if (event.key === "ArrowLeft") setTileIndex((index) => Math.max(0, index - 1));
-    else if (event.key === "ArrowDown") setTileIndex((index) => Math.min(count - 1, index + columns));
+    else if (event.key === "ArrowDown")
+      setTileIndex((index) => Math.min(count - 1, index + columns));
     else if (event.key === "ArrowUp") setTileIndex((index) => Math.max(0, index - columns));
     else return;
     event.preventDefault();
   }
 
-  const searchShown = mode === "add" || mode === "detecting" || mode === "invalid" || mode === "no-results" || mode === "oauth";
-  const noResults = mode === "add" && search.trim() && detectInput(search).kind === "search" && entries.length === 0;
+  const searchShown =
+    mode === "add" ||
+    mode === "detecting" ||
+    mode === "invalid" ||
+    mode === "no-results" ||
+    mode === "oauth";
+  const noResults =
+    mode === "add" &&
+    search.trim() &&
+    detectInput(search).kind === "search" &&
+    entries.length === 0;
   const visibleMode = noResults ? "no-results" : mode;
   const done = shownConnectors.find((connector) => connector.id === doneId) ?? shownConnectors[0];
 
@@ -599,7 +649,12 @@ export function ConnectorsPanel({
       >
         <header className="connector-head">
           {mode === "manage" || mode === "disconnect" ? (
-            <button type="button" className="icon-btn back-btn" aria-label="Back" onClick={() => setMode("list")}>
+            <button
+              type="button"
+              className="icon-btn back-btn"
+              aria-label="Back"
+              onClick={() => setMode("list")}
+            >
               <ArrowLeftIcon />
             </button>
           ) : (
@@ -631,7 +686,7 @@ export function ConnectorsPanel({
                 }}
                 onSubmit={() => {
                   const detected = detectInput(search);
-                  if (!detected.valid && detected.kind !== "search") setMode("invalid");
+                  if (detected.kind !== "search" && !detected.valid) setMode("invalid");
                   else if (detected.kind !== "search") void probe(search);
                 }}
                 onCancel={() => {
@@ -679,79 +734,101 @@ export function ConnectorsPanel({
             </div>
           ) : null}
 
-          {(visibleMode === "add" || visibleMode === "oauth") && (preview === "loading" || (!ready && !preview)) ? (
+          {(visibleMode === "add" || visibleMode === "oauth") &&
+          (preview === "loading" || (!ready && !preview)) ? (
             <SkeletonGrid />
           ) : null}
           {(visibleMode === "add" || visibleMode === "oauth") &&
           preview !== "loading" &&
           (ready || preview === "catalog" || preview === "oauth") ? (
-              <>
-                <div className="connector-pills" role="tablist" aria-label="Categories">
-                  {CATALOG_CATEGORIES.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      className={item.id === category ? "pill on" : "pill"}
-                      aria-pressed={item.id === category}
-                      onClick={() => setCategory(item.id)}
+            <>
+              <div className="connector-pills" role="tablist" aria-label="Categories">
+                {CATALOG_CATEGORIES.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={item.id === category ? "pill on" : "pill"}
+                    aria-pressed={item.id === category}
+                    onClick={() => setCategory(item.id)}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+              <div
+                className="connector-grid"
+                role="list"
+                onKeyDown={(event) => onGridKey(event, entries.length + 1)}
+              >
+                {entries.map((entry, index) => {
+                  const connected = shownConnectors.some(
+                    (connector) => connector.catalogId === entry.id,
+                  );
+                  return (
+                    <article
+                      key={entry.id}
+                      className="connector-tile"
+                      role="listitem"
+                      tabIndex={index === tileIndex ? 0 : -1}
                     >
-                      {item.label}
-                    </button>
-                  ))}
-                </div>
-                <div
-                  className="connector-grid"
-                  role="list"
-                  onKeyDown={(event) => onGridKey(event, entries.length + 1)}
-                >
-                  {entries.map((entry, index) => {
-                    const connected = shownConnectors.some((connector) => connector.catalogId === entry.id);
-                    return (
-                      <article key={entry.id} className="connector-tile" role="listitem" tabIndex={index === tileIndex ? 0 : -1}>
-                        <div className="connector-tile-top">
-                          <Monogram label={entry.name} color={entry.color} ink={entry.inkMonogram} />
-                          <div>
-                            <div className="t1">{entry.name}</div>
-                            <div className="t2">{entry.description}</div>
-                          </div>
+                      <div className="connector-tile-top">
+                        <Monogram label={entry.name} color={entry.color} ink={entry.inkMonogram} />
+                        <div>
+                          <div className="t1">{entry.name}</div>
+                          <div className="t2">{entry.description}</div>
                         </div>
-                        {connected ? (
-                          <button type="button" className="btn secondary" onClick={() => {
-                            const connector = shownConnectors.find((item) => item.catalogId === entry.id);
-                            if (connector) openManage(connector);
-                          }}>
-                            Manage
-                          </button>
-                        ) : (
-                          <button type="button" className="btn secondary" onClick={() => showOauth(entry, entry.name)}>
-                            Connect
-                          </button>
-                        )}
-                        {connected ? <span className="pill success">● Connected</span> : null}
-                      </article>
-                    );
-                  })}
-                  <article className="connector-tile" role="listitem" tabIndex={tileIndex === entries.length ? 0 : -1}>
-                    <div className="connector-tile-top">
-                      <Monogram label="+" muted />
-                      <div>
-                        <div className="t1">Custom URL</div>
-                        <div className="t2">Paste any MCP server</div>
                       </div>
+                      {connected ? (
+                        <button
+                          type="button"
+                          className="btn secondary"
+                          onClick={() => {
+                            const connector = shownConnectors.find(
+                              (item) => item.catalogId === entry.id,
+                            );
+                            if (connector) openManage(connector);
+                          }}
+                        >
+                          Manage
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="btn secondary"
+                          onClick={() => showOauth(entry, entry.name)}
+                        >
+                          Connect
+                        </button>
+                      )}
+                      {connected ? <span className="pill success">● Connected</span> : null}
+                    </article>
+                  );
+                })}
+                <article
+                  className="connector-tile"
+                  role="listitem"
+                  tabIndex={tileIndex === entries.length ? 0 : -1}
+                >
+                  <div className="connector-tile-top">
+                    <Monogram label="+" muted />
+                    <div>
+                      <div className="t1">Custom URL</div>
+                      <div className="t2">Paste any MCP server</div>
                     </div>
-                    <button
-                      type="button"
-                      className="btn secondary"
-                      onClick={() => {
-                        setHint("Paste https://…, npx …, uvx …, or JSON config");
-                        searchRef.current?.focus();
-                      }}
-                    >
-                      Paste URL
-                    </button>
-                  </article>
-                </div>
-              </>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn secondary"
+                    onClick={() => {
+                      setHint("Paste https://…, npx …, uvx …, or JSON config");
+                      searchRef.current?.focus();
+                    }}
+                  >
+                    Paste URL
+                  </button>
+                </article>
+              </div>
+            </>
           ) : null}
 
           {visibleMode === "no-results" ? (
@@ -759,10 +836,18 @@ export function ConnectorsPanel({
               <h3>No connectors match “{search.trim()}”</h3>
               <p className="t2">Have a server URL or command? Paste it above.</p>
               <div className="pair">
-                <button type="button" className="btn secondary" onClick={() => searchRef.current?.focus()}>
+                <button
+                  type="button"
+                  className="btn secondary"
+                  onClick={() => searchRef.current?.focus()}
+                >
                   Add by URL
                 </button>
-                <button type="button" className="btn ghost" onClick={() => setNoted(`Noted “${search.trim()}”.`)}>
+                <button
+                  type="button"
+                  className="btn ghost"
+                  onClick={() => setNoted(`Noted “${search.trim()}”.`)}
+                >
                   Request a connector
                 </button>
               </div>
@@ -773,7 +858,10 @@ export function ConnectorsPanel({
           {visibleMode === "detecting" ? (
             <div className="check-list" aria-live="polite">
               {steps.map((step) => (
-                <div key={step.id} className={step.state === "pending" ? "check-row pending" : "check-row"}>
+                <div
+                  key={step.id}
+                  className={step.state === "pending" ? "check-row pending" : "check-row"}
+                >
                   <StepIcon state={step.state} />
                   <span>{step.label}</span>
                 </div>
@@ -785,7 +873,11 @@ export function ConnectorsPanel({
             <>
               <Notice tone="danger">{unreachable}</Notice>
               <div className="pair">
-                <button type="button" className="btn secondary" onClick={() => void probe(search, draft?.apiKey ?? "")}>
+                <button
+                  type="button"
+                  className="btn secondary"
+                  onClick={() => void probe(search, draft?.apiKey ?? "")}
+                >
                   Retry
                 </button>
                 <button type="button" className="btn ghost" onClick={() => setMode("add")}>
@@ -815,7 +907,12 @@ export function ConnectorsPanel({
                         setDraft({ ...draft, apiKey: event.target.value });
                       }}
                     />
-                    <button type="button" className="icon-btn" aria-label={keyVisible ? "Hide API key" : "Show API key"} onClick={() => setKeyVisible((value) => !value)}>
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      aria-label={keyVisible ? "Hide API key" : "Show API key"}
+                      onClick={() => setKeyVisible((value) => !value)}
+                    >
                       <SearchIcon />
                     </button>
                   </label>
@@ -861,7 +958,11 @@ export function ConnectorsPanel({
                   className="btn primary"
                   onClick={() => {
                     const entry = draft?.catalogId ? (catalogById(draft.catalogId) ?? null) : null;
-                    showOauth(entry, draft?.name ?? "Connector", oauthExisting.current ?? undefined);
+                    showOauth(
+                      entry,
+                      draft?.name ?? "Connector",
+                      oauthExisting.current ?? undefined,
+                    );
                   }}
                 >
                   Try again
@@ -900,7 +1001,11 @@ export function ConnectorsPanel({
                 }}
               >
                 <SparkleIcon />
-                <span>{done.catalogId ? catalogById(done.catalogId)?.samplePrompt : `Use ${done.name} to look something up`}</span>
+                <span>
+                  {done.catalogId
+                    ? catalogById(done.catalogId)?.samplePrompt
+                    : `Use ${done.name} to look something up`}
+                </span>
               </button>
               {shownConnectors.filter((connector) => connector.id !== done.id).length > 0 ? (
                 <div className="other-connectors">
@@ -908,7 +1013,12 @@ export function ConnectorsPanel({
                   {shownConnectors
                     .filter((connector) => connector.id !== done.id)
                     .map((connector) => (
-                      <ConnectorCard key={connector.id} connector={connector} onManage={() => openManage(connector)} onReconnect={() => void reconnect(connector)} />
+                      <ConnectorCard
+                        key={connector.id}
+                        connector={connector}
+                        onManage={() => openManage(connector)}
+                        onReconnect={() => void reconnect(connector)}
+                      />
                     ))}
                 </div>
               ) : null}
@@ -931,10 +1041,19 @@ export function ConnectorsPanel({
                 allowAlways
               />
               <div className="pair">
-                <button type="button" className="btn secondary" onClick={() => void reconnect(active)}>
+                <button
+                  type="button"
+                  className="btn secondary"
+                  onClick={() => void reconnect(active)}
+                >
                   Re-authenticate
                 </button>
-                <button type="button" className="btn ghost" style={{ color: "var(--danger)" }} onClick={() => setMode("disconnect")}>
+                <button
+                  type="button"
+                  className="btn ghost"
+                  style={{ color: "var(--danger)" }}
+                  onClick={() => setMode("disconnect")}
+                >
                   Disconnect
                 </button>
               </div>
@@ -973,13 +1092,18 @@ export function ConnectorsPanel({
             <div className="sheet" role="dialog" aria-labelledby="disconnect-title">
               <h3 id="disconnect-title">Disconnect {active.name}?</h3>
               <p className="t2">
-                mockbot loses access to its {Object.keys(active.tools ?? {}).length} tools. Running tasks using them will stop. You can reconnect anytime.
+                mockbot loses access to its {Object.keys(active.tools ?? {}).length} tools. Running
+                tasks using them will stop. You can reconnect anytime.
               </p>
               <div className="sheet-actions">
                 <button type="button" className="btn ghost" onClick={() => setMode("manage")}>
                   Cancel
                 </button>
-                <button type="button" className="btn danger" onClick={() => void disconnect(active)}>
+                <button
+                  type="button"
+                  className="btn danger"
+                  onClick={() => void disconnect(active)}
+                >
                   Disconnect
                 </button>
               </div>
@@ -1032,7 +1156,9 @@ function ConnectorCard({
 }) {
   const entry = connector.catalogId ? catalogById(connector.catalogId) : undefined;
   const status = connector.status ?? "connected";
-  const count = Object.values(connector.tools ?? {}).filter((tool) => tool.enabled && !tool.skipped).length;
+  const count = Object.values(connector.tools ?? {}).filter(
+    (tool) => tool.enabled && !tool.skipped,
+  ).length;
   const account = connector.accountLabel || connector.name;
   const detail =
     status === "reconnect"
@@ -1041,9 +1167,17 @@ function ConnectorCard({
         ? connector.statusDetail || "The last call failed."
         : `${account} · ${count} tools on · write tools ask first`;
   return (
-    <article className={status === "reconnect" ? "connector-card warn" : "connector-card"} data-connector={connector.name}>
+    <article
+      className={status === "reconnect" ? "connector-card warn" : "connector-card"}
+      data-connector={connector.name}
+    >
       <div className="connector-tile-top">
-        <Monogram label={connector.name} color={entry?.color} ink={entry ? entry.inkMonogram : true} large />
+        <Monogram
+          label={connector.name}
+          color={entry?.color}
+          ink={entry ? entry.inkMonogram : true}
+          large
+        />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="t1">{connector.name}</div>
           <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
@@ -1107,16 +1241,31 @@ function ToolEditor({
     <div>
       <div className="connector-toolbar">
         <div className="t1">
-          {skipped.length > 0 ? `${available} of ${tools.length} tools available` : `${tools.length} tools found`}
+          {skipped.length > 0
+            ? `${available} of ${tools.length} tools available`
+            : `${tools.length} tools found`}
         </div>
         <span className="grow" />
-        <button type="button" className="btn ghost" onClick={() => onChange(applyBulk(tools, "read-on"))}>
+        <button
+          type="button"
+          className="btn ghost"
+          onClick={() => onChange(applyBulk(tools, "read-on"))}
+        >
           All read on
         </button>
-        <button type="button" className="btn ghost" onClick={() => onChange(applyBulk(tools, "all-off"))}>
+        <button
+          type="button"
+          className="btn ghost"
+          onClick={() => onChange(applyBulk(tools, "all-off"))}
+        >
           All off
         </button>
-        <button type="button" className="btn ghost" aria-label="More tool actions" onClick={() => setMenu(menu === "bulk" ? null : "bulk")}>
+        <button
+          type="button"
+          className="btn ghost"
+          aria-label="More tool actions"
+          onClick={() => setMenu(menu === "bulk" ? null : "bulk")}
+        >
           …
         </button>
       </div>
@@ -1136,7 +1285,8 @@ function ToolEditor({
       ) : null}
       {skipped.length > 0 ? (
         <Notice tone="warn">
-          {skipped.length} tool has an invalid schema and was skipped: {skipped.map((tool) => tool.name).join(", ")}
+          {skipped.length} tool has an invalid schema and was skipped:{" "}
+          {skipped.map((tool) => tool.name).join(", ")}
         </Notice>
       ) : null}
       <div className="tool-table">
@@ -1165,7 +1315,11 @@ function ToolEditor({
                   checked={tool.enabled}
                   label={`${tool.name} — ${tool.risk}`}
                   onChange={(checked) =>
-                    onChange(tools.map((item) => (item.name === tool.name ? { ...item, enabled: checked } : item)))
+                    onChange(
+                      tools.map((item) =>
+                        item.name === tool.name ? { ...item, enabled: checked } : item,
+                      ),
+                    )
                   }
                 />
               </>
@@ -1178,7 +1332,9 @@ function ToolEditor({
                   onClick={() => {
                     onChange(
                       tools.map((item) =>
-                        item.name === tool.name ? { ...item, enabled: true, approval: "auto" } : item,
+                        item.name === tool.name
+                          ? { ...item, enabled: true, approval: "auto" }
+                          : item,
                       ),
                     );
                     setMenu(null);
@@ -1197,7 +1353,10 @@ function ToolEditor({
         </p>
       ) : null}
       {connectLabel ? (
-        <div className="connector-footer" style={{ margin: "12px -16px -16px", padding: "12px 0 0" }}>
+        <div
+          className="connector-footer"
+          style={{ margin: "12px -16px -16px", padding: "12px 0 0" }}
+        >
           <span className="t2">{help}</span>
           <span className="grow" />
           <button type="button" className="btn ghost" onClick={onCancel}>
@@ -1292,8 +1451,12 @@ function OauthSheet({
           <ul>
             {permissions.map((item) => (
               <li key={item.text}>
-                <span style={{ color: item.allowed ? "var(--success)" : "var(--muted)" }}>{item.allowed ? "✓" : "✗"}</span>
-                <span style={{ color: item.allowed ? "var(--ink)" : "var(--muted)" }}>{item.text}</span>
+                <span style={{ color: item.allowed ? "var(--success)" : "var(--muted)" }}>
+                  {item.allowed ? "✓" : "✗"}
+                </span>
+                <span style={{ color: item.allowed ? "var(--ink)" : "var(--muted)" }}>
+                  {item.text}
+                </span>
               </li>
             ))}
           </ul>
@@ -1350,18 +1513,48 @@ function previewSearch(preview: string): string {
 
 function previewDraft(preview: string): Draft | null {
   if (preview === "apikey") {
-    return { name: "Acme CRM", transport: "http", target: "https://mcp.acme.dev/mcp", auth: "apikey", apiKey: "", tools: [] };
+    return {
+      name: "Acme CRM",
+      transport: "http",
+      target: "https://mcp.acme.dev/mcp",
+      auth: "apikey",
+      apiKey: "",
+      tools: [],
+    };
   }
   if (preview === "none") {
-    return { name: "Filesystem", transport: "stdio", target: "npx filesystem", auth: "none", apiKey: "", tools: [] };
+    return {
+      name: "Filesystem",
+      transport: "stdio",
+      target: "npx filesystem",
+      auth: "none",
+      apiKey: "",
+      tools: [],
+    };
   }
   if (preview === "oauth" || preview === "oauth-wait") {
     const entry = catalogById("notion");
     return entry
-      ? { name: entry.name, transport: "http", target: "https://catalog.mockbot.local/notion", auth: "oauth", apiKey: "", tools: [], catalogId: "notion" }
+      ? {
+          name: entry.name,
+          transport: "http",
+          target: "https://catalog.mockbot.local/notion",
+          auth: "oauth",
+          apiKey: "",
+          tools: [],
+          catalogId: "notion",
+        }
       : null;
   }
-  if (preview === "partial" || preview === "review") return { name: "Acme", transport: "http", target: "https://mcp.acme.dev/mcp", auth: "none", apiKey: "", tools: previewTools(preview) };
+  if (preview === "partial" || preview === "review")
+    return {
+      name: "Acme",
+      transport: "http",
+      target: "https://mcp.acme.dev/mcp",
+      auth: "none",
+      apiKey: "",
+      tools: previewTools(preview),
+    };
   return null;
 }
 
@@ -1377,22 +1570,47 @@ function previewTools(preview: string): UiTool[] {
     ];
   }
   if (preview === "manage" || preview === "disconnect") {
-    return (catalogById("notion")?.tools ?? []).map((item) => tool(item.name, item.description, item.risk, item.risk === "read"));
+    return (catalogById("notion")?.tools ?? []).map((item) =>
+      tool(item.name, item.description, item.risk, item.risk === "read"),
+    );
   }
   return [];
 }
 
 function tool(name: string, description: string, risk: ToolRisk, enabled: boolean): UiTool {
-  return { name, description, risk, enabled, approval: risk === "read" ? "auto" : "ask", skipped: false };
+  return {
+    name,
+    description,
+    risk,
+    enabled,
+    approval: risk === "read" ? "auto" : "ask",
+    skipped: false,
+  };
 }
 
 function previewConnectors(preview: string, connectors: ConnectorRecord[]): ConnectorRecord[] {
-  if (preview === "empty" || preview === "loading" || preview === "catalog") return preview === "catalog" ? [] : [];
-  if (preview === "connected") return [fixture("preview-notion", "Notion", "notion", "connected", "workspace")];
+  if (preview === "empty" || preview === "loading" || preview === "catalog")
+    return preview === "catalog" ? [] : [];
+  if (preview === "connected")
+    return [fixture("preview-notion", "Notion", "notion", "connected", "workspace")];
   if (preview === "reconnect" || preview === "error" || preview === "details") {
     return [
-      fixture("preview-drive", "Google Drive", "google-drive", "reconnect", null, "Sign-in expired 2 days ago. Tools are paused."),
-      fixture("preview-postgres", "Postgres", "postgres", "error", null, "URL just failed: connection refused"),
+      fixture(
+        "preview-drive",
+        "Google Drive",
+        "google-drive",
+        "reconnect",
+        null,
+        "Sign-in expired 2 days ago. Tools are paused.",
+      ),
+      fixture(
+        "preview-postgres",
+        "Postgres",
+        "postgres",
+        "error",
+        null,
+        "URL just failed: connection refused",
+      ),
     ];
   }
   if (preview === "manage" || preview === "disconnect") {
@@ -1440,6 +1658,9 @@ function fixture(
   };
 }
 
-export function connectorForActivity(connectors: readonly ConnectorRecord[], toolName: string): ConnectorRecord | undefined {
+export function connectorForActivity(
+  connectors: readonly ConnectorRecord[],
+  toolName: string,
+): ConnectorRecord | undefined {
   return connectors.find((connector) => toolName.startsWith(`${connectorSlug(connector.name)}_`));
 }

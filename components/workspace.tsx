@@ -730,8 +730,7 @@ export function Workspace({
         onSelectAgent={selectAgent}
         onCreateAgent={createAgent}
         onOpenConnectors={() => openConnectors("list")}
-      >
-      </ConversationList>
+      ></ConversationList>
       <button
         type="button"
         className={navOpen ? "scrim on" : "scrim"}

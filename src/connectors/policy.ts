@@ -38,7 +38,10 @@ export function classifyToolRisk(name: string, hints?: ToolHints): ToolRisk {
   return "write";
 }
 
-export function defaultToolSetting(risk: ToolRisk): { enabled: boolean; approval: ToolApprovalMode } {
+export function defaultToolSetting(risk: ToolRisk): {
+  enabled: boolean;
+  approval: ToolApprovalMode;
+} {
   if (risk === "read") return { enabled: true, approval: "auto" };
   return { enabled: false, approval: "ask" };
 }
@@ -97,7 +100,9 @@ export function resolveToolSettings(
     const incoming = provided?.[tool.name];
     let enabled = typeof incoming?.enabled === "boolean" ? incoming.enabled : base.enabled;
     let approval: ToolApprovalMode =
-      incoming?.approval === "auto" || incoming?.approval === "ask" ? incoming.approval : base.approval;
+      incoming?.approval === "auto" || incoming?.approval === "ask"
+        ? incoming.approval
+        : base.approval;
     if (tool.risk === "read") approval = "auto";
     if (tool.risk === "destructive") approval = "ask";
     if (tool.skipped) enabled = false;
@@ -140,7 +145,9 @@ export function applyBulk(
   });
 }
 
-export function enabledToolCount(tools: Record<string, { enabled: boolean; skipped?: boolean }>): number {
+export function enabledToolCount(
+  tools: Record<string, { enabled: boolean; skipped?: boolean }>,
+): number {
   return Object.values(tools).filter((tool) => tool.enabled && !tool.skipped).length;
 }
 

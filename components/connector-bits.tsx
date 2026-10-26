@@ -19,7 +19,11 @@ export function Monogram({
 }) {
   const className = `monogram${large ? " lg" : ""}${ink ? " ink" : ""}${muted ? " muted" : ""}`;
   return (
-    <span className={className} style={color && !ink && !muted ? { background: color } : undefined} aria-hidden="true">
+    <span
+      className={className}
+      style={color && !ink && !muted ? { background: color } : undefined}
+      aria-hidden="true"
+    >
       {label.slice(0, 1).toUpperCase()}
     </span>
   );
@@ -54,7 +58,8 @@ export function SwitchControl({
 }
 
 export function RiskPill({ risk }: { risk: ToolRisk }) {
-  if (risk === "destructive") return <span className="risk-pill danger">destructive · asks first</span>;
+  if (risk === "destructive")
+    return <span className="risk-pill danger">destructive · asks first</span>;
   if (risk === "write") return <span className="risk-pill">write · asks first</span>;
   return <span className="risk-pill">read</span>;
 }
@@ -67,7 +72,10 @@ export function Notice({
   children: ReactNode;
 }) {
   return (
-    <div className={tone === "info" ? "notice" : `notice ${tone}`} role={tone === "danger" ? "alert" : undefined}>
+    <div
+      className={tone === "info" ? "notice" : `notice ${tone}`}
+      role={tone === "danger" ? "alert" : undefined}
+    >
       {children}
     </div>
   );
@@ -87,7 +95,15 @@ export function StepIcon({ state }: { state: "done" | "active" | "pending" }) {
   }
   if (state === "active") return <Spinner />;
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      aria-hidden="true"
+    >
       <circle cx="12" cy="12" r="7" />
     </svg>
   );

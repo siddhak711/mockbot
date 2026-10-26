@@ -12,7 +12,8 @@ export async function noteConnectorOutcome(
   const connector = connectors.find((item) => item.id === connectorId);
   if (!connector || connector.status === "reconnect") return;
   if (!result.isError) {
-    if (connector.status === "error") await store.setConnectorStatus(connectorId, "connected", null, []);
+    if (connector.status === "error")
+      await store.setConnectorStatus(connectorId, "connected", null, []);
     return;
   }
   if (isAuthFailure(result.content)) {

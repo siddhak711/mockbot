@@ -46,7 +46,7 @@
   --ink: #282828;
   --ink-2: #676767;
   --muted: #6e6e6e;
-  --faint: #757575;
+  --faint: #6e6e6e;
   --link: #2773d0;
   --accent: #f54e00;
   --success: #19845f;
@@ -1812,17 +1812,17 @@ a.icon-btn {
 
 .pill.success,
 .risk-pill.success {
-  background: color-mix(in srgb, var(--success) 14%, var(--surface));
+  background: var(--surface);
   color: var(--success);
 }
 
 .pill.warn {
-  background: color-mix(in srgb, var(--warn) 14%, var(--surface));
+  background: var(--surface);
   color: var(--warn);
 }
 
 .pill.danger {
-  background: color-mix(in srgb, var(--danger) 14%, var(--surface));
+  background: var(--surface);
   color: var(--danger);
 }
 
@@ -2012,12 +2012,12 @@ a.icon-btn {
 }
 
 .notice.warn {
-  background: color-mix(in srgb, var(--warn) 12%, var(--surface));
+  background: var(--surface);
   color: var(--warn);
 }
 
 .notice.danger {
-  background: color-mix(in srgb, var(--danger) 12%, var(--surface));
+  background: var(--surface);
   color: var(--danger);
 }
 
