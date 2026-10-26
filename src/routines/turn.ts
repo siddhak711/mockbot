@@ -1,5 +1,11 @@
 import { SYSTEM_PROMPT, type LlmProvider } from "../llm";
-import { RunLog, captureModelEvent, elapsedMs, emptyModelCapture } from "../runs/events";
+import {
+  RunLog,
+  captureModelEvent,
+  elapsedMs,
+  emptyModelCapture,
+  ignoreRunLog,
+} from "../runs/events";
 import type { ConversationStore } from "../store";
 import { applyStreamEvent, emptyTrace } from "../trace";
 import type { LlmMessage, Role } from "../types";
@@ -40,7 +46,7 @@ export async function runRoutineTurn(options: {
   runId?: string;
 }): Promise<{ assistantMessageId: string; text: string; runId: string }> {
   const log = new RunLog(options.store.connection, options.runId);
-  await log.mark("run.started", { conversationId: options.conversationId });
+  await ignoreRunLog(log.mark("run.started", { conversationId: options.conversationId }));
   try {
     await options.store.addMessage(options.conversationId, "user", options.prompt);
     const stored = await options.store.getConversation(options.conversationId);
@@ -53,24 +59,28 @@ export async function runRoutineTurn(options: {
       captureModelEvent(capture, event);
       trace = applyStreamEvent(trace, event);
     }
-    await log.recordModel({
-      model: options.provider.model,
-      messages: history,
-      capture,
-      ms: elapsedMs(started),
-    });
+    await ignoreRunLog(
+      log.recordModel({
+        model: options.provider.model,
+        messages: history,
+        capture,
+        ms: elapsedMs(started),
+      }),
+    );
     const assistant = await options.store.addMessage(
       options.conversationId,
       "assistant",
       trace.text,
       trace,
     );
-    await log.mark("run.finished", { status: "completed", assistantMessageId: assistant.id });
+    await ignoreRunLog(
+      log.mark("run.finished", { status: "completed", assistantMessageId: assistant.id }),
+    );
     return { assistantMessageId: assistant.id, text: trace.text, runId: log.id };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Routine run failed";
-    await log.fail(message);
-    await log.mark("run.finished", { status: "error" });
+    await ignoreRunLog(log.fail(message));
+    await ignoreRunLog(log.mark("run.finished", { status: "error" }));
     throw error;
   }
 }

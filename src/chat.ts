@@ -24,6 +24,7 @@ import {
   cloneMessages,
   elapsedMs,
   emptyModelCapture,
+  ignoreRunLog,
 } from "./runs/events";
 import { buildModelInput } from "./turn";
 import { applyStreamEvent, emptyTrace, hasVisibleStream, modelPromptParts } from "./trace";
@@ -305,7 +306,7 @@ export async function streamChatTurn(options: {
       let runStatus = "completed";
       try {
         controller.enqueue(ssePadding());
-        await runLog.mark("run.started", { conversationId: conversationSnapshot.id });
+        await ignoreRunLog(runLog.mark("run.started", { conversationId: conversationSnapshot.id }));
         enqueue("meta", {
           conversationId: conversationSnapshot.id,
           title: conversationSnapshot.title,
@@ -386,12 +387,14 @@ export async function streamChatTurn(options: {
             }
           } finally {
             signal?.removeEventListener("abort", abortRound);
-            await runLog.recordModel({
-              model: provider.model,
-              messages: modelInput,
-              capture,
-              ms: elapsedMs(modelStarted),
-            });
+            await ignoreRunLog(
+              runLog.recordModel({
+                model: provider.model,
+                messages: modelInput,
+                capture,
+                ms: elapsedMs(modelStarted),
+              }),
+            );
           }
           if (signal?.aborted || userStopped) break;
 
@@ -454,13 +457,16 @@ export async function streamChatTurn(options: {
           runStatus = "error";
           await stopOpenCalls();
           const text = error instanceof Error ? error.message : "The model request failed";
-          await runLog.fail(text);
+          await ignoreRunLog(runLog.fail(text));
           enqueue("error", { message: text });
         }
       } finally {
-        await persist(partial, trace);
-        await runLog.mark("run.finished", { status: runStatus });
-        close();
+        try {
+          await persist(partial, trace);
+          await ignoreRunLog(runLog.mark("run.finished", { status: runStatus }));
+        } finally {
+          close();
+        }
       }
 
       async function executeCall(call: PendingCall): Promise<string | null> {
@@ -468,12 +474,14 @@ export async function streamChatTurn(options: {
         try {
           return await runCall(call);
         } finally {
-          await runLog.recordTool({
-            name: call.name || "tool",
-            input: call.arguments,
-            output: call.output ?? "",
-            ms: elapsedMs(toolStarted),
-          });
+          await ignoreRunLog(
+            runLog.recordTool({
+              name: call.name || "tool",
+              input: call.arguments,
+              output: call.output ?? "",
+              ms: elapsedMs(toolStarted),
+            }),
+          );
         }
       }
 

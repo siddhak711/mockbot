@@ -198,6 +198,30 @@ export function formatDuration(value: number | null): string {
   return `${(value / 1000).toFixed(1)} s`;
 }
 
+/** A model-router decision. `run_id` and `seq` are filled by RunLog, not by the caller. */
+export type ModelRouteLog = {
+  tier: "cheap" | "strong";
+  reason: string;
+  model: string;
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  conversationId?: string | null;
+};
+
+export function logRunEventFailure(error: unknown): void {
+  console.error("run_events insert failed", error);
+}
+
+/** Await a run log write. Storage errors are logged and swallowed. */
+export async function ignoreRunLog(write: Promise<void> | undefined): Promise<void> {
+  try {
+    await write;
+  } catch (error) {
+    logRunEventFailure(error);
+  }
+}
+
 export class RunLog {
   readonly id: string;
   #seq = 0;
@@ -210,6 +234,10 @@ export class RunLog {
     this.id = id;
   }
 
+  /**
+   * Insert one row. A failed insert is logged and does not reject, so a chat
+   * turn, routine, or delegation can finish and close its stream.
+   */
   append(row: {
     type: RunEventType;
     input: string | null;
@@ -219,21 +247,28 @@ export class RunLog {
     ms: number | null;
   }): Promise<void> {
     const task = this.#tail.then(async () => {
-      this.#seq += 1;
-      const seq = this.#seq;
-      const input = clip(row.input == null ? null : redactSecrets(row.input));
-      const output = clip(row.output == null ? null : redactSecrets(row.output));
-      await this.db.query(
-        `INSERT INTO run_events (run_id, seq, type, input, output, tokens, cost_usd, ms)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [this.id, seq, row.type, input, output, row.tokens, row.costUsd, row.ms],
-      );
+      try {
+        this.#seq += 1;
+        const seq = this.#seq;
+        const input = clip(row.input == null ? null : redactSecrets(row.input));
+        const output = clip(row.output == null ? null : redactSecrets(row.output));
+        await this.db.query(
+          `INSERT INTO run_events (run_id, seq, type, input, output, tokens, cost_usd, ms)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [this.id, seq, row.type, input, output, row.tokens, row.costUsd, row.ms],
+        );
+      } catch (error) {
+        logRunEventFailure(error);
+      }
     });
     this.#tail = task.then(
       () => undefined,
       () => undefined,
     );
-    return task;
+    return task.then(
+      () => undefined,
+      () => undefined,
+    );
   }
 
   mark(name: string, detail?: Record<string, unknown> | null): Promise<void> {
@@ -301,6 +336,71 @@ export class RunLog {
       ms: Math.max(0, Math.round(options.ms)),
     });
   }
+
+  /**
+   * Append a `model.route` event on this run. `type` stays `event` because
+   * `run_events.type` only allows model, tool, event, and error. The route
+   * name, tier, reason, and model id are in `input`.
+   */
+  recordModelRoute(route: ModelRouteLog): Promise<void> {
+    const inputTokens = finiteCount(route.inputTokens);
+    const outputTokens = finiteCount(route.outputTokens);
+    return this.append({
+      type: "event",
+      input: JSON.stringify({
+        name: "model.route",
+        tier: route.tier,
+        reason: route.reason,
+        model: route.model,
+        conversationId: route.conversationId ?? null,
+      }),
+      output: JSON.stringify({
+        kind: "model.route",
+        tier: route.tier,
+        reason: route.reason,
+        model: route.model,
+        inputTokens,
+        outputTokens,
+      }),
+      tokens: inputTokens + outputTokens,
+      costUsd: Number.isFinite(route.costUsd) ? route.costUsd : 0,
+      ms: null,
+    });
+  }
+
+  /**
+   * Write a model-route row for a caller that does not already hold this run's
+   * logger. `runId` defaults to a new id. `seq` continues after any rows already
+   * stored for that run. The promise never rejects.
+   */
+  static recordModelRoute(db: Sql, route: ModelRouteLog & { runId?: string }): Promise<void> {
+    const log = new RunLog(db, route.runId);
+    const prepared = log.#tail.then(async () => {
+      try {
+        const current = await db.query<{ seq: number | string | null }>(
+          `SELECT COALESCE(MAX(seq), 0) AS seq FROM run_events WHERE run_id = $1`,
+          [log.id],
+        );
+        const max = Number(current.rows[0]?.seq ?? 0);
+        if (Number.isFinite(max) && max > log.#seq) log.#seq = max;
+      } catch (error) {
+        logRunEventFailure(error);
+      }
+    });
+    log.#tail = prepared.then(
+      () => undefined,
+      () => undefined,
+    );
+    return prepared.then(
+      () => log.recordModelRoute(route),
+      () => log.recordModelRoute(route),
+    );
+  }
+}
+
+function finiteCount(value: number): number {
+  if (!Number.isFinite(value) || value < 0) return 0;
+  return Math.round(value);
 }
 
 export async function listRunEvents(db: Sql, runId: string): Promise<RunEvent[]> {

@@ -1,14 +1,14 @@
 import { createServer, type IncomingMessage } from "node:http";
 import { once } from "node:events";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { POST as postChat } from "../app/api/chat/route";
 import { GET as readRun } from "../app/api/runs/[id]/route";
 import { resetAppContext, setAppContext } from "../src/context";
 import { selectProvider } from "../src/llm";
+import { RunLog, listRunEvents, runTotals } from "../src/runs/events";
 import { redactSecrets } from "../src/runs/redact";
-import { listRunEvents, runTotals } from "../src/runs/events";
 import { ConversationStore } from "../src/store";
-import { readSse } from "./helpers";
+import { deltas, readSse } from "./helpers";
 
 afterEach(async () => {
   await resetAppContext();
@@ -185,5 +185,97 @@ it("stores provider usage and a priced cost on a model event", async () => {
     expect(JSON.stringify(rows)).not.toContain("sk-live-test-key-not-logged");
   } finally {
     server.close();
+  }
+});
+
+it("finishes the chat turn and closes the stream when run_events inserts throw", async () => {
+  const store = await ConversationStore.open();
+  const db = store.connection;
+  const query = db.query.bind(db);
+  db.query = (async (text: string, params?: readonly unknown[]) => {
+    if (text.includes("INSERT INTO run_events")) throw new Error("run_events down");
+    return query(text, params);
+  }) as typeof db.query;
+  const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+  setAppContext({
+    store,
+    provider: selectProvider({ LLM_PROVIDER: "mock", MOCK_STREAM_DELAY_MS: "0" }),
+  });
+  try {
+    const response = await postChat(
+      new Request("http://localhost/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "Hello from a broken log" }),
+      }),
+    );
+    const events = await Promise.race([
+      readSse(response),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error("SSE stream did not close")), 5_000);
+      }),
+    ]);
+    expect(response.body?.locked).toBe(true);
+    expect(events.some((event) => event.event === "done")).toBe(true);
+    expect(events.some((event) => event.event === "error")).toBe(false);
+    expect(deltas(events)).toContain("mock reply");
+    expect(JSON.stringify(events)).not.toContain("run_events down");
+    expect(logged).toHaveBeenCalled();
+  } finally {
+    logged.mockRestore();
+  }
+});
+
+it("appends a model-route event with run_id and seq, and does not reject when the insert throws", async () => {
+  const store = await ConversationStore.open();
+  await RunLog.recordModelRoute(store.connection, {
+    runId: "run_route",
+    tier: "cheap",
+    reason: "chat",
+    model: "deepseek/deepseek-v4.1-flash",
+    costUsd: 0.0000014,
+    inputTokens: 10,
+    outputTokens: 4,
+  });
+  await RunLog.recordModelRoute(store.connection, {
+    runId: "run_route",
+    tier: "strong",
+    reason: "retry",
+    model: "deepseek/deepseek-chat",
+    costUsd: 0.002,
+    inputTokens: 3,
+    outputTokens: 1,
+  });
+  const rows = await listRunEvents(store.connection, "run_route");
+  expect(rows.map((row) => row.seq)).toEqual([1, 2]);
+  expect(rows[0]).toMatchObject({
+    runId: "run_route",
+    type: "event",
+    tokens: 14,
+    ms: null,
+  });
+  expect(rows[0]?.costUsd).toBeCloseTo(0.0000014, 8);
+  expect(rows[0]?.input).toContain('"name":"model.route"');
+  expect(rows[0]?.input).toContain('"tier":"cheap"');
+  expect(rows[1]?.input).toContain('"reason":"retry"');
+
+  const db = store.connection;
+  db.query = (async () => {
+    throw new Error("run_events down");
+  }) as typeof db.query;
+  const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    await expect(
+      RunLog.recordModelRoute(db, {
+        tier: "cheap",
+        reason: "chat",
+        model: "mock",
+        costUsd: 0,
+        inputTokens: 1,
+        outputTokens: 1,
+      }),
+    ).resolves.toBeUndefined();
+  } finally {
+    logged.mockRestore();
   }
 });

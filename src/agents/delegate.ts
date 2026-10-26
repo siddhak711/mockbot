@@ -1,5 +1,11 @@
 import type { LlmProvider } from "../llm";
-import { captureModelEvent, elapsedMs, emptyModelCapture, type RunLog } from "../runs/events";
+import {
+  captureModelEvent,
+  elapsedMs,
+  emptyModelCapture,
+  ignoreRunLog,
+  type RunLog,
+} from "../runs/events";
 import { titleFromMessage, type ConversationStore } from "../store";
 import { applyStreamEvent, emptyTrace } from "../trace";
 import type { LlmMessage, MessageTrace } from "../types";
@@ -123,16 +129,18 @@ export async function performDelegation(
     if (!isAbort(error, deps.signal)) {
       const message = error instanceof Error ? error.message : "The child run failed.";
       content = `Delegation failed: ${message}`;
-      await deps.runLog?.fail(message, { phase: "delegate" });
+      await ignoreRunLog(deps.runLog?.fail(message, { phase: "delegate" }));
     }
     throw error;
   } finally {
-    await deps.runLog?.recordTool({
-      name: DELEGATE_TOOL_NAME,
-      input: args,
-      output: content,
-      ms: elapsedMs(started),
-    });
+    await ignoreRunLog(
+      deps.runLog?.recordTool({
+        name: DELEGATE_TOOL_NAME,
+        input: args,
+        output: content,
+        ms: elapsedMs(started),
+      }),
+    );
   }
 }
 
@@ -207,12 +215,14 @@ async function runDelegatedTurn(
   } catch (error) {
     modelError = error;
   } finally {
-    await deps.runLog?.recordModel({
-      model: deps.provider.model,
-      messages,
-      capture,
-      ms: elapsedMs(modelStarted),
-    });
+    await ignoreRunLog(
+      deps.runLog?.recordModel({
+        model: deps.provider.model,
+        messages,
+        capture,
+        ms: elapsedMs(modelStarted),
+      }),
+    );
   }
   if (modelError) {
     if (isAbort(modelError, deps.signal)) throw modelError;
@@ -235,12 +245,14 @@ async function runDelegatedTurn(
     const outcome = await runChildTool(agent, tool, deps.directory, deps.computer, deps.connector);
     tool.result = outcome.content;
     if (outcome.failed) failed = true;
-    await deps.runLog?.recordTool({
-      name: tool.name,
-      input: tool.arguments,
-      output: outcome.content,
-      ms: elapsedMs(toolStarted),
-    });
+    await ignoreRunLog(
+      deps.runLog?.recordTool({
+        name: tool.name,
+        input: tool.arguments,
+        output: outcome.content,
+        ms: elapsedMs(toolStarted),
+      }),
+    );
   }
   const content = summarize(trace.text, trace.tools, failed);
   trace.text = trace.text || content;
