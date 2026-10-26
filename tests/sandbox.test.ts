@@ -460,6 +460,18 @@ describe("sandbox", { concurrent: false }, () => {
     await heavySupervisor.close();
   });
 
+  it("does not treat a file as changed when its first snapshot read fails", async () => {
+    const store = await SandboxStore.open("memory://");
+    await store.ensureComputer("agent", "daytona");
+    await store.setSandboxId("agent", "sbx-flaky");
+    const runtime = new FlakyReadRuntime();
+    const supervisor = new ComputerSupervisor(store, runtime, 1_000);
+    const exec = await supervisor.invoke("agent", "exec", { command: "echo hi" });
+    expect(runtime.reads).toBe(2);
+    expect(exec.run.changedFiles).toEqual([]);
+    await supervisor.close();
+  });
+
   it("aborts the file diff after a command when the signal fires", async () => {
     const store = await SandboxStore.open("memory://");
     await store.ensureComputer("agent", "daytona");
@@ -725,6 +737,33 @@ describe("sandbox", { concurrent: false }, () => {
     read(): Promise<{ ok: true; content: string }> {
       this.reads += 1;
       return Promise.resolve({ ok: true, content: "x" });
+    }
+
+    write(): Promise<{ ok: true }> {
+      return Promise.resolve({ ok: true });
+    }
+
+    prepare(): Promise<void> {
+      return Promise.resolve();
+    }
+
+    exec(): Promise<ExecOutcome> {
+      return Promise.resolve({ stdout: "hi\n", stderr: "", exitCode: 0, timedOut: false });
+    }
+  }
+
+  class FlakyReadRuntime implements SandboxRuntime {
+    readonly kind = "daytona" as const;
+    reads = 0;
+
+    list(): Promise<{ ok: true; entries: SandboxEntry[] }> {
+      return Promise.resolve({ ok: true, entries: [{ name: "keep.txt", kind: "file" }] });
+    }
+
+    read(): Promise<{ ok: true; content: string } | { ok: false; error: string }> {
+      this.reads += 1;
+      if (this.reads === 1) return Promise.resolve({ ok: false, error: "flaky" });
+      return Promise.resolve({ ok: true, content: "same" });
     }
 
     write(): Promise<{ ok: true }> {

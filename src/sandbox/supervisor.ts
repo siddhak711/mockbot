@@ -40,6 +40,9 @@ export const DIFF_MAX_BYTES = 1_000_000;
 
 const DIFF_READ_CONCURRENCY = 8;
 
+/** A read that failed. Comparison skips the path instead of treating it as new. */
+const UNKNOWN_STAMP = "unknown";
+
 type DiffEntry = {
   path: string;
   size?: number;
@@ -335,7 +338,10 @@ export class ComputerSupervisor {
         if (!file) return;
         try {
           const read = await this.runtime.read(agentId, file.path, signal);
-          if (!read.ok) continue;
+          if (!read.ok) {
+            stamps.set(file.path, UNKNOWN_STAMP);
+            continue;
+          }
           bytes += byteLength(read.content);
           if (bytes > DIFF_MAX_BYTES) {
             over = true;
@@ -346,6 +352,7 @@ export class ComputerSupervisor {
           if (isAbortError(error) || signal?.aborted) {
             throw isAbortError(error) ? error : abortFrom(signal);
           }
+          stamps.set(file.path, UNKNOWN_STAMP);
         }
       }
     };
@@ -447,7 +454,9 @@ function contentStamp(content: string): string {
 function addedOrModified(before: Map<string, string>, after: Map<string, string>): string[] {
   const changed: string[] = [];
   for (const [path, content] of after) {
+    if (content === UNKNOWN_STAMP) continue;
     const previous = before.get(path);
+    if (previous === UNKNOWN_STAMP) continue;
     if (previous === undefined || previous !== content) changed.push(path);
   }
   changed.sort((left, right) => left.localeCompare(right));
