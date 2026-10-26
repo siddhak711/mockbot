@@ -21,7 +21,7 @@ This skill has two halves. **Part A** decides what the page says and how it is s
 
 Apply to all web UI work: landing pages, marketing sites, components, dashboards, prototypes, and design reviews. When a rule here conflicts with a framework default, this file wins. When the user's explicit prompt conflicts with a rule, the user wins.
 
-**Companion skill.** For upgrading an *existing* site rather than building a new one, use `redesign-existing-projects` ([github.com/elayadesign/redesign-skill](https://github.com/elayadesign/redesign-skill)). It diagnoses generic patterns and defers to this file for every concrete value.
+**Companion skill.** For upgrading an _existing_ site rather than building a new one, use `redesign-existing-projects` ([github.com/elayadesign/redesign-skill](https://github.com/elayadesign/redesign-skill)). It diagnoses generic patterns and defers to this file for every concrete value.
 
 ---
 
@@ -32,11 +32,13 @@ Apply to all web UI work: landing pages, marketing sites, components, dashboards
 Gather these before designing or writing. Ask only for what is missing, and ask in one batch rather than one question at a time.
 
 **Purpose**
+
 - What is the ONE primary action? (trial, demo, buy, waitlist, download)
 - What is the offer, exactly what do they get?
 - What counts as a conversion? (click, signup, purchase)
 
 **Audience and context**
+
 - Who is the ICP?
 - What problem are they trying to solve?
 - Top three objections, meaning why they do not convert today
@@ -44,11 +46,13 @@ Gather these before designing or writing. Ask only for what is missing, and ask 
 - What do visitors already know when they land?
 
 **Proof and assets**
+
 - Proof points: logos, testimonials, numbers, case studies
 - Screenshots, demo video, product GIFs
 - Guarantees, refund terms, cancellation terms
 
 **Constraints**
+
 - Brand voice: casual or professional
 - Design direction: minimal editorial, playful 3D, glass UI
 - Mobile priority?
@@ -58,22 +62,16 @@ If the user cannot answer, make a reasonable assumption, state it in one line, a
 ## A2. Page structure
 
 **Above the fold (required)**
+
 1. Headline, outcome plus audience
 2. Subheadline, clarifies how and adds specificity
 3. Primary CTA, clear verb plus what they get
 4. One proof signal, logo strip, stat, or short testimonial
 5. Hero visual, product screenshot or video, or a strong illustration
 
-**Mid page (the argument)**
-6. Problem to solution, one section
-7. Benefits, three to five, outcome driven
-8. How it works, three steps
-9. Social proof, testimonials or a case study
+**Mid page (the argument)** 6. Problem to solution, one section 7. Benefits, three to five, outcome driven 8. How it works, three steps 9. Social proof, testimonials or a case study
 
-**Bottom (objection handling)**
-10. FAQ, six to twelve questions
-11. Risk reversal, trial, cancel anytime, guarantee
-12. Final CTA, identical to the top
+**Bottom (objection handling)** 10. FAQ, six to twelve questions 11. Risk reversal, trial, cancel anytime, guarantee 12. Final CTA, identical to the top
 
 Include the mandatory tagline reveal section from B11 somewhere in the mid page argument, typically right after the hero or after benefits.
 
@@ -81,12 +79,12 @@ Include the mandatory tagline reveal section from B11 somewhere in the mid page 
 
 Pick one and say why.
 
-| Type | Use when |
-|---|---|
-| **A. Classic hero plus sections** | The product is understandable from a hero screenshot. Most common. |
-| **B. Long form story** | You need to educate and overcome skepticism. |
-| **C. Minimal conversion page** | High intent traffic (email to known users), or a short offer like a download or waitlist. |
-| **D. Comparison page** | Search intent includes alternatives ("X vs Y", "best for"). Usually paired with SEO pages. |
+| Type                              | Use when                                                                                   |
+| --------------------------------- | ------------------------------------------------------------------------------------------ |
+| **A. Classic hero plus sections** | The product is understandable from a hero screenshot. Most common.                         |
+| **B. Long form story**            | You need to educate and overcome skepticism.                                               |
+| **C. Minimal conversion page**    | High intent traffic (email to known users), or a short offer like a download or waitlist.  |
+| **D. Comparison page**            | Search intent includes alternatives ("X vs Y", "best for"). Usually paired with SEO pages. |
 
 ## A4. Conversion rules
 
@@ -97,6 +95,7 @@ Pick one and say why.
 **Write benefit first.** Features are what it does. Benefits are what that means for them.
 
 **Be specific.**
+
 - ❌ "Save time and streamline"
 - ✅ "Cut your weekly reporting from 4 hours to 15 minutes"
 
@@ -107,6 +106,7 @@ Pick one and say why.
 ## A5. Copywriting
 
 **Headline formulas**
+
 - "{Outcome} without {pain}"
 - "The {category} for {audience}"
 - "Ship {result} in {time}"
@@ -179,21 +179,21 @@ Always resolve font sizes to Tailwind's default type scale. Never leave arbitrar
 
 If an existing size does not land exactly on a step, snap it to the **closest step below**, taking both the size and its paired line height.
 
-| Class | Size | Line height |
-|---|---|---|
-| `text-xs` | 12px (0.75rem) | 16px |
-| `text-sm` | 14px (0.875rem) | 20px |
-| `text-base` | 16px (1rem) | 24px |
-| `text-lg` | 18px (1.125rem) | 28px |
-| `text-xl` | 20px (1.25rem) | 28px |
-| `text-2xl` | 24px (1.5rem) | 32px |
-| `text-3xl` | 30px (1.875rem) | 36px |
-| `text-4xl` | 36px (2.25rem) | 40px |
-| `text-5xl` | 48px (3rem) | 1 |
-| `text-6xl` | 60px (3.75rem) | 1 |
-| `text-7xl` | 72px (4.5rem) | 1 |
-| `text-8xl` | 96px (6rem) | 1 |
-| `text-9xl` | 128px (8rem) | 1 |
+| Class       | Size            | Line height |
+| ----------- | --------------- | ----------- |
+| `text-xs`   | 12px (0.75rem)  | 16px        |
+| `text-sm`   | 14px (0.875rem) | 20px        |
+| `text-base` | 16px (1rem)     | 24px        |
+| `text-lg`   | 18px (1.125rem) | 28px        |
+| `text-xl`   | 20px (1.25rem)  | 28px        |
+| `text-2xl`  | 24px (1.5rem)   | 32px        |
+| `text-3xl`  | 30px (1.875rem) | 36px        |
+| `text-4xl`  | 36px (2.25rem)  | 40px        |
+| `text-5xl`  | 48px (3rem)     | 1           |
+| `text-6xl`  | 60px (3.75rem)  | 1           |
+| `text-7xl`  | 72px (4.5rem)   | 1           |
+| `text-8xl`  | 96px (6rem)     | 1           |
+| `text-9xl`  | 128px (8rem)    | 1           |
 
 Do not combine scale snapping with independently set custom line heights elsewhere in an audit. Tracking and line height may only be adjusted **within** the value the matched step already provides, so the two rules never fight each other.
 
@@ -206,21 +206,21 @@ Do not combine scale snapping with independently set custom line heights elsewhe
 
 Only these values. Nothing between them, nothing outside them.
 
-| Token | Value |
-|---|---|
-| Spacing-0 | 0 |
-| Spacing-25 | 2px |
-| Spacing-50 | 4px |
-| Spacing-75 | 8px |
-| Spacing-100 | 12px |
-| Spacing-200 | 16px |
-| Spacing-300 | 24px |
-| Spacing-400 | 32px |
-| Spacing-500 | 40px |
-| Spacing-600 | 48px |
-| Spacing-700 | 64px |
-| Spacing-800 | 80px |
-| Spacing-900 | 96px |
+| Token       | Value |
+| ----------- | ----- |
+| Spacing-0   | 0     |
+| Spacing-25  | 2px   |
+| Spacing-50  | 4px   |
+| Spacing-75  | 8px   |
+| Spacing-100 | 12px  |
+| Spacing-200 | 16px  |
+| Spacing-300 | 24px  |
+| Spacing-400 | 32px  |
+| Spacing-500 | 40px  |
+| Spacing-600 | 48px  |
+| Spacing-700 | 64px  |
+| Spacing-800 | 80px  |
+| Spacing-900 | 96px  |
 
 **Main buttons:** 8px vertical padding, 12px horizontal padding.
 
@@ -343,14 +343,17 @@ Things that get forgotten and make a page feel unfinished:
 Every landing page includes one large type section stating the core benefit or tagline, separate from the hero. It sits further down the page as its own moment, not stacked directly under the hero.
 
 **Copy**
+
 - Minimum two lines of text.
 - A benefit statement or tagline, written in the voice of A5, not a generic section heading.
 
 **Typography**
+
 - Size `text-4xl` to `text-6xl` depending on line count, following the B1 type scale.
 - Max width capped like the hero, so lines break at meaningful points per B5.
 
 **Animation**
+
 - Text starts in a subtle, muted tone, roughly 25 to 35% opacity of the theme's base text color.
 - As the section scrolls into view, each word transitions individually from that muted tone to the full text color, in reading order.
 - Words activate one at a time as they cross a trigger line, not the entire block flipping at once. The transition uses the base curve from B7, never a linear fade.
@@ -377,6 +380,7 @@ Then build section by section per A6.
 # Quick checklist
 
 **Strategy**
+
 - [ ] One offer, one audience, one primary action
 - [ ] No competing CTAs above the fold
 - [ ] Specific numbers instead of vague verbs
@@ -385,6 +389,7 @@ Then build section by section per A6.
 - [ ] Layout type chosen deliberately
 
 **Visual**
+
 - [ ] Single approved typeface, no italics, no ultra bold
 - [ ] No hyphens in copy, no orphaned words
 - [ ] Every font size lands on a Tailwind scale step
@@ -397,6 +402,7 @@ Then build section by section per A6.
 - [ ] Tagline reveal section present, minimum two lines, words activate one at a time on scroll
 
 **Content and ship**
+
 - [ ] Real draft copy, believable names and numbers, no banned filler words
 - [ ] Hover, active, focus, loading, empty, and error states all present
 - [ ] No dead links, current nav item indicated
@@ -409,72 +415,84 @@ Then build section by section per A6.
 Source of truth: `/workspace/mockbot-design/cursor-style/tokens.json` (cursor-style system, locked) and `/workspace/mockbot-design/sprites/mochi/final/README.md`.
 
 ## Fonts
+
 - **UI / headings / body:** system SF Pro stack `-apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, system-ui, sans-serif`. Inter is the cross-platform stand-in (overrides B1's Inter ban).
 - **Mono:** JetBrains Mono, only for code, tool names, URLs, and numeric data (stands in for Geist Mono in B1).
 - One UI typeface. No italics. Weights 400 / 500 / 600 only (700 allowed for landing display headings only).
 
 ## Type roles (app)
-| role | size / line height / weight | color |
-|---|---|---|
-| title | 15 / 20 / 600 | ink |
-| body | 15 / 26 / 400 | ink |
-| chat item | 14 / 20 / 400 | ink |
-| tool line | 14 / 22 / 400 | ink-2 |
-| label | 13 / 18 / 500 | muted |
-| small | 12 / 16 / 400 | muted |
-| meta | 11 / 14 / 400 | faint |
-| code | 12 / 20 / 400 mono | ink |
-Landing page: hero and tagline reveal use B1's Tailwind steps (`text-5xl`–`text-7xl` hero, `text-4xl`–`text-6xl` tagline); body `text-base`/`text-lg`. The app keeps the roles above (deliberate exception to B1 snapping).
+
+| role                                                                                                                                                                                                                        | size / line height / weight | color |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- | ----- |
+| title                                                                                                                                                                                                                       | 15 / 20 / 600               | ink   |
+| body                                                                                                                                                                                                                        | 15 / 26 / 400               | ink   |
+| chat item                                                                                                                                                                                                                   | 14 / 20 / 400               | ink   |
+| tool line                                                                                                                                                                                                                   | 14 / 22 / 400               | ink-2 |
+| label                                                                                                                                                                                                                       | 13 / 18 / 500               | muted |
+| small                                                                                                                                                                                                                       | 12 / 16 / 400               | muted |
+| meta                                                                                                                                                                                                                        | 11 / 14 / 400               | faint |
+| code                                                                                                                                                                                                                        | 12 / 20 / 400 mono          | ink   |
+| Landing page: hero and tagline reveal use B1's Tailwind steps (`text-5xl`–`text-7xl` hero, `text-4xl`–`text-6xl` tagline); body `text-base`/`text-lg`. The app keeps the roles above (deliberate exception to B1 snapping). |
 
 ## Colors
-| token | light | dark |
-|---|---|---|
-| window (base bg) | #F6F6F6 | #14120B |
-| sidebar | #EFEFEF | #1B1913 |
-| surface | #FDFDFD | #201E18 |
-| selected | #E2E2E2 | #2B2923 |
-| hover | #E9E9E9 | #26241E |
-| line | #EBEBEB | rgba(237,236,236,.08) |
-| line-strong | #DCDCDC | rgba(237,236,236,.14) |
-| ink | #282828 | #EDECEC |
-| ink-2 | #676767 | rgba(237,236,236,.72) |
-| muted | #878787 | rgba(237,236,236,.55) |
-| faint | #ADADAD | rgba(237,236,236,.38) |
-| link | #2F7BD8 | #6AA8F0 |
-| accent | #F54E00 | #F54E00 |
-| success | #1F8A65 | #3FB68B |
-| warn | #C08532 | #E0A85A |
-| danger | #CF2D56 | #E5577A |
-Dark backgrounds come from this palette (overrides B4's list). Primary button: ink background, window text. Accent is for small highlights (sparkle, Mochi bulb, one hero emphasis), never large fills.
-Hero heading gradient (B5): light #282828 → #878787, dark #EDECEC → rgba(237,236,236,.55) (ink → muted instead of pure black/white).
+
+| token                                                                                                                                                                                                   | light   | dark                  |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | --------------------- |
+| window (base bg)                                                                                                                                                                                        | #F6F6F6 | #14120B               |
+| sidebar                                                                                                                                                                                                 | #EFEFEF | #1B1913               |
+| surface                                                                                                                                                                                                 | #FDFDFD | #201E18               |
+| selected                                                                                                                                                                                                | #E2E2E2 | #2B2923               |
+| hover                                                                                                                                                                                                   | #E9E9E9 | #26241E               |
+| line                                                                                                                                                                                                    | #EBEBEB | rgba(237,236,236,.08) |
+| line-strong                                                                                                                                                                                             | #DCDCDC | rgba(237,236,236,.14) |
+| ink                                                                                                                                                                                                     | #282828 | #EDECEC               |
+| ink-2                                                                                                                                                                                                   | #676767 | rgba(237,236,236,.72) |
+| muted                                                                                                                                                                                                   | #878787 | rgba(237,236,236,.55) |
+| faint                                                                                                                                                                                                   | #ADADAD | rgba(237,236,236,.38) |
+| link                                                                                                                                                                                                    | #2F7BD8 | #6AA8F0               |
+| accent                                                                                                                                                                                                  | #F54E00 | #F54E00               |
+| success                                                                                                                                                                                                 | #1F8A65 | #3FB68B               |
+| warn                                                                                                                                                                                                    | #C08532 | #E0A85A               |
+| danger                                                                                                                                                                                                  | #CF2D56 | #E5577A               |
+| Dark backgrounds come from this palette (overrides B4's list). Primary button: ink background, window text. Accent is for small highlights (sparkle, Mochi bulb, one hero emphasis), never large fills. |
+| Hero heading gradient (B5): light #282828 → #878787, dark #EDECEC → rgba(237,236,236,.55) (ink → muted instead of pure black/white).                                                                    |
 
 ## Spacing
+
 `2 · 4 · 6 · 8 · 10 · 12 · 16 · 20 · 24 · 32`, extended for landing sections with B2's `40 · 48 · 64 · 80 · 96`. 6, 10 and 20 are app-density exceptions to B2.
 App layout: sidebar 272, title bar 40, sidebar row 34, transcript column 600, right pane 420.
 
 ## Radii
+
 xs 4 · sm 6 (buttons) · md 8 (inputs, code blocks) · lg 10 (cards, tiles, approval) · xl 12 (user message, composer, panels, sheets) · pill 999. Apply B3's nested formula. 10px is the one non-Tailwind step.
 
 ## Buttons
+
 App: height 26, padding 0×10, 12px / 500, radius 6. Landing primary: B1/B2 (16px semibold, 8×12 padding) with radius 8.
 
 ## Shadows
+
 bubble `0 1px 2px rgba(0,0,0,.06), 0 0 0 1px rgba(0,0,0,.04)` · popover `0 8px 28px rgba(0,0,0,.12), 0 0 0 1px rgba(0,0,0,.06)` · window `0 24px 60px rgba(0,0,0,.18)`.
 
 ## Icons
+
 App uses Lucide-style 1.6 stroke line icons at 14–16px (matches the cursor-style reference; overrides B6). Landing page may use Phosphor (regular weight) at the same stroke look if preferred.
 
 ## Motion
+
 Base curve from B7 `cubic-bezier(0.22,1,0.36,1)`. Hover/color 200–300ms. Mochi loops (thinking pulse 1.2s, working lines 0.6s) use the base curve in production (the concept SVGs use ease-in-out and should be updated). Mochi state changes crossfade at 200ms (raised from 150ms to meet B7's minimum).
 
 ## Mochi sprite
+
 Files: `/workspace/mockbot-design/sprites/mochi/final/svg/mochi-<state>-<light|dark>.svg` (animated) and `.static.svg`, PNGs @1x 64 / @2x 128.
+
 - **States:** idle (dim orange bulb), thinking (tilt, dots, pulsing bulb), working (squash, `> <`, bright #F54E00), done (hop, green #1F8A65 bulb + check), error (X eyes, red #CF2D56 bulb).
 - **Sizes:** 16 (status dot use; bulb color carries meaning), 22–24 (sidebar rows, transcript next to "Thought for"), 32 (chat header), 64 (empty states), 128+ (landing hero, onboarding).
 - **Landing:** Mochi appears once in the hero visual (inside the product screenshot, live states) and optionally in the final CTA. Never as decoration on every section, never as a background pattern, never recolored outside the tokens.
 - Use the light or dark variant to match the theme. Always provide alt text such as "Mochi, working". Respect `prefers-reduced-motion` (use the static SVGs).
 
 ## Product reference visuals
+
 Hero and screenshots: `/workspace/mockbot-design/cursor-style/mockup-light.png`, `mockup-dark.png`; connectors flow `/workspace/mockbot-design/connectors/hybrid/flow.png`.
 
 ---
@@ -509,8 +527,8 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
-</details>
 
+</details>
 
 ## License (this fork)
 
@@ -540,4 +558,5 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
 </details>
