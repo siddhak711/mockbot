@@ -76,14 +76,33 @@ export async function compactIfNeeded(
   await store.saveSummary(conversationId, agentId, summarized.summary, last.id);
 }
 
-function bullet(message: Pick<Message, "role" | "content">, contentChars: number): string {
+function bulletSource(message: Pick<Message, "role" | "content" | "tools">): string {
+  const content = message.content.replace(/\s+/g, " ").trim();
+  if (content) return content;
+  return (message.tools ?? [])
+    .map((tool) => {
+      const output = tool.output
+        ? tool.output.replace(/\s+/g, " ").trim().slice(0, TOOL_RESULT_CHARS)
+        : "";
+      const detail = output || tool.status;
+      return `${tool.name} (${tool.status}): ${detail}`;
+    })
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function bullet(
+  message: Pick<Message, "role" | "content" | "tools">,
+  contentChars: number,
+): string {
   const who = message.role === "user" ? "User" : "Assistant";
-  const text = message.content.replace(/\s+/g, " ").trim().slice(0, Math.max(0, contentChars));
+  const text = bulletSource(message).slice(0, Math.max(0, contentChars));
   return `- ${who}: ${text}`;
 }
 
 function bulletsAt(
-  messages: readonly Pick<Message, "role" | "content">[],
+  messages: readonly Pick<Message, "role" | "content" | "tools">[],
   contentChars: number,
 ): string[] {
   return messages.map((message) => bullet(message, contentChars));
@@ -94,7 +113,7 @@ function bulletsFit(lines: readonly string[], budget: number): boolean {
 }
 
 function shrinkBullets(
-  messages: readonly Pick<Message, "role" | "content">[],
+  messages: readonly Pick<Message, "role" | "content" | "tools">[],
   budget: number,
 ): { lines: string[]; covered: number } {
   if (messages.length === 0) return { lines: [], covered: 0 };
@@ -134,7 +153,7 @@ function bulletKeepsContent(line: string): boolean {
 
 export function summarizeMessages(
   previous: string | null,
-  messages: readonly Pick<Message, "role" | "content">[],
+  messages: readonly Pick<Message, "role" | "content" | "tools">[],
 ): { summary: string; covered: number } {
   const shrunk = shrinkBullets(messages, SUMMARY_TOKEN_BUDGET);
   const body = shrunk.lines.join("\n");

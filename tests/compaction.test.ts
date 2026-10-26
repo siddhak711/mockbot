@@ -89,6 +89,47 @@ it("compacts a chat whose weight is tool output rather than message text", async
   expect(verbatimText).not.toContain("HIDDEN_TOOL_END");
 });
 
+it("moves the summary past a tool-only turn when that turn is the oldest in range", async () => {
+  const store = await ConversationStore.open();
+  openStores.push(store);
+  const conversation = await store.createConversation("Tool only");
+  const toolOnly = await store.addMessage(conversation.id, "assistant", "   ");
+  for (let index = 0; index < 8; index += 1) {
+    await store.saveToolCall({
+      id: `tool-only-${index}`,
+      conversationId: conversation.id,
+      messageId: toolOnly.id,
+      name: "web_fetch",
+      arguments: "{}",
+      status: "done",
+      output: `TOOL_ONLY_FACT ${index} ${"q".repeat(2000)}`,
+    });
+  }
+  await store.addMessage(conversation.id, "user", "TAIL_NOTE still here");
+  await store.addMessage(conversation.id, "user", "LATE_NOTE the recent one");
+
+  const input = await buildModelInput({
+    store,
+    conversationId: conversation.id,
+    contextTokens: 2500,
+  });
+  const stored = await store.getSummary(conversation.id);
+  const loaded = await store.getConversation(conversation.id);
+  const toolIndex = loaded?.messages.findIndex((message) => message.id === toolOnly.id) ?? -1;
+  const uptoIndex =
+    loaded?.messages.findIndex((message) => message.id === stored?.uptoMessageId) ?? -1;
+  expect(toolIndex).toBe(0);
+  expect(uptoIndex).toBeGreaterThanOrEqual(toolIndex);
+  expect(stored?.summary).toContain("web_fetch (done): TOOL_ONLY_FACT");
+  expect(stored?.summary).not.toMatch(/^- Assistant:\s*$/m);
+  const verbatim = (input?.messages ?? [])
+    .filter((message) => message.role !== "system")
+    .map((message) => message.content)
+    .join("\n");
+  expect(verbatim).not.toContain("TOOL_ONLY_FACT");
+  expect(verbatim).toContain("LATE_NOTE");
+});
+
 it("does not advance the summary past turns whose bullets would be empty", async () => {
   const store = await ConversationStore.open();
   openStores.push(store);
