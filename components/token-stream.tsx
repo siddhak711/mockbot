@@ -3,6 +3,16 @@
 import { useLayoutEffect, useRef } from "react";
 import type { Message } from "../src/types";
 import { assistantMessagesWithTrace, tokenStreamEntries } from "../src/token-stream";
+import { liveAssistantId } from "./transcript";
+
+/** The live trace row is the in-flight assistant, not whichever turn was stored last. */
+export function isLiveTraceTurn(
+  messageId: string,
+  messages: readonly Message[],
+  streaming: boolean,
+): boolean {
+  return liveAssistantId(messages, streaming) === messageId;
+}
 
 export function TokenStreamPanel({
   messages,
@@ -38,7 +48,7 @@ export function TokenStreamPanel({
             key={message.id}
             message={message}
             latest={index === assistants.length - 1}
-            live={streaming && index === assistants.length - 1}
+            live={isLiveTraceTurn(message.id, messages, streaming)}
           />
         ))}
       </div>

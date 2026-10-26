@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { isLiveTraceTurn } from "../components/token-stream";
 import { assistantHasVisibleBody, liveAssistantId } from "../components/transcript";
 import { runtimeStatusLabel, showThinkingRow, tokenStreamEntries } from "../src/token-stream";
 import type { Message, MessageTrace } from "../src/types";
@@ -150,4 +151,47 @@ it("hides an empty assistant after stop or a finish that produced nothing", () =
   };
   expect(assistantHasVisibleBody(empty)).toBe(false);
   expect(assistantHasVisibleBody({ ...empty, content: "partial" })).toBe(true);
+});
+
+it("does not mark the previous trace turn live before the new assistant exists", () => {
+  const previous: Message = {
+    id: "a1",
+    conversationId: "c",
+    role: "assistant",
+    content: "old",
+    createdAt: "t1",
+    trace: fullTrace,
+  };
+  const sent: Message[] = [
+    {
+      id: "u1",
+      conversationId: "c",
+      role: "user",
+      content: "hi",
+      createdAt: "t0",
+      trace: null,
+    },
+    previous,
+    {
+      id: "u2",
+      conversationId: "c",
+      role: "user",
+      content: "again",
+      createdAt: "t2",
+      trace: null,
+    },
+  ];
+  expect(isLiveTraceTurn(previous.id, sent, true)).toBe(false);
+  const current: Message = {
+    id: "a2",
+    conversationId: "c",
+    role: "assistant",
+    content: "",
+    createdAt: "t3",
+    trace: { ...fullTrace, text: "", ended: false, finishReason: null },
+  };
+  const streaming = [...sent, current];
+  expect(isLiveTraceTurn(current.id, streaming, true)).toBe(true);
+  expect(isLiveTraceTurn(previous.id, streaming, true)).toBe(false);
+  expect(isLiveTraceTurn(current.id, streaming, false)).toBe(false);
 });
