@@ -472,6 +472,45 @@ export class ConversationStore {
     return mapConnector(row);
   }
 
+  async saveOAuthConnector(
+    id: string,
+    input: {
+      secretCipher: string;
+      accountLabel: string | null;
+      target: string;
+      tools: Record<string, ConnectorToolSetting>;
+      status: ConnectorStatus;
+      statusDetail: string | null;
+    },
+  ): Promise<ConnectorRecord | null> {
+    const result = await this.db.query<ConnectorRow>(
+      `UPDATE connectors
+       SET secret_cipher = $2,
+           secret_ref = NULL,
+           account_label = $3,
+           target = $4,
+           tools = $5::jsonb,
+           status = $6,
+           status_detail = $7,
+           failures = '[]'::jsonb,
+           auth_type = 'oauth',
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING ${CONNECTOR_COLUMNS}`,
+      [
+        id,
+        input.secretCipher,
+        input.accountLabel,
+        input.target,
+        JSON.stringify(input.tools),
+        input.status,
+        input.statusDetail,
+      ],
+    );
+    const row = result.rows[0];
+    return row ? mapConnector(row) : null;
+  }
+
   async setConnectorSecret(id: string, secretCipher: string): Promise<ConnectorRecord | null> {
     const result = await this.db.query<ConnectorRow>(
       `UPDATE connectors

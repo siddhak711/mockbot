@@ -1,12 +1,19 @@
 import type { ConnectorRecord, ConnectorToolSetting } from "../connectors";
 import { connectorSlug } from "../connectors";
-import { catalogById } from "../connectors/catalog";
+import { adapterForCatalog } from "../connectors/adapters";
+import type { AdapterResult, ProviderAdapter } from "../connectors/adapters/types";
+import { catalogById, isLegacyCatalogTarget } from "../connectors/catalog";
 import { discoverTool, type ToolRisk } from "../connectors/policy";
 import { clip } from "../tools/http";
 import type { ToolRegistry } from "../tools/registry";
 import type { JsonSchema, JsonSchemaProperty, ToolDefinition } from "../tools/types";
 import { callMcpTool, listMcpTools, type McpToolInfo } from "./client";
-import { redactSecrets, secretsFor } from "./secrets";
+import {
+  forceRefreshConnectorToken,
+  redactSecrets,
+  resolveConnectorSecret,
+  secretsFor,
+} from "./secrets";
 
 const PROPERTY_TYPES = new Set(["string", "number", "integer", "boolean", "array", "object"]);
 
@@ -134,7 +141,15 @@ async function listEnabledTools(
           error: Object.assign(new Error("The operation was aborted"), { name: "AbortError" }),
         };
       }
-      if (connector.catalogId) return { connector, tools: catalogTools(connector) };
+      if (isLegacyCatalogTarget(connector.target)) {
+        return {
+          connector,
+          tools: [],
+          error: new Error("Reconnect this connector. Catalog sign-in is no longer simulated."),
+        };
+      }
+      const adapter = adapterFor(connector);
+      if (adapter) return { connector, tools: adapter.listTools().slice(0, 32) };
       try {
         const tools = await listMcpTools(connector, env, secrets, signal);
         return { connector, tools: tools.slice(0, 32) };
@@ -145,24 +160,11 @@ async function listEnabledTools(
   );
 }
 
-function catalogTools(connector: ConnectorRecord): RemoteTool[] {
-  const entry = connector.catalogId ? catalogById(connector.catalogId) : undefined;
-  if (entry) {
-    return entry.tools.map((tool) => ({
-      name: tool.name,
-      description: tool.description,
-      inputSchema: { type: "object", properties: {}, additionalProperties: false },
-      ...(tool.risk === "read" ? { readOnlyHint: true } : {}),
-      ...(tool.risk === "destructive" ? { destructiveHint: true } : {}),
-    }));
-  }
-  return Object.entries(connector.tools ?? {}).map(([name, setting]) => ({
-    name,
-    description: setting.description ?? name,
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
-    ...(setting.risk === "read" ? { readOnlyHint: true } : {}),
-    ...(setting.risk === "destructive" ? { destructiveHint: true } : {}),
-  }));
+function adapterFor(connector: ConnectorRecord): ProviderAdapter | null {
+  if (!connector.catalogId) return null;
+  const entry = catalogById(connector.catalogId);
+  if (!entry?.oauth?.adapterId) return null;
+  return adapterForCatalog(entry.oauth.adapterId);
 }
 
 function mergeSettings(
@@ -215,7 +217,7 @@ function settingsChanged(
   const before = previous ?? {};
   const beforeKeys = Object.keys(before);
   const nextKeys = Object.keys(next);
-  if (!beforeKeys.length) return false;
+  if (!beforeKeys.length) return nextKeys.length > 0;
   if (nextKeys.length < beforeKeys.length) return false;
   if (beforeKeys.some((name) => !next[name])) return false;
   if (beforeKeys.length !== nextKeys.length) return true;
@@ -251,13 +253,44 @@ function assignConnectorToolNames(
   return names;
 }
 
+async function executeCatalogTool(
+  connector: ConnectorRecord,
+  remoteName: string,
+  args: Record<string, unknown>,
+  env: Record<string, string | undefined>,
+  secrets: string[],
+  signal?: AbortSignal,
+): Promise<AdapterResult> {
+  const adapter = adapterFor(connector);
+  if (adapter) {
+    const resolved = await resolveConnectorSecret(connector, env);
+    if (!resolved.ok) return { content: resolved.error, isError: true };
+    if (!resolved.secret) return { content: "Missing access token.", isError: true };
+    if (!secrets.includes(resolved.secret)) secrets.push(resolved.secret);
+    return adapter.callTool({
+      name: remoteName,
+      args,
+      token: resolved.secret,
+      baseUrl: connector.target,
+      signal,
+    });
+  }
+  return callMcpTool(connector, remoteName, args, env, secrets, signal);
+}
+
+function authFailed(result: AdapterResult): boolean {
+  if (result.authExpired) return true;
+  if (!result.isError) return false;
+  return /\b401\b|invalid_token|token expired|unauthorized/i.test(result.content);
+}
+
 function toToolDefinition(
   connector: ConnectorRecord,
   tool: RemoteTool,
   name: string,
   setting: ConnectorToolSetting,
   env: Record<string, string | undefined>,
-  secrets: readonly string[],
+  secrets: string[],
   onToolResult?: (connectorId: string, result: { isError: boolean; content: string }) => void,
 ): ToolDefinition {
   const remoteName = tool.name;
@@ -275,16 +308,32 @@ function toToolDefinition(
     approval: asks ? "always" : "never",
     skipHeuristicApproval: setting.approval === "auto",
     async invoke(args, context) {
-      if (connector.catalogId) {
-        return {
-          content: JSON.stringify({
-            connector: connector.name,
-            tool: remoteName,
-            arguments: args,
-          }),
-        };
+      let result = await executeCatalogTool(
+        connector,
+        remoteName,
+        args,
+        env,
+        secrets,
+        context.signal,
+      );
+      if (authFailed(result)) {
+        try {
+          const refreshed = await forceRefreshConnectorToken(connector, env);
+          if (refreshed) {
+            result = await executeCatalogTool(
+              connector,
+              remoteName,
+              args,
+              env,
+              secrets,
+              context.signal,
+            );
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message.trim() : "";
+          if (message) result = { content: message, isError: true };
+        }
       }
-      const result = await callMcpTool(connector, remoteName, args, env, secrets, context.signal);
       const content = redactSecrets(result.content, secrets);
       onToolResult?.(connector.id, { content, isError: result.isError });
       return { content, isError: result.isError };
