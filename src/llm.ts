@@ -603,16 +603,17 @@ export function selectProvider(env: Record<string, string | undefined> = process
       chunkSize: numberFrom(env.MOCK_CHUNK_SIZE, 8),
     });
   }
-  if (name === "openai") {
-    const apiKey = env.LLM_API_KEY?.trim() ?? "";
-    if (!apiKey) {
-      throw new Error("LLM_API_KEY is required when LLM_PROVIDER=openai");
-    }
-    return new OpenAiCompatibleProvider({
-      apiKey,
-      baseUrl: env.LLM_BASE_URL?.trim() || DEFAULT_OPENAI_BASE_URL,
-      model: env.LLM_MODEL?.trim() || DEFAULT_OPENAI_MODEL,
-    });
+  const apiKey = env.LLM_API_KEY?.trim() ?? "";
+  if (!apiKey) {
+    throw new Error(
+      name === "openai"
+        ? "LLM_API_KEY is required when LLM_PROVIDER=openai"
+        : `Unknown LLM_PROVIDER "${name}". Expected "mock" or "openai".`,
+    );
   }
-  throw new Error(`Unknown LLM_PROVIDER "${name}". Expected "mock" or "openai".`);
+  return new OpenAiCompatibleProvider({
+    apiKey,
+    baseUrl: env.LLM_BASE_URL?.trim() || DEFAULT_OPENAI_BASE_URL,
+    model: env.LLM_MODEL?.trim() || DEFAULT_OPENAI_MODEL,
+  });
 }
