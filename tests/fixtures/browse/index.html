@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Fixture Store</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        margin: 40px;
+        background: #f7f5f0;
+        color: #1d1d1b;
+      }
+      .card {
+        background: #fff;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        padding: 24px;
+        max-width: 420px;
+      }
+      #price {
+        font-size: 32px;
+        font-weight: 600;
+      }
+      form {
+        margin-top: 20px;
+        display: grid;
+        gap: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Widget Pro</h1>
+      <p>Price: <span id="price">$42.17</span></p>
+      <p id="stock">In stock: 7</p>
+      <input id="note" placeholder="Leave a note" />
+      <button
+        id="reveal"
+        type="button"
+        onclick="document.getElementById('secret').textContent = 'revealed'"
+      >
+        Reveal
+      </button>
+      <p id="secret">hidden</p>
+      <form id="order" method="post" action="/order">
+        <input id="qty" name="qty" value="1" />
+        <button id="go">Place order</button>
+      </form>
+      <p><a href="/login.html">Account</a></p>
+    </div>
+  </body>
+</html>

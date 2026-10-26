@@ -194,6 +194,7 @@ export async function streamChatTurn(options: {
   const toolContext: ToolContext = {
     signal,
     memory: memoryDeps,
+    runCounters: new Map(),
     promote(names) {
       for (const name of names) promoted.add(name);
     },
@@ -210,6 +211,7 @@ export async function streamChatTurn(options: {
   let saved = "";
   let persistQueue = Promise.resolve();
   let userStopped = false;
+  let halted = false;
   const liveCalls: PendingCall[] = [];
 
   const persist = (text: string, current: MessageTrace) => {
@@ -403,7 +405,7 @@ export async function streamChatTurn(options: {
             if (output === null) break;
             history.push({ role: "tool", tool_call_id: call.id, content: output });
           }
-          if (signal?.aborted || userStopped) break;
+          if (signal?.aborted || userStopped || halted) break;
         }
 
         if (!signal?.aborted && !userStopped && sawStart && !roundEnded) {
@@ -504,6 +506,7 @@ export async function streamChatTurn(options: {
           ...toolContext,
           signal: signal?.aborted ? undefined : toolContext.signal,
         });
+        if (result.halt) halted = true;
         if (!call.name.startsWith("memory_")) memoryDeps.toolOutputs.push(result.content);
         const blocked = result.blocked === "secret";
         const shown = blocked ? BLOCKED_MEMORY_OUTPUT : result.content;

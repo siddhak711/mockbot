@@ -20,6 +20,8 @@ export type ToolResult = {
   content: string;
   isError?: boolean;
   blocked?: ToolBlockReason;
+  /** Ends the chat run after this round, such as when a per-run cap is spent. */
+  halt?: boolean;
 };
 
 export type MemoryToolDeps = {
@@ -34,6 +36,8 @@ export type ToolContext = {
   signal?: AbortSignal;
   promote?: (names: string[]) => void;
   memory?: MemoryToolDeps;
+  /** Fresh each chat run. Tools count actions here to enforce per-run caps. */
+  runCounters?: Map<string, number>;
 };
 
 export type PreparedArgs = { args: Record<string, unknown> } | { error: string };

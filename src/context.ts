@@ -4,6 +4,8 @@ import { NoteMemory, defaultComputer, defaultConnector } from "./agents/ports";
 import type { AgentMemoryPort, ComputerPort, ConnectorPort } from "./agents/types";
 import { selectProvider, type LlmProvider } from "./llm";
 import { RoutineStore } from "./routines/store";
+import { sandboxBrowseTool } from "./browser/open";
+import { BROWSE_TOOL_NAME } from "./browser/tool";
 import { openComputer } from "./sandbox/open";
 import type { ComputerSupervisor } from "./sandbox/supervisor";
 import { createComputerTools } from "./sandbox/tools";
@@ -46,10 +48,15 @@ export async function getAgents(context: AppContext): Promise<AgentDirectory> {
 
 let current: AppContext | undefined;
 
-export function registerComputerTools(registry: ToolRegistry, sandbox: ComputerSupervisor): void {
+export function registerComputerTools(
+  registry: ToolRegistry,
+  sandbox: ComputerSupervisor,
+  env: Record<string, string | undefined> = {},
+): void {
   for (const tool of createComputerTools(sandbox)) {
     if (!registry.get(tool.name)) registry.register(tool);
   }
+  if (!registry.get(BROWSE_TOOL_NAME)) registry.register(sandboxBrowseTool(sandbox, env));
 }
 
 export function setAppContext(context: {
@@ -131,7 +138,7 @@ async function openApp(): Promise<AppContext> {
     sandbox = await openComputer({ env: process.env });
     const tools = createDefaultTools(process.env);
     registerMemoryTools(tools, store);
-    registerComputerTools(tools, sandbox);
+    registerComputerTools(tools, sandbox, process.env);
     const agents = await AgentDirectory.attach(store);
     const inner = withAgentMock(selectProvider(process.env));
     return {
