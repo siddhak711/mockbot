@@ -6,8 +6,8 @@ import { CommandPalette } from "./command-palette";
 import { Composer } from "./composer";
 import { connectorForActivity, ConnectorsPanel } from "./connectors-panel";
 import { ConversationList } from "./conversation-list";
-import { IconTip } from "./icon-tip";
-import { MemoryIcon, MenuIcon, MonitorIcon, PencilIcon, PlusIcon, TrashIcon } from "./icons";
+import { MenuIcon, PlusIcon } from "./icons";
+import { ThreadActions } from "./thread-actions";
 import { Mochi } from "./mochi";
 import { SidePane, type SideTab } from "./side-pane";
 import { Transcript } from "./transcript";
@@ -878,42 +878,22 @@ export function Workspace({
                 <span className="thread-title">{active?.title ?? "New chat"}</span>
               </h1>
               {speaking ? <span className="agent-chip">{speaking.name}</span> : null}
-              <div className="header-actions">
-                {active ? (
-                  <>
-                    <IconTip
-                      label="Rename"
-                      onClick={() => {
-                        setDraftTitle(active.title);
-                        setEditing(true);
-                      }}
-                      disabled={streaming}
-                    >
-                      <PencilIcon />
-                    </IconTip>
-                    <IconTip
-                      label="Delete"
-                      danger
-                      onClick={() => void remove(active.id)}
-                      disabled={streaming}
-                    >
-                      <TrashIcon />
-                    </IconTip>
-                  </>
-                ) : null}
-                <IconTip label="Memory" onClick={showMemory}>
-                  <MemoryIcon />
-                </IconTip>
-                {computerOpen ? null : (
-                  <IconTip
-                    label="Show computer"
-                    className="desktop-only"
-                    onClick={() => setComputerOpen(true)}
-                  >
-                    <MonitorIcon />
-                  </IconTip>
-                )}
-              </div>
+              <ThreadActions
+                active={active}
+                streaming={streaming}
+                computerOpen={computerOpen}
+                onRename={() => {
+                  if (!active) return;
+                  setDraftTitle(active.title);
+                  setEditing(true);
+                }}
+                onDelete={() => {
+                  if (!active) return;
+                  void remove(active.id);
+                }}
+                onMemory={showMemory}
+                onShowComputer={() => setComputerOpen(true)}
+              />
             </>
           )}
         </header>

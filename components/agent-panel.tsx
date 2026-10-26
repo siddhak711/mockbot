@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Agent } from "../src/agents/types";
 import type { SpriteState } from "../src/sprite";
@@ -38,18 +38,26 @@ export function AgentPanel({
   const [connectorId, setConnectorId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const pendingRef = useRef(false);
   const titleId = useId();
+  pendingRef.current = pending;
+
+  function closeForm() {
+    if (pendingRef.current) return;
+    setOpen(false);
+  }
 
   useEffect(() => {
     if (!open) return;
     function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Escape") closeForm();
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [open]);
 
   async function submit() {
+    pendingRef.current = true;
     setPending(true);
     setError(null);
     const message = await onCreate({
@@ -59,6 +67,7 @@ export function AgentPanel({
       computerId,
       connectorId,
     });
+    pendingRef.current = false;
     setPending(false);
     if (message) {
       setError(message);
@@ -81,8 +90,11 @@ export function AgentPanel({
           className="icon-btn"
           aria-expanded={open}
           aria-label={open ? "Close form" : "New agent"}
-          onClick={() => setOpen((value) => !value)}
-          disabled={busy}
+          onClick={() => {
+            if (pendingRef.current) return;
+            setOpen((value) => !value);
+          }}
+          disabled={busy || pending}
         >
           {open ? <CloseIcon /> : <PlusIcon />}
         </button>
@@ -110,7 +122,8 @@ export function AgentPanel({
             <div
               className="agent-modal"
               onMouseDown={(event) => {
-                if (event.target === event.currentTarget) setOpen(false);
+                if (pendingRef.current) return;
+                if (event.target === event.currentTarget) closeForm();
               }}
             >
               <div
@@ -125,7 +138,8 @@ export function AgentPanel({
                     type="button"
                     className="icon-btn"
                     aria-label="Close"
-                    onClick={() => setOpen(false)}
+                    disabled={pending}
+                    onClick={closeForm}
                   >
                     <CloseIcon />
                   </button>
