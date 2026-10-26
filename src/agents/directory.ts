@@ -147,6 +147,22 @@ export class AgentDirectory {
     return row ? mapAgent(row) : null;
   }
 
+  /** The account's Mockbot. Unscoped callers get the legacy lead. */
+  async lead(): Promise<Agent | null> {
+    const rows = await this.rows<AgentRow>(
+      `SELECT ${AGENT_COLUMNS}
+       FROM agents
+       WHERE is_lead = TRUE
+         AND ($1::text IS NULL OR user_id = $1)
+       ORDER BY created_at ASC, id ASC
+       LIMIT 1`,
+      [this.ownerId],
+    );
+    if (rows[0]) return mapAgent(rows[0]);
+    if (this.ownerId) return null;
+    return this.get(LEAD_AGENT_ID);
+  }
+
   async findByName(name: string): Promise<Agent | null> {
     const rows = await this.rows<AgentRow>(
       `SELECT ${AGENT_COLUMNS}

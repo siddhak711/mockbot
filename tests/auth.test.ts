@@ -1,6 +1,8 @@
 import { NextRequest } from "next/server";
 import { afterEach, expect, it } from "vitest";
 import { GET as listAgents, POST as createAgent } from "../app/api/agents/route";
+import { POST as postChat } from "../app/api/chat/route";
+import { POST as postApproval } from "../app/api/tools/approvals/route";
 import { handlers } from "../src/auth";
 import { POST as signInPassword } from "../app/api/auth/password/route";
 import { GET as readConversation } from "../app/api/conversations/[id]/route";
@@ -8,9 +10,12 @@ import { GET as listConversationIndex } from "../app/api/conversations/route";
 import { googleCallbackUrl } from "../src/auth/google";
 import { resetAppContext, setAppContext } from "../src/context";
 import { MockProvider } from "../src/llm";
+import type { LlmMessage } from "../src/types";
 import { prepareUser } from "../src/auth/scope";
 import { AgentDirectory } from "../src/agents/directory";
+import { SseParser } from "../src/sse";
 import { ConversationStore } from "../src/store";
+import { deltas } from "./helpers";
 
 const originalRequireAuth = process.env.MOCKBOT_REQUIRE_AUTH;
 const originalGoogleId = process.env.GOOGLE_CLIENT_ID;
@@ -262,3 +267,199 @@ it("does not adopt orphan rows for a later account", async () => {
     "Legacy",
   ]);
 });
+
+function authed(url: string, cookie: string, body: unknown): Request {
+  return new Request(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", cookie },
+    body: JSON.stringify(body),
+  });
+}
+
+function systemOf(messages: readonly LlmMessage[]): string {
+  return messages.find((message) => message.role === "system")?.content ?? "";
+}
+
+it("uses a later account's own lead when the requested agent is missing", async () => {
+  process.env.MOCKBOT_REQUIRE_AUTH = "1";
+  const store = await ConversationStore.open();
+  setAppContext({
+    store,
+    provider: new MockProvider({
+      delayMs: 0,
+      tools: (messages) => {
+        if (systemOf(messages).includes("delegation: child")) return null;
+        if (messages.some((message) => message.role === "tool")) return null;
+        return [
+          {
+            id: "call_delegate",
+            name: "delegate",
+            arguments: JSON.stringify({ agent: "Researcher", task: "Say hello" }),
+          },
+        ];
+      },
+      reply: (messages) => {
+        if (systemOf(messages).includes("delegation: child")) return "Hello from the child";
+        return undefined;
+      },
+    }),
+  });
+  await signInPassword(
+    passwordRequest({
+      intent: "sign-up",
+      email: "first@example.com",
+      password: "first account password",
+    }),
+  );
+  const second = await signInPassword(
+    passwordRequest({
+      intent: "sign-up",
+      email: "second@example.com",
+      password: "second account password",
+    }),
+  );
+  const secondUser = (await second.json()) as { user: { id: string } };
+  const cookie = cookiePair(second.headers.get("set-cookie"));
+  const researcher = await createAgent(
+    authed("http://localhost/api/agents", cookie, {
+      name: "Researcher",
+      instructions: "Look things up.",
+    }),
+  );
+  expect(researcher.status).toBe(201);
+
+  const response = await postChat(
+    authed("http://localhost/api/chat", cookie, {
+      message: "Please delegate this",
+      agentId: "agent_default",
+    }),
+  );
+  expect(response.status).toBe(200);
+  const events = await readSseEvents(response);
+  expect(deltas(events)).toContain("Delegated to Researcher.");
+  const done = events.find((event) => event.event === "done");
+  const conversationId = String((done?.data as { conversationId?: string }).conversationId ?? "");
+  const saved = await store.getConversation(conversationId);
+  expect(saved?.conversation.agentId).toBe(`lead_${secondUser.user.id}`);
+});
+
+it("refuses a tool decision for another account's conversation", async () => {
+  process.env.MOCKBOT_REQUIRE_AUTH = "1";
+  const store = await ConversationStore.open();
+  setAppContext({
+    store,
+    provider: new MockProvider({
+      delayMs: 0,
+      tools: (messages) => {
+        if (messages.some((message) => message.role === "tool")) return null;
+        return [
+          {
+            id: "call_delete",
+            name: "memory_delete",
+            arguments: JSON.stringify({ key: "city" }),
+          },
+        ];
+      },
+    }),
+  });
+  const owner = await signInPassword(
+    passwordRequest({
+      intent: "sign-up",
+      email: "owner@example.com",
+      password: "owner account password",
+    }),
+  );
+  const other = await signInPassword(
+    passwordRequest({
+      intent: "sign-up",
+      email: "other@example.com",
+      password: "other account password",
+    }),
+  );
+  const ownerCookie = cookiePair(owner.headers.get("set-cookie"));
+  const otherCookie = cookiePair(other.headers.get("set-cookie"));
+  const response = await postChat(
+    authed("http://localhost/api/chat", otherCookie, { message: "Forget the city" }),
+  );
+  expect(response.status).toBe(200);
+  const pending = await readUntilEvent(response, "approval_required");
+  const approvalId = String(pending.events.at(-1)?.data.id ?? "");
+  expect(approvalId).not.toBe("");
+
+  for (const decision of ["stop", "deny", "approve"] as const) {
+    const rejected = await postApproval(
+      authed("http://localhost/api/tools/approvals", ownerCookie, { id: approvalId, decision }),
+    );
+    expect(rejected.status).toBe(404);
+  }
+  const accepted = await postApproval(
+    authed("http://localhost/api/tools/approvals", otherCookie, {
+      id: approvalId,
+      decision: "approve",
+    }),
+  );
+  expect(accepted.status).toBe(200);
+  await readRestEvents(pending.reader, pending.parser, pending.decoder);
+});
+
+type SseEvent = { event: string; data: Record<string, unknown> };
+
+async function readSseEvents(response: Response): Promise<SseEvent[]> {
+  if (!response.body) throw new Error("Expected a response body");
+  const parser = new SseParser();
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const events: SseEvent[] = [];
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    for (const message of parser.push(decoder.decode(value, { stream: true }))) {
+      events.push({
+        event: message.event,
+        data: JSON.parse(message.data) as Record<string, unknown>,
+      });
+    }
+  }
+  return events;
+}
+
+async function readUntilEvent(response: Response, eventName: string) {
+  if (!response.body) throw new Error("Expected a response body");
+  const parser = new SseParser();
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const events: SseEvent[] = [];
+  const timeout = setTimeout(() => reader.cancel(), 5_000);
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      for (const message of parser.push(decoder.decode(value, { stream: true }))) {
+        const event = {
+          event: message.event,
+          data: JSON.parse(message.data) as Record<string, unknown>,
+        };
+        events.push(event);
+        if (event.event === eventName) {
+          clearTimeout(timeout);
+          return { events, reader, parser, decoder };
+        }
+      }
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
+  throw new Error(`Stream ended before ${eventName}`);
+}
+
+async function readRestEvents(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  parser: SseParser,
+  decoder: TextDecoder,
+): Promise<void> {
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    parser.push(decoder.decode(value, { stream: true }));
+  }
+}
