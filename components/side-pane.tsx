@@ -2,9 +2,12 @@
 
 import { ComputerPane } from "./computer-pane";
 import { MemoryPanel } from "./memory-panel";
+import { TokenStreamPanel } from "./token-stream";
 import type { ComputerSnapshot } from "../src/sandbox/types";
 import type { ToolActivity } from "../src/tools/display";
-import type { Memory } from "../src/types";
+import type { Memory, Message } from "../src/types";
+
+export type SideTab = "computer" | "memory" | "trace";
 
 export function SidePane({
   tab,
@@ -19,9 +22,11 @@ export function SidePane({
   onSelect,
   snapshot = null,
   status = "ready",
+  messages = [],
+  streaming = false,
 }: {
-  tab: "computer" | "memory";
-  onTab: (tab: "computer" | "memory") => void;
+  tab: SideTab;
+  onTab: (tab: SideTab) => void;
   onHide?: () => void;
   memories: Memory[] | null;
   memoryError: string | null;
@@ -32,9 +37,14 @@ export function SidePane({
   onSelect?: (id: string) => void;
   snapshot?: ComputerSnapshot | null;
   status?: "loading" | "ready" | "error";
+  messages?: Message[];
+  streaming?: boolean;
 }) {
   return (
-    <aside className="computer" aria-label={tab === "memory" ? "Memory" : "Computer"}>
+    <aside
+      className="computer"
+      aria-label={tab === "memory" ? "Memory" : tab === "trace" ? "Trace" : "Computer"}
+    >
       <header className="pane-h">
         <div className="pane-tabs" role="tablist" aria-label="Side panel">
           <button
@@ -55,6 +65,15 @@ export function SidePane({
           >
             Memory{memories && memories.length > 0 ? ` ${memories.length}` : ""}
           </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "trace"}
+            className={tab === "trace" ? "on" : undefined}
+            onClick={() => onTab("trace")}
+          >
+            Trace
+          </button>
         </div>
         {onHide ? (
           <button type="button" className="ghost-text" onClick={onHide}>
@@ -69,6 +88,8 @@ export function SidePane({
           agentId={agentId}
           onChanged={onMemoriesChanged}
         />
+      ) : tab === "trace" ? (
+        <TokenStreamPanel messages={messages} streaming={streaming} />
       ) : (
         <ComputerPane
           embedded
