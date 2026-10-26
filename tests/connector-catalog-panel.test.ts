@@ -1,13 +1,15 @@
-// @vitest-environment jsdom
+// @vitest-environment happy-dom
 
-import { createElement } from "react";
+import { createElement, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { act } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, expect, it, vi } from "vitest";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 import { ConnectorsPanel } from "../components/connectors-panel";
+import { ThemeProvider } from "../components/theme";
 import { catalogById, catalogInCategory } from "../src/connectors/catalog";
 import type { ConnectorRecord } from "../src/connectors";
 
@@ -116,6 +118,105 @@ it("keeps search focus while a URL is typed into the connected catalog", () => {
     root.unmount();
   });
   host.remove();
+});
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
+function LivePanel({
+  initial,
+  connectedNext,
+}: {
+  initial: ConnectorRecord[];
+  connectedNext?: ConnectorRecord[];
+}) {
+  const [items, setItems] = useState(initial);
+  return createElement(ConnectorsPanel, {
+    open: true,
+    intent: "list",
+    connectors: items,
+    ready: true,
+    onClose() {},
+    onChanged: async () => {
+      if (connectedNext) setItems(connectedNext);
+    },
+    onInsertPrompt() {},
+    onStop() {},
+  });
+}
+
+it("shows the rest of the catalog after connecting from a search", async () => {
+  const slack = connected("slack", "c-slack");
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => Response.json({ connector: slack })),
+  );
+  vi.stubGlobal(
+    "open",
+    vi.fn(() => ({ closed: false })),
+  );
+
+  render(
+    createElement(
+      ThemeProvider,
+      null,
+      createElement(LivePanel, {
+        initial: [connected("notion")],
+        connectedNext: [connected("notion"), slack],
+      }),
+    ),
+  );
+
+  fireEvent.change(screen.getByRole("textbox", { name: "Search connectors" }), {
+    target: { value: "slack" },
+  });
+  const slackTile = document.querySelector('[data-catalog-id="slack"]');
+  expect(slackTile).not.toBeNull();
+  fireEvent.click(slackTile!.querySelector("button")!);
+  fireEvent.click(screen.getByRole("button", { name: "Continue to Slack ↗" }));
+  act(() => {
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        origin: window.location.origin,
+        data: { type: "mockbot-oauth", ok: true, account: "workspace" },
+      }),
+    );
+  });
+
+  await waitFor(() => {
+    expect(screen.queryByRole("heading", { name: "Already connected" })).toBeNull();
+    expect(document.querySelector('[data-catalog-id="github"]')).not.toBeNull();
+    expect(document.querySelector('[data-catalog-id="linear"]')).not.toBeNull();
+  });
+  expect(document.querySelector('[data-catalog-id="slack"]')).toBeNull();
+  expect(screen.getByRole("textbox", { name: "Search connectors" })).toHaveProperty("value", "");
+  expect(screen.getByRole("heading", { name: "Connectors" })).toBeTruthy();
+});
+
+it("returns to the connected list when a connect started there is cancelled", () => {
+  render(
+    createElement(
+      ThemeProvider,
+      null,
+      createElement(LivePanel, { initial: [connected("notion")] }),
+    ),
+  );
+
+  const githubTile = document.querySelector('[data-catalog-id="github"]');
+  expect(githubTile).not.toBeNull();
+  fireEvent.click(githubTile!.querySelector("button")!);
+  expect(screen.getByRole("heading", { name: "Connect GitHub" })).toBeTruthy();
+
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+  expect(document.querySelector('section[aria-label="Connected"]')).not.toBeNull();
+  expect(screen.getByRole("heading", { name: "Connectors" })).toBeTruthy();
+  expect(screen.queryByRole("heading", { name: "Add a connector", level: 2 })).toBeNull();
+  const githubAgain = document.querySelector('[data-catalog-id="github"]');
+  expect(githubAgain?.querySelector("button")?.textContent).toBe("Connect");
 });
 
 it("keeps every unconnected catalog entry when several connectors are connected", () => {

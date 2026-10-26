@@ -98,6 +98,7 @@ export function ConnectorsPanel({
   const oauthExisting = useRef(new ReconnectAttempt());
   const popupWatch = useRef<ReturnType<typeof setInterval> | null>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
+  const listReturn = useRef<"list" | "done" | null>(null);
   const [search, setSearch] = useState(preview ? previewSearch(preview) : initialQuery);
   const [category, setCategory] = useState<CatalogCategory>("popular");
   const [hint, setHint] = useState("");
@@ -461,19 +462,29 @@ export function ConnectorsPanel({
     }
     oauthExisting.current.clear();
     await onChanged();
-    setDoneId(body.connector.id);
-    setToast(`${body.connector.name} connected`);
+    showDone(body.connector.id, body.connector.name);
+  }
+
+  function showDone(id: string, name: string) {
+    listReturn.current = null;
+    setSearch("");
+    setHint("");
+    setDoneId(id);
+    setToast(`${name} connected`);
     setMode("done");
   }
 
   function abandonAdd() {
+    const back = listReturn.current;
+    listReturn.current = null;
     oauthExisting.current.clear();
     abortRef.current?.abort();
     setWaiting(false);
-    setMode("add");
+    setMode(back ?? "add");
   }
 
   function showOauth(entry: CatalogEntry | null, name: string, existingId?: string) {
+    listReturn.current = mode === "list" || mode === "done" ? mode : null;
     if (existingId) oauthExisting.current.start(existingId);
     else oauthExisting.current.clear();
     setDraft((current) => {
@@ -595,9 +606,7 @@ export function ConnectorsPanel({
     }
     oauthExisting.current.clear();
     await onChanged();
-    setDoneId(body.connector.id);
-    setToast(`${entry.name} connected`);
-    setMode("done");
+    showDone(body.connector.id, entry.name);
   }
 
   async function connectPastedOauth() {
@@ -624,9 +633,7 @@ export function ConnectorsPanel({
       return;
     }
     await onChanged();
-    setDoneId(body.connector.id);
-    setToast(`${body.connector.name} connected`);
-    setMode("done");
+    showDone(body.connector.id, body.connector.name);
   }
 
   async function disconnect(connector: ConnectorRecord) {
