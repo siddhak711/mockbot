@@ -1,6 +1,10 @@
 export type SandboxEntry = {
   name: string;
   kind: "file" | "dir";
+  /** Byte size from a directory listing, when the runtime provides it. */
+  size?: number;
+  /** Modification time from a directory listing, when the runtime provides it. */
+  modifiedAt?: string;
 };
 
 export type ExecOutcome = {
@@ -19,6 +23,7 @@ export type SandboxRuntime = {
   read(
     agentId: string,
     path: string,
+    signal?: AbortSignal,
   ): Promise<{ ok: true; content: string } | { ok: false; error: string }>;
   write(
     agentId: string,

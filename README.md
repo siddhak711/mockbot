@@ -213,6 +213,10 @@ The Computer pane shows the command, the output, the exit code, and changed file
 
 Daytona is used when a key is set. The same tools run inside a Daytona sandbox, one sandbox per agent. The sandbox id is reused on the next command. Host environment variables are not copied into it.
 
+Each new sandbox is built from `python:3.12-slim-bookworm`. The image installs `coreutils` (`ls`, `cat`, `wc`, `head`, `tail`), `grep`, `sed`, `git`, `python3`, `nodejs`, and `npm`, then fails the build unless `grep --version`, `node --version`, `npm --version`, `python3 --version`, and `git --version` succeed. Daytona caches that image. The first create waits for the build; later creates reuse it. The SDK's 60 second create timeout is disabled for that wait.
+
+A sandbox created before this image keeps its old filesystem. Before the first command, Mockbot runs the same version check inside the sandbox. If a tool is missing, it installs the packages with apt (as root, or with `sudo -n` when the sandbox user is not root). That install is not stored as a computer run. If the install fails, that command creates a new sandbox from the tool image instead. The old sandbox and its files are left in Daytona.
+
 ```bash
 DAYTONA_API_KEY=dtn_...
 DAYTONA_API_URL=https://app.daytona.io/api
