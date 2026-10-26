@@ -202,3 +202,190 @@ it("shows a changed system prompt before the turn that used it", () => {
   );
   expect(text.indexOf("[SYSTEM]\nSecond prompt")).toBeLessThan(text.indexOf("[USER]\nTwo"));
 });
+
+it("merges a streaming tool that has no id with the activity that already has one", () => {
+  const text = renderRawTranscript(
+    [
+      message({
+        id: "a",
+        role: "assistant",
+        content: "",
+        trace: {
+          started: true,
+          role: "assistant",
+          reasoning: "",
+          tools: [
+            {
+              index: 0,
+              id: "",
+              name: "web_search",
+              arguments: '{"query":"mockbot"}',
+              result: null,
+            },
+          ],
+          text: "",
+          finishReason: null,
+          ended: false,
+          segments: [{ type: "tool", index: 0 }],
+        },
+      }),
+    ],
+    [
+      {
+        id: "call_live",
+        messageId: "a",
+        name: "web_search",
+        arguments: '{"query":"mockbot"}',
+        output: "live result",
+      },
+      {
+        id: "call_other",
+        messageId: "other",
+        name: "web_search",
+        arguments: '{"query":"mockbot"}',
+        output: "other result",
+      },
+    ],
+  );
+
+  expect(text.split("[TOOL CALL:").length - 1).toBe(1);
+  expect(text).toContain(
+    [
+      "[TOOL CALL: web_search]",
+      "id: call_live",
+      "input:",
+      '{"query":"mockbot"}',
+      "output:",
+      "live result",
+    ].join("\n"),
+  );
+  expect(text).not.toContain("call_other");
+  expect(text).not.toContain("other result");
+});
+
+it("pairs an id-less streaming tool by order when its input does not match yet", () => {
+  const text = renderRawTranscript(
+    [
+      message({
+        id: "a",
+        role: "assistant",
+        content: "Done",
+        trace: {
+          started: true,
+          role: "assistant",
+          reasoning: "",
+          tools: [
+            {
+              index: 0,
+              id: "call_search",
+              name: "web_search",
+              arguments: '{"query":"one"}',
+              result: null,
+            },
+            {
+              index: 1,
+              id: "",
+              name: "web_fetch",
+              arguments: '{"url":"https://ex',
+              result: null,
+            },
+          ],
+          text: "Done",
+          finishReason: null,
+          ended: false,
+          segments: [
+            { type: "tool", index: 0 },
+            { type: "tool", index: 1 },
+            { type: "text", text: "Done" },
+          ],
+        },
+      }),
+    ],
+    [
+      {
+        id: "call_search",
+        messageId: "a",
+        name: "web_search",
+        arguments: '{"query":"one"}',
+        output: "search hit",
+      },
+      {
+        id: "call_fetch",
+        messageId: "a",
+        name: "web_fetch",
+        arguments: '{"url":"https://example.com"}',
+        output: "page body",
+      },
+    ],
+  );
+
+  expect(text.split("[TOOL CALL:").length - 1).toBe(2);
+  expect(text.indexOf("id: call_search")).toBeLessThan(text.indexOf("id: call_fetch"));
+  expect(text).toContain("output:\nsearch hit");
+  expect(text).toContain('input:\n{"url":"https://example.com"}');
+  expect(text).toContain("output:\npage body");
+});
+
+it("matches id-less streaming tools by name and input when activity order differs", () => {
+  const text = renderRawTranscript(
+    [
+      message({
+        id: "a",
+        role: "assistant",
+        content: "",
+        trace: {
+          started: true,
+          role: "assistant",
+          reasoning: "",
+          tools: [
+            {
+              index: 0,
+              id: "",
+              name: "web_fetch",
+              arguments: '{"url":"https://example.com"}',
+              result: null,
+            },
+            {
+              index: 1,
+              id: "",
+              name: "web_search",
+              arguments: '{"query":"one"}',
+              result: null,
+            },
+          ],
+          text: "",
+          finishReason: null,
+          ended: false,
+          segments: [
+            { type: "tool", index: 0 },
+            { type: "tool", index: 1 },
+          ],
+        },
+      }),
+    ],
+    [
+      {
+        id: "call_search",
+        messageId: "a",
+        name: "web_search",
+        arguments: '{"query":"one"}',
+        output: "search hit",
+      },
+      {
+        id: "call_fetch",
+        messageId: "a",
+        name: "web_fetch",
+        arguments: '{"url":"https://example.com"}',
+        output: "page body",
+      },
+    ],
+  );
+
+  expect(text.split("[TOOL CALL:").length - 1).toBe(2);
+  expect(text.indexOf("[TOOL CALL: web_fetch]")).toBeLessThan(
+    text.indexOf("[TOOL CALL: web_search]"),
+  );
+  expect(text.indexOf("id: call_fetch")).toBeLessThan(text.indexOf("id: call_search"));
+  expect(text).toContain("output:\npage body");
+  expect(text).toContain("output:\nsearch hit");
+});

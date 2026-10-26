@@ -1,5 +1,5 @@
 import { isMockToolResult } from "./tools/display";
-import type { Message, TraceSegment } from "./types";
+import type { Message, ToolTrace, TraceSegment } from "./types";
 
 export type RawToolActivity = {
   id: string;
@@ -34,6 +34,25 @@ function preferFull(values: Array<string | null | undefined>): string | null {
   return best;
 }
 
+function namesCompatible(left: string, right: string): boolean {
+  if (!left || !right) return true;
+  return left === right;
+}
+
+/** Pair a streaming trace row that has no id with the activity that already has one. */
+function matchUnidentifiedTool(
+  tool: { name: string; arguments: string },
+  open: readonly RawToolActivity[],
+): RawToolActivity | undefined {
+  if (tool.name && tool.arguments) {
+    const byNameAndInput = open.find(
+      (item) => item.name === tool.name && item.arguments === tool.arguments,
+    );
+    if (byNameAndInput) return byNameAndInput;
+  }
+  return open.find((item) => namesCompatible(tool.name, item.name));
+}
+
 function resolveTools(message: Message, activities: readonly RawToolActivity[]): ResolvedTool[] {
   const resolved: ResolvedTool[] = [];
   const seen = new Set<string>();
@@ -51,14 +70,38 @@ function resolveTools(message: Message, activities: readonly RawToolActivity[]):
     resolved.push(tool);
   };
 
-  for (const tool of message.trace?.tools ?? []) {
-    const activity = activities.find(
-      (item) => item.messageId === message.id && item.id === tool.id,
+  const pool = activities.filter((item) => item.messageId === message.id);
+  const claimed = new Set<RawToolActivity>();
+  const traceTools = [...(message.trace?.tools ?? [])].sort(
+    (left, right) => left.index - right.index,
+  );
+  const paired = new Map<ToolTrace, RawToolActivity | undefined>();
+
+  for (const tool of traceTools) {
+    if (!tool.id) continue;
+    const activity = pool.find((item) => item.id === tool.id && !claimed.has(item));
+    if (!activity) continue;
+    claimed.add(activity);
+    paired.set(tool, activity);
+  }
+  for (const tool of traceTools) {
+    if (tool.id) continue;
+    const activity = matchUnidentifiedTool(
+      tool,
+      pool.filter((item) => !claimed.has(item)),
     );
-    const stored = message.tools?.find((item) => item.id === tool.id);
+    if (!activity) continue;
+    claimed.add(activity);
+    paired.set(tool, activity);
+  }
+
+  for (const tool of message.trace?.tools ?? []) {
+    const activity = paired.get(tool);
+    const id = tool.id || activity?.id || "";
+    const stored = id ? message.tools?.find((item) => item.id === id) : undefined;
     remember({
       index: tool.index,
-      id: tool.id,
+      id,
       name: longer(tool.name, activity?.name ?? "", stored?.name ?? ""),
       input: longer(tool.arguments, activity?.arguments ?? "", stored?.arguments ?? ""),
       output: preferFull([tool.result, stored?.output, activity?.output]),
@@ -77,7 +120,7 @@ function resolveTools(message: Message, activities: readonly RawToolActivity[]):
     });
   }
   for (const activity of activities) {
-    if (activity.messageId !== message.id) continue;
+    if (activity.messageId !== message.id || claimed.has(activity)) continue;
     extra += 1;
     remember({
       index: extra,
