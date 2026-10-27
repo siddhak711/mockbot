@@ -38,6 +38,8 @@ export type ToolContext = {
   memory?: MemoryToolDeps;
   /** Fresh each chat run. Tools count actions here to enforce per-run caps. */
   runCounters?: Map<string, number>;
+  /** Signed-in user. Site tools store scripts against this id. */
+  userId?: string;
 };
 
 export type PreparedArgs = { args: Record<string, unknown> } | { error: string };

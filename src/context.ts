@@ -6,6 +6,7 @@ import { selectProvider, type LlmProvider } from "./llm";
 import { RoutineStore } from "./routines/store";
 import { sandboxBrowseTool } from "./browser/open";
 import { BROWSE_TOOL_NAME } from "./browser/tool";
+import { siteToolsForApp } from "./site-tools/tools";
 import { openComputer } from "./sandbox/open";
 import type { ComputerSupervisor } from "./sandbox/supervisor";
 import { createComputerTools } from "./sandbox/tools";
@@ -59,6 +60,17 @@ export function registerComputerTools(
   if (!registry.get(BROWSE_TOOL_NAME)) registry.register(sandboxBrowseTool(sandbox, env));
 }
 
+export function registerSiteTools(
+  registry: ToolRegistry,
+  store: ConversationStore,
+  sandbox?: ComputerSupervisor,
+  env: Record<string, string | undefined> = {},
+): void {
+  for (const tool of siteToolsForApp({ store, sandbox, env })) {
+    if (!registry.get(tool.name)) registry.register(tool);
+  }
+}
+
 export function setAppContext(context: {
   store: ConversationStore;
   provider: LlmProvider;
@@ -74,6 +86,7 @@ export function setAppContext(context: {
   const tools = context.tools ?? createDefaultTools({});
   if (!context.tools) registerMemoryTools(tools, context.store);
   if (context.sandbox) registerComputerTools(tools, context.sandbox);
+  registerSiteTools(tools, context.store, context.sandbox, process.env);
   current = {
     store: context.store,
     provider: context.provider,
@@ -139,6 +152,7 @@ async function openApp(): Promise<AppContext> {
     const tools = createDefaultTools(process.env);
     registerMemoryTools(tools, store);
     registerComputerTools(tools, sandbox, process.env);
+    registerSiteTools(tools, store, sandbox, process.env);
     const agents = await AgentDirectory.attach(store);
     const inner = withAgentMock(selectProvider(process.env));
     return {

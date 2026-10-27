@@ -194,6 +194,7 @@ export async function streamChatTurn(options: {
   const toolContext: ToolContext = {
     signal,
     memory: memoryDeps,
+    userId: options.userId,
     runCounters: new Map(),
     promote(names) {
       for (const name of names) promoted.add(name);

@@ -18,6 +18,13 @@ export const DAEMON_PATH = ".mockbot/browserd.cjs";
 export const INSTALL_PATH = ".mockbot/install-browser.sh";
 export const DEFAULT_BROWSER_PORT = 9417;
 
+/** Env prefix for Node and Playwright inside the sandbox. Shared with site-tool scripts. */
+export function browserCommandPrefix(paths: BrowserPaths, port = DEFAULT_BROWSER_PORT): string {
+  const pairs = [`NODE_PATH=${quote(paths.nodePath)}`, `MOCKBOT_BROWSER_PORT=${port}`];
+  if (paths.browsersPath) pairs.push(`PLAYWRIGHT_BROWSERS_PATH=${quote(paths.browsersPath)}`);
+  return pairs.join(" ");
+}
+
 /**
  * Drives the headless browser daemon inside a sandbox. Every action is one exec
  * of `node browserd.cjs send`, so the host never runs a browser itself.
@@ -36,12 +43,19 @@ export class SandboxBrowser implements BrowserDriver {
   ) {}
 
   async perform(step: BrowseStep, signal?: AbortSignal): Promise<BrowseOutcome> {
+    const ready = await this.ensureReady(signal);
+    if (!ready.ok) return ready;
+    return this.#send({ ...step, startTimeoutMs: BROWSER_START_TIMEOUT_MS }, signal);
+  }
+
+  /** Installs Playwright on first use. Site tools call this before running a saved script. */
+  async ensureReady(signal?: AbortSignal): Promise<{ ok: true } | { ok: false; error: string }> {
     try {
       await this.#ensureInstalled(signal);
+      return { ok: true };
     } catch (error) {
       return { ok: false, error: errorText(error, "The sandbox browser could not be installed.") };
     }
-    return this.#send({ ...step, startTimeoutMs: BROWSER_START_TIMEOUT_MS }, signal);
   }
 
   /** Stops the daemon. Safe to call when it is not running. */
@@ -71,13 +85,7 @@ export class SandboxBrowser implements BrowserDriver {
   }
 
   #env(): string {
-    const { paths, port } = this.options;
-    const pairs = [
-      `NODE_PATH=${quote(paths.nodePath)}`,
-      `MOCKBOT_BROWSER_PORT=${port ?? DEFAULT_BROWSER_PORT}`,
-    ];
-    if (paths.browsersPath) pairs.push(`PLAYWRIGHT_BROWSERS_PATH=${quote(paths.browsersPath)}`);
-    return pairs.join(" ");
+    return browserCommandPrefix(this.options.paths, this.options.port ?? DEFAULT_BROWSER_PORT);
   }
 
   #ensureInstalled(signal?: AbortSignal): Promise<void> {
