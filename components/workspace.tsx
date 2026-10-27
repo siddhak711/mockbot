@@ -628,6 +628,7 @@ export function Workspace({
       if (conversationId) {
         await selectConversation(conversationId);
         await refreshMemories();
+        void refreshAgents();
       }
     } catch (sendError) {
       if (isAbort(sendError)) {

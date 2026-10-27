@@ -7,6 +7,10 @@ export type Agent = {
   memoryNote: string;
   isLead: boolean;
   createdAt: string;
+  /** Roster fields from GET /api/agents: the newest message in the agent's thread. */
+  preview?: string;
+  lastMessageAt?: string | null;
+  lastMessageRole?: "user" | "assistant" | null;
 };
 
 export type AgentGrant = {

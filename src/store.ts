@@ -337,6 +337,32 @@ export class ConversationStore {
     return row ? mapConversation(row) : null;
   }
 
+  /** The newest non-empty message in each agent's thread, keyed by agent id. */
+  async latestAgentMessages(
+    userId?: string | null,
+  ): Promise<Map<string, { role: Role; content: string; createdAt: string }>> {
+    const result = await this.db.query<{
+      agent_id: string;
+      role: Role;
+      content: string;
+      created_at: string | Date;
+    }>(
+      `SELECT DISTINCT ON (c.agent_id) c.agent_id, m.role, m.content, m.created_at
+       FROM messages m
+       JOIN conversations c ON c.id = m.conversation_id
+       WHERE ($1::text IS NULL OR c.user_id IS NOT DISTINCT FROM $1)
+         AND btrim(m.content) <> ''
+       ORDER BY c.agent_id, m.seq DESC`,
+      [userId ?? null],
+    );
+    return new Map(
+      result.rows.map((row) => [
+        row.agent_id,
+        { role: row.role, content: row.content, createdAt: asIso(row.created_at) },
+      ]),
+    );
+  }
+
   async listConversations(userId?: string): Promise<Conversation[]> {
     const result = await this.db.query<ConversationRow>(
       `SELECT id, title, agent_id, created_at, updated_at
