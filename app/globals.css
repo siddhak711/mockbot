@@ -370,9 +370,7 @@ summary:focus-visible {
 
 .item-label {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .item.on {
@@ -413,9 +411,7 @@ summary:focus-visible {
   font-size: 13px;
   line-height: 18px;
   font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .connector-state {
@@ -439,9 +435,7 @@ summary:focus-visible {
   color: var(--muted);
   font-size: 12px;
   line-height: 16px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .connector-actions,
@@ -569,9 +563,7 @@ summary:focus-visible {
 .me-model,
 .me-meta {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   font-size: 11px;
   line-height: 14px;
   color: var(--ink-2);
@@ -789,8 +781,8 @@ summary:focus-visible {
 
 .thread-title {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .ghost-text,
@@ -993,9 +985,7 @@ summary:focus-visible {
 
 .tool-line-meta {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   color: var(--muted);
   font-weight: 400;
 }
@@ -1621,9 +1611,7 @@ summary:focus-visible {
 
 .computer-item span:first-child {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .computer-item.on,
@@ -2377,13 +2365,6 @@ a.icon-btn {
   color: var(--muted);
 }
 
-.connector-tile .t2 {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
 .connector-footer,
 .connector-toolbar {
   display: flex;
@@ -2941,9 +2922,7 @@ a.icon-btn {
 }
 
 .run-summary {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   font-size: 13px;
   line-height: 18px;
 }
