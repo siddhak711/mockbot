@@ -2744,26 +2744,6 @@ a.icon-btn {
   min-height: 28px;
 }
 
-.oauth-page {
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 12px;
-  max-width: 420px;
-  margin: 0 auto;
-  padding: 24px;
-  background: var(--window);
-  color: var(--ink);
-}
-
-.oauth-page h1 {
-  margin: 0;
-  font-size: 15px;
-  line-height: 20px;
-  font-weight: 600;
-}
-
 .toast {
   position: fixed;
   left: 50%;
