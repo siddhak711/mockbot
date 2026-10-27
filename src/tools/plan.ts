@@ -2,6 +2,9 @@ import type { ToolDefinition } from "./types";
 
 export const PROPOSE_PLAN_TOOL = "propose_plan";
 
+export const PLAN_UNATTENDED =
+  "This routine has nobody to approve a plan, so the plan was not run.";
+
 const MAX_STEPS = 7;
 const MAX_TITLE = 120;
 const MAX_DETAIL = 400;

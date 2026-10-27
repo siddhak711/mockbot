@@ -2,7 +2,7 @@ import { DELEGATE_TOOL_NAME, isLeadAgent } from "./agents/ids";
 import { AgentDirectory } from "./agents/directory";
 import { NoteMemory, defaultComputer, defaultConnector } from "./agents/ports";
 import { buildAgentSystemPrompt } from "./agents/prompt";
-import { runWithDelegate } from "./agents/stream";
+import { runWithDelegate, runWithDelegateUnlessPlan } from "./agents/stream";
 import { toolsForSpeaker } from "./agents/tool";
 import type { AgentMemoryPort, ComputerPort, ConnectorPort } from "./agents/types";
 import { findSecrets } from "./memory/scrub";
@@ -14,6 +14,7 @@ import { ASK_UNATTENDED, ASK_USER_TOOL, type AskGate } from "./tools/ask-user";
 import { requiresApproval, type ApprovalGate } from "./tools/approval";
 import {
   approvedPlanMessage,
+  PLAN_UNATTENDED,
   PROPOSE_PLAN_TOOL,
   parsePlan,
   fallbackPlan,
@@ -415,23 +416,30 @@ export async function streamChatTurn(options: {
           }
 
           const modelEvents = provider.stream(history, providerSignal);
-          const events =
-            delegateTool && (!options.plan || activePlan)
-              ? runWithDelegate(modelEvents, async (call) => {
-                  let args: Record<string, unknown>;
-                  try {
-                    const parsed: unknown = JSON.parse(call.arguments);
-                    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-                      return "Delegation failed: arguments are not JSON.";
-                    }
-                    args = parsed as Record<string, unknown>;
-                  } catch {
-                    return "Delegation failed: arguments are not JSON.";
-                  }
-                  const result = await delegateTool.invoke(args, { signal });
-                  return result.content;
-                })
-              : modelEvents;
+          const invokeDelegate = async (call: { id: string; arguments: string }) => {
+            let args: Record<string, unknown>;
+            try {
+              const parsed: unknown = JSON.parse(call.arguments);
+              if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+                return "Delegation failed: arguments are not JSON.";
+              }
+              args = parsed as Record<string, unknown>;
+            } catch {
+              return "Delegation failed: arguments are not JSON.";
+            }
+            if (!delegateTool) return "Delegation failed: the delegate tool is not available.";
+            const result = await delegateTool.invoke(args, { signal });
+            return result.content;
+          };
+          // A self-proposed plan can share the round with delegate. Do not start
+          // that delegate until the round is known to contain no propose_plan.
+          const events = !delegateTool
+            ? modelEvents
+            : activePlan
+              ? runWithDelegate(modelEvents, invokeDelegate)
+              : options.plan
+                ? modelEvents
+                : runWithDelegateUnlessPlan(modelEvents, invokeDelegate, PROPOSE_PLAN_TOOL);
 
           try {
             for await (const event of events) {
@@ -479,7 +487,7 @@ export async function streamChatTurn(options: {
 
           const pending = roundCalls.filter((call) => call.name && call.result == null);
           const planCall = pending.find((call) => call.name === PROPOSE_PLAN_TOOL);
-          if (!activePlan && (planCall || options.plan)) {
+          if (!options.unattended && !activePlan && (planCall || options.plan)) {
             const resolved = resolvePlanSteps(planCall, message, Boolean(options.plan));
             if (resolved) {
               const call: PendingCall = planCall ?? {
@@ -721,6 +729,7 @@ export async function streamChatTurn(options: {
         const prepared = tool.prepare ? tool.prepare(parsed.args) : { args: parsed.args };
         if ("error" in prepared) return finish(call, "error", prepared.error);
         if (call.name === PROPOSE_PLAN_TOOL) {
+          if (options.unattended) return finish(call, "error", PLAN_UNATTENDED);
           return finish(call, "done", "The plan is already in progress.");
         }
         if (call.name === ASK_USER_TOOL) {

@@ -2,13 +2,18 @@ import { afterEach, expect, it } from "vitest";
 import { POST as postChat } from "../app/api/chat/route";
 import { GET as readConversation } from "../app/api/conversations/[id]/route";
 import { POST as postPlan } from "../app/api/tools/plans/route";
+import { streamChatTurn } from "../src/chat";
 import { resetAppContext, setAppContext } from "../src/context";
 import { MockProvider, type LlmProvider } from "../src/llm";
 import { SseParser } from "../src/sse";
 import { ConversationStore } from "../src/store";
+import { ApprovalGate } from "../src/tools/approval";
+import { AskGate } from "../src/tools/ask-user";
+import { createDefaultTools } from "../src/tools/builtins";
 import { activitiesFromMessages } from "../src/tools/display";
+import { PlanGate, PLAN_UNATTENDED } from "../src/tools/plan";
 import type { LlmMessage, LlmStreamEvent, StoredToolCall } from "../src/types";
-import { deltas } from "./helpers";
+import { deltas, readSse } from "./helpers";
 
 afterEach(async () => {
   await resetAppContext();
@@ -72,6 +77,80 @@ it("does not run tools or another model turn before a big task is approved", asy
   expect(deltas(events)).toContain("Finished: Summarize");
   expect(events.at(-1)?.event).toBe("done");
   expect(provider.calls).toBe(4);
+});
+
+it("does not run a delegate emitted in the same round as a self-proposed plan", async () => {
+  const provider = new DelegateAndPlanProvider();
+  const store = await ConversationStore.open();
+  setAppContext({ store, provider });
+  const response = await postChat(
+    new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Hand this off and then plan the rest" }),
+    }),
+  );
+  const pending = await readUntil(response, "plan_required");
+  expect(provider.calls).toBe(1);
+  expect(pending.events.some((event) => event.event === "tool_start")).toBe(false);
+  expect(
+    pending.events.some(
+      (event) => event.event === "tool_result" && event.data.name === "delegate",
+    ),
+  ).toBe(false);
+  expect(deltas(pending.events)).not.toContain("Delegated");
+  expect(deltas(pending.events)).not.toContain("Finished:");
+
+  const id = String(pending.events.find((event) => event.event === "plan_required")?.data.id);
+  const cancelled = await postPlan(
+    new Request("http://localhost/api/tools/plans", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, decision: "cancel" }),
+    }),
+  );
+  expect(cancelled.status).toBe(200);
+  const rest = await readRest(pending.reader, pending.parser, pending.decoder);
+  const events = [...pending.events, ...rest];
+  const executed = events.filter(
+    (event) =>
+      event.event === "tool_start" || event.event === "tool_args" || event.event === "tool_result",
+  );
+  expect(executed.some((event) => event.data.name === "delegate")).toBe(false);
+  expect(deltas(events)).toContain("Cancelled the plan. Nothing ran.");
+  expect(deltas(events)).not.toContain("Delegated");
+  expect(provider.calls).toBe(1);
+});
+
+it("does not wait on a plan during an unattended turn", async () => {
+  const provider = new UnattendedPlanProvider();
+  const store = await ConversationStore.open();
+  const plans = new PlanGate(1_000);
+  const started = Date.now();
+  const response = await streamChatTurn({
+    store,
+    provider,
+    tools: createDefaultTools({}),
+    approvals: new ApprovalGate(60_000),
+    asks: new AskGate(60_000),
+    plans,
+    unattended: true,
+    message: "Plan the nightly cleanup",
+  });
+  const events = (await readSse(response)) as SseEvent[];
+  expect(Date.now() - started).toBeLessThan(1_000);
+  expect(events.some((event) => event.event === "plan_required")).toBe(false);
+  const conversationId = String(events.find((event) => event.event === "meta")?.data.conversationId);
+  expect(plans.hasPending(conversationId)).toBe(false);
+  const result = events.find(
+    (event) => event.event === "tool_result" && event.data.name === "propose_plan",
+  );
+  expect(result?.data.status).toBe("error");
+  expect(result?.data.output).toBe(PLAN_UNATTENDED);
+  expect(deltas(events)).not.toContain("Nothing ran.");
+  expect(deltas(events)).not.toContain("Finished:");
+  expect(provider.calls).toBe(2);
+  expect(events.at(-1)?.event).toBe("done");
 });
 
 it("plans a three-step task from the mock provider before any tool starts", async () => {
@@ -289,6 +368,68 @@ it("restores a pending plan after the client disconnects and resumes when it is 
   expect(content).toContain("Finished: Reload summary");
   expect(argumentsText).toContain('"state":"done"');
 });
+
+class DelegateAndPlanProvider implements LlmProvider {
+  readonly id = "mock" as const;
+  readonly model = null;
+  calls = 0;
+
+  async *stream(): AsyncIterable<LlmStreamEvent> {
+    this.calls += 1;
+    yield { type: "start", role: "assistant" };
+    yield {
+      type: "tool_call",
+      index: 0,
+      id: "call_delegate",
+      name: "delegate",
+      arguments: JSON.stringify({ agent: "Researcher", task: "Do it before approval" }),
+    };
+    yield {
+      type: "tool_call",
+      index: 1,
+      id: "call_plan",
+      name: "propose_plan",
+      arguments: JSON.stringify({
+        steps: [
+          { title: "Search", detail: "Look it up" },
+          { title: "Fetch", detail: "Open the page" },
+          { title: "Summarize", detail: "Write the recap" },
+        ],
+      }),
+    };
+    yield { type: "end", finishReason: "tool_calls" };
+  }
+}
+
+class UnattendedPlanProvider implements LlmProvider {
+  readonly id = "mock" as const;
+  readonly model = null;
+  calls = 0;
+
+  async *stream(): AsyncIterable<LlmStreamEvent> {
+    this.calls += 1;
+    yield { type: "start", role: "assistant" };
+    if (this.calls === 1) {
+      yield {
+        type: "tool_call",
+        index: 0,
+        id: "call_plan",
+        name: "propose_plan",
+        arguments: JSON.stringify({
+          steps: [
+            { title: "Scan", detail: "Find old files" },
+            { title: "Archive", detail: "Move them aside" },
+            { title: "Report", detail: "Say what moved" },
+          ],
+        }),
+      };
+      yield { type: "end", finishReason: "tool_calls" };
+      return;
+    }
+    yield { type: "text", text: "Continued without a plan." };
+    yield { type: "end", finishReason: "stop" };
+  }
+}
 
 class EarlyToolProvider implements LlmProvider {
   readonly id = "mock" as const;
