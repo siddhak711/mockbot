@@ -197,7 +197,8 @@ it("shows a collapsed rail of agent avatars and opens that agent's thread", asyn
 
   const person = screen.getByRole("button", { name: "Expand sidebar, Ada" });
   expect(person.getAttribute("title")).toBe("Ada");
-  const divider = screen.getByRole("separator");
+  const divider = document.querySelector(".agent-rail [role='separator']");
+  if (!divider) throw new Error("missing rail divider");
   const mockbot = screen.getByRole("button", { name: "Mockbot" });
   const researcher = screen.getByRole("button", { name: "Researcher" });
   expect(person.compareDocumentPosition(divider) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();

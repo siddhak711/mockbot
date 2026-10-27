@@ -1,74 +1,173 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { ComputerSnapshot, SandboxRun } from "../src/sandbox/types";
-import { formatToolPayload, type ToolActivity } from "../src/tools/display";
-import { IconTip } from "./icon-tip";
-import { HidePanelIcon } from "./icons";
-
-const OUTPUT_PREVIEW_LINES = 20;
-const OUTPUT_PREVIEW_CHARS = 1_500;
-const NOISE_COMMANDS = new Set(["grep", "cat", "ls", "wc", "sed", "head", "tail", "pwd"]);
-
-export type RunClass = "change" | "noise" | "command";
+import type { SpriteState } from "../src/sprite";
+import { BotSprite } from "./bot-sprite";
 
 export type ChangedFileRef = {
   path: string;
   runId: string;
 };
 
+export type ComputerLoad = "loading" | "ready" | "error";
+
+/** Header status. Derived from the load state and sandbox tool activity. */
+export type ComputerPresence = "idle" | "working" | "needs_help" | "offline";
+
+export type ComputerContentTab = "screen" | "terminal" | "files" | "browser";
+
+export type ComputerActivity = {
+  name: string;
+  state: string;
+};
+
+export const COMPUTER_LOADING_DELAY_MS = 150;
+export const PANE_WIDTH_DEFAULT = 420;
+export const PANE_WIDTH_MIN = 360;
+export const PANE_WIDTH_MAX = 720;
+export const PANE_WIDTH_SCREEN = 560;
+
+const CONTENT_TABS: readonly ComputerContentTab[] = ["screen", "terminal", "files", "browser"];
+const SANDBOX_TOOLS = new Set(["list", "read", "write", "exec"]);
+
+const TAB_LABEL: Record<ComputerContentTab, string> = {
+  screen: "Screen",
+  terminal: "Terminal",
+  files: "Files",
+  browser: "Browser",
+};
+
 export function ComputerPane({
-  activities = [],
-  selectedId,
-  onSelect,
   snapshot = null,
   status = "ready",
+  activities = [],
   unavailableReason = null,
-  onHide,
   embedded = false,
+  onContentTab,
 }: {
-  activities?: ToolActivity[];
-  selectedId?: string | null;
-  onSelect?: (id: string) => void;
   snapshot?: ComputerSnapshot | null;
-  status?: "loading" | "ready" | "error";
+  status?: ComputerLoad;
+  activities?: readonly ComputerActivity[];
   /** The server's sandboxError, shown instead of the generic message. */
   unavailableReason?: string | null;
-  onHide?: () => void;
   embedded?: boolean;
+  onContentTab?: (tab: ComputerContentTab) => void;
 }) {
   const runs = snapshot?.runs ?? [];
   const latestId = runs[0]?.id ?? null;
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
-  const [exploredOpen, setExploredOpen] = useState(false);
   const [allFilesOpen, setAllFilesOpen] = useState(false);
+  const [contentTab, setContentTab] = useState<ComputerContentTab>("files");
+  const [showLoading, setShowLoading] = useState(false);
+  const tabRefs = useRef<Partial<Record<ComputerContentTab, HTMLButtonElement | null>>>({});
+  const baseId = useId();
 
   useEffect(() => {
     setSelectedRunId(latestId);
   }, [latestId]);
 
-  const selectedRun = runs.find((run) => run.id === selectedRunId) ?? runs[0] ?? null;
-  const selectedKey = selectedRun?.id ?? null;
-  const selectedClass = selectedRun ? classifyRun(selectedRun) : null;
-
   useEffect(() => {
-    if (selectedKey && selectedClass === "noise") setExploredOpen(true);
-  }, [selectedKey, selectedClass]);
-  const selectedActivity =
-    activities.find((activity) => activity.id === selectedId) ?? activities[activities.length - 1];
-  const provider =
-    snapshot?.provider === "daytona" ? "Daytona sandbox" : snapshot ? "Mock sandbox" : "Sandbox";
-  const showEmpty = !selectedRun && !selectedActivity;
-  const changed = filesChanged(runs);
-  const activeRunId = selectedRun?.id ?? null;
+    if (status !== "loading" || snapshot) {
+      setShowLoading(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setShowLoading(true), COMPUTER_LOADING_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [status, snapshot]);
 
-  const content =
-    status === "loading" && !snapshot && activities.length === 0 ? (
-      <div className="computer-empty">
-        <h3>Loading computer</h3>
-        <p>The sandbox inspector will show commands, output, and exit codes.</p>
+  const activeRunId = runs.some((run) => run.id === selectedRunId)
+    ? selectedRunId
+    : (runs[0]?.id ?? null);
+  const presence = computerPresence(status, snapshot != null, activities);
+  const provider = providerLabel(snapshot);
+  const changed = filesChanged(runs);
+  const blocked = !snapshot && (status === "loading" || status === "error");
+
+  function selectTab(tab: ComputerContentTab, focus = false) {
+    if (tab !== contentTab) onContentTab?.(tab);
+    setContentTab(tab);
+    if (focus) tabRefs.current[tab]?.focus();
+  }
+
+  function onTabsKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    const index = CONTENT_TABS.indexOf(contentTab);
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      selectTab(CONTENT_TABS[(index + 1) % CONTENT_TABS.length] ?? "files", true);
+    } else if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      selectTab(
+        CONTENT_TABS[(index - 1 + CONTENT_TABS.length) % CONTENT_TABS.length] ?? "files",
+        true,
+      );
+    }
+  }
+
+  const header = (
+    <div className="computer-head">
+      <BotSprite state={presenceSprite(presence)} size={22} />
+      <div className="computer-head-copy">
+        <h2 className="computer-head-title">
+          mockbot&apos;s computer
+          <span className="computer-head-provider"> · {provider}</span>
+        </h2>
       </div>
-    ) : status === "error" && !snapshot && activities.length === 0 ? (
+      <p
+        className="computer-presence"
+        role="status"
+        aria-live={presence === "needs_help" ? "assertive" : "polite"}
+      >
+        <span className={`computer-presence-dot ${presence}`} aria-hidden="true" />
+        {presenceLabel(presence)}
+      </p>
+    </div>
+  );
+
+  const tabs = (
+    <div
+      className="computer-tabs"
+      role="tablist"
+      aria-label="Computer contents"
+      onKeyDown={onTabsKeyDown}
+    >
+      {CONTENT_TABS.map((tab) => {
+        const selected = contentTab === tab;
+        return (
+          <button
+            key={tab}
+            ref={(node) => {
+              tabRefs.current[tab] = node;
+            }}
+            type="button"
+            role="tab"
+            id={`${baseId}-tab-${tab}`}
+            aria-controls={`${baseId}-panel-${tab}`}
+            aria-selected={selected}
+            tabIndex={selected ? 0 : -1}
+            onClick={() => selectTab(tab)}
+          >
+            {TAB_LABEL[tab]}
+            {tab === "files" ? <span className="computer-tab-count"> {changed.length}</span> : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  let panel: ReactNode;
+  if (blocked && status === "loading") {
+    panel = showLoading ? (
+      <div className="computer-loading">
+        <div className="computer-skeleton" aria-hidden="true" />
+        <h3>Loading computer</h3>
+        <p>The sandbox inspector will show files changed in this run.</p>
+      </div>
+    ) : (
+      <div className="computer-loading" aria-busy="true" />
+    );
+  } else if (blocked && status === "error") {
+    panel = (
       <div className="computer-empty">
         {unavailableReason ? (
           <p role="alert">{unavailableReason}</p>
@@ -79,279 +178,182 @@ export function ComputerPane({
           </>
         )}
       </div>
-    ) : (
-      <div className="computer-body">
-        <section className="computer-files" aria-label="Files changed">
-          <h3>Files changed</h3>
-          {changed.length > 0 ? (
-            <ul>
-              {changed.map((file) => (
-                <li key={file.path}>
-                  <button
-                    type="button"
-                    className={
-                      file.runId === activeRunId ? "computer-file-link on" : "computer-file-link"
-                    }
-                    onClick={() => setSelectedRunId(file.runId)}
-                  >
-                    {file.path}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p>No files changed.</p>
-          )}
-          {snapshot && snapshot.files.length > 0 ? (
-            <>
-              <button
-                type="button"
-                className="ghost-text computer-expand"
-                aria-expanded={allFilesOpen}
-                onClick={() => setAllFilesOpen((open) => !open)}
-              >
-                {allFilesOpen ? "Hide all files" : "All files"}
-              </button>
-              {allFilesOpen ? (
-                <ul aria-label="All sandbox files">
-                  {snapshot.files.map((file) => (
-                    <li key={file.path}>{file.kind === "dir" ? `${file.path}/` : file.path}</li>
-                  ))}
-                </ul>
-              ) : null}
-            </>
-          ) : null}
-        </section>
-        {selectedRun ? (
-          <>
-            <div className="computer-list" role="list" aria-label="Sandbox runs">
-              {traceRows(runs, selectedRun.id, exploredOpen, setExploredOpen, setSelectedRunId)}
-            </div>
-            <RunDetail key={selectedRun.id} run={selectedRun} />
-          </>
-        ) : null}
-        {selectedActivity ? (
-          <>
-            <div className="computer-list" role="list" aria-label="Tool calls">
-              {activities.map((activity) => (
-                <button
-                  key={activity.id}
-                  type="button"
-                  role="listitem"
-                  className={
-                    activity.id === selectedActivity.id ? "computer-item on" : "computer-item"
-                  }
-                  onClick={() => onSelect?.(activity.id)}
-                >
-                  <span>{activity.title}</span>
-                  <span className="computer-status">{statusLabel(activity.state)}</span>
-                </button>
-              ))}
-            </div>
-            <section className="computer-detail" aria-label={`${selectedActivity.title} details`}>
-              <p className="computer-kicker">{selectedActivity.name}</p>
-              <h3>{selectedActivity.title}</h3>
-              {selectedActivity.state === "approval" ? (
-                <p className="computer-note">
-                  {selectedActivity.summary} Skip or run it in the transcript.
-                </p>
-              ) : null}
-              {selectedActivity.arguments ? (
-                <>
-                  <h4>Arguments</h4>
-                  <pre>{formatToolPayload(selectedActivity.arguments)}</pre>
-                </>
-              ) : null}
-              {selectedActivity.output ? (
-                <>
-                  <h4>{selectedActivity.state === "error" ? "Error" : "Result"}</h4>
-                  <pre>{selectedActivity.output}</pre>
-                </>
-              ) : selectedActivity.state === "running" ? (
-                <p className="computer-note">Running…</p>
-              ) : null}
-            </section>
-          </>
-        ) : null}
-        {showEmpty ? (
-          <div className="computer-empty">
-            <h3>Nothing has run</h3>
-            <p>
-              Ask the agent to create a file or run a command. The command, output, and exit code
-              show up here.
-            </p>
-          </div>
-        ) : null}
+    );
+  } else if (contentTab === "terminal") {
+    panel = <TerminalMirror runs={runs} id={`${baseId}-panel-terminal`} />;
+  } else if (contentTab === "screen") {
+    panel = (
+      <div
+        className="computer-empty"
+        role="tabpanel"
+        id={`${baseId}-panel-screen`}
+        aria-labelledby={`${baseId}-tab-screen`}
+      >
+        <h3>Nothing on screen yet</h3>
+        <p>When mockbot uses its computer, you&apos;ll see it here live.</p>
       </div>
     );
+  } else if (contentTab === "browser") {
+    panel = (
+      <BrowserPlaceholder id={`${baseId}-panel-browser`} labelledBy={`${baseId}-tab-browser`} />
+    );
+  } else {
+    panel = (
+      <div role="tabpanel" id={`${baseId}-panel-files`} aria-labelledby={`${baseId}-tab-files`}>
+        <FilesChanged
+          changed={changed}
+          activeRunId={activeRunId}
+          snapshot={snapshot}
+          allFilesOpen={allFilesOpen}
+          onSelect={setSelectedRunId}
+          onToggleAll={() => setAllFilesOpen((open) => !open)}
+        />
+      </div>
+    );
+  }
 
-  if (embedded) return <div className="computer-embedded">{content}</div>;
+  const body = (
+    <>
+      {header}
+      {tabs}
+      <div className="computer-body">{panel}</div>
+    </>
+  );
+
+  if (embedded) return <div className="computer-embedded">{body}</div>;
 
   return (
     <aside className="computer" aria-label="Computer">
-      <header className="pane-h">
-        <div>
-          <h2>Computer</h2>
-          <p className="computer-kicker">{provider}</p>
-        </div>
-        {onHide ? (
-          <IconTip label="Hide" onClick={onHide}>
-            <HidePanelIcon />
-          </IconTip>
-        ) : null}
-      </header>
-      {content}
+      {body}
     </aside>
   );
 }
 
-function traceRows(
-  runs: SandboxRun[],
-  selectedId: string,
-  exploredOpen: boolean,
-  setExploredOpen: (update: (open: boolean) => boolean) => void,
-  onSelect: (id: string) => void,
-): ReactNode[] {
-  const noise = runs.filter((run) => classifyRun(run) === "noise");
-  const label = exploredLabel(runs);
-  const rows: ReactNode[] = [];
-  let folded = false;
-  for (const run of runs) {
-    if (classifyRun(run) === "noise") {
-      if (!folded && label) {
-        rows.push(
-          <button
-            key="explored"
-            type="button"
-            role="listitem"
-            className="computer-item"
-            aria-expanded={exploredOpen}
-            aria-label={label}
-            onClick={() => setExploredOpen((open) => !open)}
-          >
-            <span>{label}</span>
-            <span className="computer-status">{exploredOpen ? "Hide" : "Show"}</span>
-          </button>,
-        );
-        if (exploredOpen) {
-          rows.push(
-            <div
-              key="explored-runs"
-              className="computer-explored-runs"
-              role="list"
-              aria-label="Explored commands"
-            >
-              {noise.map((item) => (
-                <RunButton
-                  key={item.id}
-                  run={item}
-                  selected={item.id === selectedId}
-                  onSelect={onSelect}
-                />
-              ))}
-            </div>,
-          );
-        }
-        folded = true;
-      }
-      continue;
-    }
-    rows.push(
-      <RunButton key={run.id} run={run} selected={run.id === selectedId} onSelect={onSelect} />,
-    );
-  }
-  return rows;
-}
-
-function RunButton({
-  run,
-  selected,
+function FilesChanged({
+  changed,
+  activeRunId,
+  snapshot,
+  allFilesOpen,
   onSelect,
+  onToggleAll,
 }: {
-  run: SandboxRun;
-  selected: boolean;
-  onSelect: (id: string) => void;
+  changed: ChangedFileRef[];
+  activeRunId: string | null;
+  snapshot: ComputerSnapshot | null;
+  allFilesOpen: boolean;
+  onSelect: (runId: string) => void;
+  onToggleAll: () => void;
 }) {
   return (
-    <button
-      type="button"
-      role="listitem"
-      className={selected ? "computer-item on" : "computer-item"}
-      aria-current={selected ? "true" : undefined}
-      aria-label={runTitle(run)}
-      onClick={() => onSelect(run.id)}
-    >
-      <span>{runTitle(run)}</span>
-      <span className="computer-status">{exitLabel(run)}</span>
-    </button>
-  );
-}
-
-function RunDetail({ run }: { run: SandboxRun }) {
-  const command = run.command ?? runTitle(run);
-  const output = run.stdout || run.stderr || "(no output)";
-  return (
-    <section
-      className="computer-detail sandbox-run"
-      aria-label={`${command} details`}
-      data-command={command}
-      data-exit-code={exitLabel(run)}
-    >
-      <p className="computer-kicker">{run.tool}</p>
-      <h3>Command</h3>
-      <pre className="tool-block">{command}</pre>
-      <h3>Exit code</h3>
-      <p className="computer-exit">{exitLabel(run)}</p>
-      <h3>Output</h3>
-      <OutputBlock text={output} />
-      {run.stderr && run.stdout ? (
+    <section className="computer-files" aria-label="Files changed">
+      <h3>Files changed</h3>
+      {changed.length > 0 ? (
+        <ul>
+          {changed.map((file) => (
+            <li key={file.path}>
+              <button
+                type="button"
+                className={
+                  file.runId === activeRunId ? "computer-file-link on" : "computer-file-link"
+                }
+                aria-current={file.runId === activeRunId ? "true" : undefined}
+                onClick={() => onSelect(file.runId)}
+              >
+                {file.path}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p>No files changed.</p>
+      )}
+      {snapshot && snapshot.files.length > 0 ? (
         <>
-          <h3>Error</h3>
-          <OutputBlock text={run.stderr} />
-        </>
-      ) : null}
-      {run.changedFiles.length > 0 ? (
-        <>
-          <h3>Changed files</h3>
-          <ul className="computer-changes">
-            {run.changedFiles.map((file) => (
-              <li key={file}>{file}</li>
-            ))}
-          </ul>
+          <button
+            type="button"
+            className="ghost-text computer-expand"
+            aria-expanded={allFilesOpen}
+            onClick={onToggleAll}
+          >
+            {allFilesOpen ? "Hide all files" : "All files"}
+          </button>
+          {allFilesOpen ? (
+            <ul aria-label="All sandbox files">
+              {snapshot.files.map((file) => (
+                <li key={file.path}>{file.kind === "dir" ? `${file.path}/` : file.path}</li>
+              ))}
+            </ul>
+          ) : null}
         </>
       ) : null}
     </section>
   );
 }
 
-function OutputBlock({ text }: { text: string }) {
-  const [full, setFull] = useState(false);
-  const preview = previewOutput(text);
-  const truncated = preview.truncated && !full;
+function TerminalMirror({ runs, id }: { runs: readonly SandboxRun[]; id: string }) {
+  const ordered = [...runs].reverse();
   return (
-    <>
-      <pre className="tool-block" data-output="true" data-truncated={truncated ? "true" : "false"}>
-        {truncated ? preview.text : text}
-      </pre>
-      {preview.truncated ? (
-        <button
-          type="button"
-          className="ghost-text computer-expand"
-          onClick={() => setFull((open) => !open)}
-        >
-          {full ? "Show less" : "Show full output"}
-        </button>
-      ) : null}
-    </>
+    <div
+      className="computer-terminal"
+      role="tabpanel"
+      id={id}
+      aria-label="Terminal"
+      aria-readonly="true"
+    >
+      {ordered.length === 0 ? (
+        <p className="computer-terminal-empty">No commands yet.</p>
+      ) : (
+        ordered.map((run) => {
+          const command = terminalCommand(run);
+          return (
+            <article
+              key={run.id}
+              className="computer-term-run"
+              data-run-id={run.id}
+              aria-label={command}
+            >
+              <p className="computer-term-line">
+                <span className="computer-term-prompt">sandbox:~$</span>{" "}
+                <span className="computer-term-cmd">{command}</span>
+              </p>
+              {run.stdout ? <pre className="computer-term-out">{run.stdout}</pre> : null}
+              {run.stderr ? <pre className="computer-term-err">{run.stderr}</pre> : null}
+              <p className="computer-term-meta">{terminalMeta(run)}</p>
+            </article>
+          );
+        })
+      )}
+    </div>
   );
 }
 
-export function classifyRun(run: SandboxRun): RunClass {
-  if (run.tool === "write") return "change";
-  if (run.tool === "exec" && run.changedFiles.length > 0) return "change";
-  if (run.tool === "read" || run.tool === "list") return "noise";
-  if (run.tool === "exec" && noiseCommand(run.command ?? "")) return "noise";
-  return "command";
+function BrowserPlaceholder({ id, labelledBy }: { id: string; labelledBy: string }) {
+  return (
+    <div className="computer-browser" role="tabpanel" id={id} aria-labelledby={labelledBy}>
+      <div className="computer-browser-bar">
+        <button type="button" className="icon-btn" disabled aria-label="Back">
+          ‹
+        </button>
+        <button type="button" className="icon-btn" disabled aria-label="Forward">
+          ›
+        </button>
+        <button type="button" className="icon-btn" disabled aria-label="Reload">
+          ↻
+        </button>
+        <input
+          className="computer-browser-url"
+          readOnly
+          value=""
+          placeholder="No page yet"
+          aria-label="Address"
+        />
+      </div>
+      <div className="computer-empty">
+        <h3>Nothing on screen yet</h3>
+        <p>Browser pages show up here when mockbot opens one.</p>
+      </div>
+    </div>
+  );
 }
 
 export function filesChanged(runs: readonly SandboxRun[]): ChangedFileRef[] {
@@ -367,55 +369,75 @@ export function filesChanged(runs: readonly SandboxRun[]): ChangedFileRef[] {
   return files;
 }
 
-export function exploredLabel(runs: readonly SandboxRun[]): string | null {
-  const noise = runs.filter((run) => classifyRun(run) === "noise");
-  if (noise.length === 0) return null;
-  const files = noise.filter((run) => run.tool === "read" || run.tool === "list").length;
-  const commands = noise.length - files;
-  return `Explored ${tally(files, "file")} / ${tally(commands, "command")}`;
+export function providerLabel(snapshot: ComputerSnapshot | null | undefined): string {
+  if (!snapshot) return "Sandbox";
+  if (snapshot.provider === "daytona") return "Daytona sandbox";
+  return "Mock sandbox";
 }
 
-export function previewOutput(text: string): { text: string; truncated: boolean } {
-  const lines = text.split("\n");
-  let preview =
-    lines.length > OUTPUT_PREVIEW_LINES ? lines.slice(0, OUTPUT_PREVIEW_LINES).join("\n") : text;
-  let truncated = preview.length !== text.length;
-  if (preview.length > OUTPUT_PREVIEW_CHARS) {
-    preview = preview.slice(0, OUTPUT_PREVIEW_CHARS);
-    truncated = true;
-  }
-  return { text: preview, truncated };
+export function computerPresence(
+  load: ComputerLoad,
+  hasSnapshot: boolean,
+  activities: readonly ComputerActivity[] = [],
+): ComputerPresence {
+  if (load === "error" && !hasSnapshot) return "offline";
+  const sandbox = activities.filter((item) => SANDBOX_TOOLS.has(item.name));
+  if (sandbox.some((item) => item.state === "approval")) return "needs_help";
+  if (sandbox.some((item) => item.state === "running")) return "working";
+  return "idle";
 }
 
-function noiseCommand(command: string): boolean {
-  const trimmed = command.trim();
-  if (/(?:^|\s)--version$/.test(trimmed)) return true;
-  const head = trimmed.split(/\s+/, 1)[0] ?? "";
-  const name = head.split("/").pop() ?? head;
-  return NOISE_COMMANDS.has(name);
+export function presenceLabel(presence: ComputerPresence): string {
+  if (presence === "working") return "Working";
+  if (presence === "needs_help") return "Needs help";
+  if (presence === "offline") return "Offline";
+  return "Idle";
 }
 
-function tally(count: number, singular: string): string {
-  return `${count} ${singular}${count === 1 ? "" : "s"}`;
+export function presenceSprite(presence: ComputerPresence): SpriteState {
+  if (presence === "working") return "working";
+  if (presence === "needs_help") return "thinking";
+  if (presence === "offline") return "error";
+  return "idle";
 }
 
-function runTitle(run: SandboxRun): string {
-  if (run.tool === "exec" && run.command) return run.command;
+export function clampPaneWidth(width: number): number {
+  if (!Number.isFinite(width)) return PANE_WIDTH_DEFAULT;
+  return Math.min(PANE_WIDTH_MAX, Math.max(PANE_WIDTH_MIN, Math.round(width)));
+}
+
+/** Dragging the pane's left edge: moving left grows the pane. */
+export function resizePaneWidth(startWidth: number, startX: number, clientX: number): number {
+  return clampPaneWidth(startWidth + (startX - clientX));
+}
+
+/** Screen opens at 560px. A wider pane stays wide. Other tabs keep the current width. */
+export function widthForContentTab(current: number, tab: ComputerContentTab): number {
+  if (tab !== "screen") return clampPaneWidth(current);
+  return clampPaneWidth(Math.max(current, PANE_WIDTH_SCREEN));
+}
+
+export function lineCount(text: string): number {
+  if (text.length === 0) return 0;
+  const body = text.endsWith("\n") ? text.slice(0, -1) : text;
+  if (body.length === 0) return 0;
+  return body.split("\n").length;
+}
+
+export function terminalCommand(run: SandboxRun): string {
+  if (run.command && run.command.trim()) return run.command;
   const path = run.arguments.path;
   if (path) return `${run.tool} ${path}`;
   return run.tool;
 }
 
-function exitLabel(run: SandboxRun): string {
-  if (run.timedOut) return "killed";
-  if (run.exitCode == null) return "failed";
-  return String(run.exitCode);
-}
-
-function statusLabel(state: ToolActivity["state"]): string {
-  if (state === "running") return "Running";
-  if (state === "approval") return "Needs approval";
-  if (state === "denied") return "Denied";
-  if (state === "error") return "Failed";
-  return "Done";
+export function terminalMeta(run: SandboxRun): string {
+  const exit = run.timedOut
+    ? "timed out"
+    : run.exitCode == null
+      ? "exit —"
+      : `exit ${run.exitCode}`;
+  const stdout = lineCount(run.stdout);
+  const stderr = lineCount(run.stderr);
+  return `${exit} · duration — · ${stdout} stdout ${stdout === 1 ? "line" : "lines"} · ${stderr} stderr ${stderr === 1 ? "line" : "lines"}`;
 }
