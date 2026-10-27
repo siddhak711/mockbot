@@ -5,7 +5,9 @@ import { spriteColorForAgent, type SpriteState } from "../src/sprite";
 import { runtimeStatusLabel, type RuntimeStatus } from "../src/token-stream";
 import { AgentPanel, type AgentDraft } from "./agent-panel";
 import { BotSprite } from "./bot-sprite";
-import { ClockIcon, HidePanelIcon, PlugIcon, TrafficLights } from "./icons";
+import { useMemoryPanel } from "../src/memory/panel-store";
+import { ClockIcon, HidePanelIcon, MemoryIcon, PlugIcon, TrafficLights } from "./icons";
+import "./memory/memory.css";
 import { ThemeToggle } from "./theme";
 
 function userLabel(user: SignedInUser): string {
@@ -36,6 +38,7 @@ export function Sidebar({
   onSelectAgent,
   onCreateAgent,
   onOpenConnectors,
+  onOpenMemory,
   user,
 }: {
   agents: Agent[];
@@ -49,10 +52,13 @@ export function Sidebar({
   onSelectAgent: (id: string) => void;
   onCreateAgent: (draft: AgentDraft) => Promise<string | null>;
   onOpenConnectors?: () => void;
+  onOpenMemory?: () => void;
   user: SignedInUser;
 }) {
   const status = runtimeStatusLabel(runtimeStatus);
   const person = userLabel(user);
+  const pending = useMemoryPanel().proposals.length;
+  const memoryLabel = pending > 0 ? `Memory, ${pending} pending` : "Memory";
 
   if (collapsed) {
     return (
@@ -67,6 +73,16 @@ export function Sidebar({
           <UserAvatar user={user} />
         </button>
         <div className="rail-divider" role="separator" />
+        {onOpenMemory ? (
+          <button
+            type="button"
+            className="rail-agent"
+            aria-label={memoryLabel}
+            onClick={onOpenMemory}
+          >
+            <MemoryIcon />
+          </button>
+        ) : null}
         <div className="rail-agents">
           {agents.map((agent) => {
             const selected = agent.id === activeAgentId;
@@ -119,6 +135,23 @@ export function Sidebar({
         <button type="button" className="nav-action" onClick={onOpenConnectors}>
           <PlugIcon />
           Connectors
+        </button>
+      ) : null}
+      {onOpenMemory ? (
+        <button
+          type="button"
+          className="nav-action"
+          aria-label={memoryLabel}
+          onClick={onOpenMemory}
+        >
+          <MemoryIcon />
+          Memory
+          {pending > 0 ? (
+            <span className="nav-pending">
+              <i />
+              {pending}
+            </span>
+          ) : null}
         </button>
       ) : null}
       <div className="sidebar-sections">

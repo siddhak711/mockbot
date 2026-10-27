@@ -76,7 +76,9 @@ export type LlmMessage = {
 
 export type ProviderId = "mock" | "openai";
 
-export type MemoryKind = "profile" | "fact";
+export type MemoryKind = "profile" | "fact" | "shared" | "chat" | "journal";
+
+export type MemoryOrigin = "you_said" | "inferred" | "agent" | "chat";
 
 export type MemoryVersion = {
   id: string;
@@ -91,6 +93,23 @@ export type MemoryVersion = {
   validTo: string | null;
   deletedAt: string | null;
   createdBy: string;
+  origin?: MemoryOrigin;
+  signal?: string | null;
+  edited?: boolean;
+  fromAgent?: string | null;
+  evidence?: string | null;
+};
+
+export type MemoryProposal = {
+  id: string;
+  agentId: string;
+  kind: Exclude<MemoryKind, "journal">;
+  key: string;
+  content: string;
+  signal: string;
+  evidence: string | null;
+  fingerprint: string;
+  createdAt: string;
 };
 
 export type Memory = MemoryVersion & {

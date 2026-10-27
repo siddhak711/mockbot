@@ -9,6 +9,7 @@ import { MenuIcon } from "./icons";
 import { Sidebar } from "./sidebar";
 import { ThreadActions } from "./thread-actions";
 import { BotSprite, botSpriteLabel } from "./bot-sprite";
+import { MemoryPanel, rememberSettingsReturn } from "./memory-panel";
 import { SidePane, type SideTab } from "./side-pane";
 import { Transcript } from "./transcript";
 import { useRunSprite } from "./use-run-sprite";
@@ -18,6 +19,11 @@ import type { Agent } from "../src/agents/types";
 import type { SignedInUser } from "../src/auth/user";
 import { releaseDecision, settleDecision, stopDecision } from "../src/decision-lock";
 import { applyMemoryRefresh, memoriesAfterAgentSwitch } from "../src/memory/panel-state";
+import {
+  getMemoryPanelState,
+  patchMemoryPanel,
+  replaceMemoryData,
+} from "../src/memory/panel-store";
 import { SseParser } from "../src/sse";
 import { applyClientEvent, emptyTrace, phaseFromEvent, streamedWeight } from "../src/trace";
 import { fetchComputerSnapshot } from "../src/sandbox/refresh";
@@ -37,7 +43,14 @@ import {
   spriteColorForAgent,
   type SpriteAlert,
 } from "../src/sprite";
-import type { Conversation, LivePhase, Memory, Message, ToolCallStatus } from "../src/types";
+import type {
+  Conversation,
+  LivePhase,
+  Memory,
+  MemoryProposal,
+  Message,
+  ToolCallStatus,
+} from "../src/types";
 
 function isAbort(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
@@ -84,6 +97,8 @@ export function Workspace({
   const [sideTab, setSideTab] = useState<SideTab>("computer");
   const [memories, setMemories] = useState<Memory[] | null>(null);
   const [memoryError, setMemoryError] = useState<string | null>(null);
+  const [memoryOpen, setMemoryOpen] = useState(false);
+  const [memoryNotice, setMemoryNotice] = useState<{ id: string; label: string } | null>(null);
   const [computer, setComputer] = useState<ComputerSnapshot | null>(null);
   const [computerReady, setComputerReady] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
@@ -124,6 +139,7 @@ export function Workspace({
     memoriesRef.current = cleared.memories;
     setMemoryError(cleared.error);
     setMemories(cleared.memories);
+    replaceMemoryData({ memories: cleared.memories, proposals: [], error: cleared.error });
   }, []);
 
   const adoptMemoryAgent = useCallback(
@@ -201,9 +217,10 @@ export function Workspace({
   const refreshMemories = useCallback(async () => {
     const agentId = memoryAgentRef.current;
     const response = await fetch(`/api/memories?agentId=${encodeURIComponent(agentId)}`);
-    const loaded = response.ok
-      ? ((await response.json()) as { memories: Memory[] }).memories
+    const body = response.ok
+      ? ((await response.json()) as { memories: Memory[]; proposals?: MemoryProposal[] })
       : null;
+    const loaded = body?.memories ?? null;
     const currentAgentId = memoryAgentRef.current;
     if (currentAgentId !== agentId) return;
     const decision = applyMemoryRefresh({
@@ -217,6 +234,11 @@ export function Workspace({
     memoriesRef.current = decision.memories;
     setMemoryError(decision.error);
     setMemories(decision.memories);
+    replaceMemoryData({
+      memories: decision.memories,
+      proposals: body?.proposals ?? getMemoryPanelState().proposals,
+      error: decision.error,
+    });
   }, []);
 
   const refreshConnectors = useCallback(async () => {
@@ -312,6 +334,21 @@ export function Workspace({
       if (!event.shiftKey && event.key.toLowerCase() === "k") {
         event.preventDefault();
         setPaletteOpen(true);
+        return;
+      }
+      if (event.shiftKey && event.key.toLowerCase() === "m") {
+        event.preventDefault();
+        setMemoryOpen((open) => {
+          const next = !open;
+          window.sessionStorage.setItem("mockbot.memory.pane", next ? "1" : "0");
+          return next;
+        });
+        return;
+      }
+      if (!event.shiftKey && event.key === ",") {
+        event.preventDefault();
+        rememberSettingsReturn(memoryAgentRef.current);
+        window.location.assign("/settings/memory");
       }
     }
     window.addEventListener("keydown", onKey);
@@ -326,11 +363,11 @@ export function Workspace({
     setPaletteOpen(false);
   }
 
-  function showMemory() {
-    setComputerOpen(true);
-    setSideTab("memory");
-    setMobilePane("memory");
+  function showMemory(factId?: string) {
+    setMemoryOpen(true);
+    window.sessionStorage.setItem("mockbot.memory.pane", "1");
     setNavOpen(false);
+    if (factId) patchMemoryPanel({ selectedId: factId, flashId: factId });
     void refreshMemories();
   }
 
@@ -623,7 +660,10 @@ export function Workspace({
 
       if (conversationId) {
         await selectConversation(conversationId);
+        const before = new Set((memoriesRef.current ?? []).map((memory) => memory.id));
         await refreshMemories();
+        const created = (memoriesRef.current ?? []).find((memory) => !before.has(memory.id));
+        if (created) setMemoryNotice({ id: created.id, label: created.content });
       }
     } catch (sendError) {
       if (isAbort(sendError)) {
@@ -724,6 +764,13 @@ export function Workspace({
   });
 
   useEffect(() => {
+    const reopen = window.sessionStorage.getItem("mockbot.memory.reopen") === "1";
+    const pane = window.sessionStorage.getItem("mockbot.memory.pane") === "1";
+    if (reopen || pane) setMemoryOpen(true);
+    if (reopen) window.sessionStorage.removeItem("mockbot.memory.reopen");
+  }, []);
+
+  useEffect(() => {
     if (!agentsLoaded) return;
     if (memoryAgentRef.current !== speakingId) {
       memoryAgentRef.current = speakingId;
@@ -734,15 +781,13 @@ export function Workspace({
 
   return (
     <div
-      className={
-        computerOpen
-          ? sidebarCollapsed
-            ? "app with-computer sidebar-collapsed"
-            : "app with-computer"
-          : sidebarCollapsed
-            ? "app sidebar-collapsed"
-            : "app"
-      }
+      className={[
+        "app",
+        sidebarCollapsed ? "sidebar-collapsed" : "",
+        memoryOpen ? "with-memory" : computerOpen ? "with-computer" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
     >
       <Sidebar
         agents={agents}
@@ -759,6 +804,7 @@ export function Workspace({
         onSelectAgent={selectAgent}
         onCreateAgent={createAgent}
         onOpenConnectors={() => openConnectors("list")}
+        onOpenMemory={() => showMemory()}
         user={user}
       />
       <button
@@ -806,8 +852,8 @@ export function Workspace({
           <button
             type="button"
             role="tab"
-            aria-selected={mobilePane === "memory"}
-            className={mobilePane === "memory" ? "on" : undefined}
+            aria-selected={memoryOpen}
+            className={memoryOpen ? "on" : undefined}
             onClick={() => showMemory()}
           >
             Memory
@@ -851,6 +897,15 @@ export function Workspace({
             onSelectTool={setSelectedToolId}
             onOpenTrace={showTrace}
             agentName={speaking?.name ?? "Mockbot"}
+            memoryNotice={memoryNotice?.label ?? null}
+            onViewMemory={
+              memoryNotice
+                ? () => {
+                    showMemory(memoryNotice.id);
+                    setMemoryNotice(null);
+                  }
+                : undefined
+            }
             reconnectFor={(activity) => {
               if (activity.state !== "error") return null;
               const connector = connectorForActivity(connectors, activity.name);
@@ -901,7 +956,19 @@ export function Workspace({
           />
         </div>
       </main>
-      {computerOpen ? (
+      {memoryOpen ? (
+        <MemoryPanel
+          variant="pane"
+          agentId={speakingId}
+          agentName={speaking?.name ?? "Mockbot"}
+          hotkeys
+          onClose={() => {
+            setMemoryOpen(false);
+            window.sessionStorage.setItem("mockbot.memory.pane", "0");
+          }}
+          onChanged={refreshMemories}
+        />
+      ) : computerOpen ? (
         <SidePane
           tab={sideTab}
           onTab={setSideTab}
@@ -943,6 +1010,19 @@ export function Workspace({
             label: "Routines",
             run: () => {
               window.location.assign("/routines");
+            },
+          },
+          {
+            id: "memory",
+            label: "Memory",
+            run: () => showMemory(),
+          },
+          {
+            id: "memory-settings",
+            label: "Settings · Memory",
+            run: () => {
+              rememberSettingsReturn(speakingId);
+              window.location.assign("/settings/memory");
             },
           },
         ]}

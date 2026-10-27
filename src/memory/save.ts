@@ -1,4 +1,4 @@
-import type { MemoryKind, MemoryVersion } from "../types";
+import type { MemoryKind, MemoryOrigin, MemoryVersion } from "../types";
 import { copiedFromToolOutput, groundedInUserMessages } from "./grounding";
 import { normalizeKey } from "./prompt";
 import { MemoryRepository } from "./repository";
@@ -19,6 +19,11 @@ export async function saveMemory(
     kind?: MemoryKind | null;
     sourceMessageId?: string | null;
     createdBy: string;
+    origin?: MemoryOrigin | null;
+    signal?: string | null;
+    edited?: boolean;
+    fromAgent?: string | null;
+    evidence?: string | null;
     mode: "write" | "update";
     userMessages?: readonly string[];
     toolOutputs?: readonly string[];
@@ -57,6 +62,10 @@ export async function saveMemory(
     }
   }
   if (input.mode === "update") {
+    const live = await memories.getLiveByKey(input.agentId, key);
+    if (live?.kind === "journal") {
+      return { ok: false, blocked: "validation", error: "Journal is read-only." };
+    }
     const updated = await memories.update({
       agentId: input.agentId,
       key,
@@ -64,6 +73,11 @@ export async function saveMemory(
       kind: input.kind,
       sourceMessageId: input.sourceMessageId,
       createdBy: input.createdBy,
+      origin: input.origin,
+      signal: input.signal,
+      edited: input.edited,
+      fromAgent: input.fromAgent,
+      evidence: input.evidence,
     });
     if (!updated) {
       return {
@@ -81,6 +95,11 @@ export async function saveMemory(
     kind: input.kind,
     sourceMessageId: input.sourceMessageId,
     createdBy: input.createdBy,
+    origin: input.origin,
+    signal: input.signal,
+    edited: input.edited,
+    fromAgent: input.fromAgent,
+    evidence: input.evidence,
   });
   return {
     ok: true,

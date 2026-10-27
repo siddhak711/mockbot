@@ -6,6 +6,7 @@ import { showThinkingRow } from "../src/token-stream";
 import type { LivePhase, Message } from "../src/types";
 import type { ToolActivity } from "../src/tools/display";
 import { AssistantStream } from "./assistant-stream";
+import { MemoryUpdateChip } from "./memory-panel";
 import { DownIcon } from "./icons";
 import { BotSprite, botSpriteLabel } from "./bot-sprite";
 import { ToolActivityCards } from "./tool-activity";
@@ -55,6 +56,8 @@ export function Transcript({
   agentName = "Mockbot",
   reconnectFor,
   onReconnect,
+  memoryNotice,
+  onViewMemory,
 }: {
   messages: Message[];
   streaming?: boolean;
@@ -69,6 +72,8 @@ export function Transcript({
   agentName?: string;
   reconnectFor?: (activity: ToolActivity) => string | null;
   onReconnect?: (activity: ToolActivity) => void;
+  memoryNotice?: string | null;
+  onViewMemory?: () => void;
 }) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
@@ -188,6 +193,9 @@ export function Transcript({
                 </article>
               );
             })}
+            {memoryNotice && onViewMemory ? (
+              <MemoryUpdateChip label={memoryNotice} onView={onViewMemory} />
+            ) : null}
             {pendingThink ? (
               <div className="thinking" aria-live="polite" aria-label="Thinking">
                 <BotSprite state={spriteState} color={spriteColor} size={32} />

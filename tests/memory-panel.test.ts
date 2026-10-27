@@ -50,7 +50,8 @@ it("keeps a failed memory load out of the loading state and offers retry", () =>
     }),
   );
   expect(html).toContain(MEMORY_LOAD_ERROR);
-  expect(html).toContain("Retry");
+  expect(html).toContain("Try again");
+  expect(html.replace(/&#x27;|&apos;/g, "'")).toContain("Couldn't load memory");
   expect(html).not.toContain("Loading memories");
 });
 
@@ -106,7 +107,7 @@ it("keeps the current agent's load error when an old agent's fetch fails", () =>
     }),
   );
   expect(html).toContain(MEMORY_LOAD_ERROR);
-  expect(html).toContain("Retry");
+  expect(html).toContain("Try again");
 
   const stale = applyMemoryRefresh({
     requestedAgentId: "agent_default",

@@ -6,7 +6,12 @@ export function groupMemories(rows: readonly MemoryVersion[]): Memory[] {
   return live.map((memory) => ({
     ...memory,
     history: rows
-      .filter((row) => row.key.toLowerCase() === memory.key.toLowerCase() && !isLiveMemory(row))
+      .filter(
+        (row) =>
+          row.agentId === memory.agentId &&
+          row.key.toLowerCase() === memory.key.toLowerCase() &&
+          !isLiveMemory(row),
+      )
       .sort((left, right) => right.validFrom.localeCompare(left.validFrom)),
   }));
 }

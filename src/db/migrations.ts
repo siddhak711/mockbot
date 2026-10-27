@@ -470,4 +470,65 @@ CREATE UNIQUE INDEX conversations_user_agent_key
   ON conversations (user_id, agent_id) NULLS NOT DISTINCT;
 `,
   },
+  {
+    id: "014_memory_panel",
+    sql: `
+DO $memory_kind_014$
+DECLARE
+  constraint_name TEXT;
+BEGIN
+  SELECT con.conname INTO constraint_name
+  FROM pg_constraint con
+  JOIN pg_class rel ON rel.oid = con.conrelid
+  WHERE rel.relname = 'memories'
+    AND con.contype = 'c'
+    AND pg_get_constraintdef(con.oid) ILIKE '%kind%';
+  IF constraint_name IS NOT NULL THEN
+    EXECUTE format('ALTER TABLE memories DROP CONSTRAINT %I', constraint_name);
+  END IF;
+END
+$memory_kind_014$;
+
+ALTER TABLE memories ADD CONSTRAINT memories_kind_check
+  CHECK (kind IN ('profile', 'fact', 'shared', 'chat', 'journal'));
+
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS origin TEXT NOT NULL DEFAULT 'you_said';
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS signal TEXT;
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS edited BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS from_agent TEXT;
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS evidence TEXT;
+
+CREATE TABLE IF NOT EXISTS memory_proposals (
+  id TEXT PRIMARY KEY,
+  user_id TEXT,
+  agent_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('profile', 'fact', 'shared', 'chat')),
+  key TEXT NOT NULL,
+  content TEXT NOT NULL,
+  signal TEXT NOT NULL,
+  evidence TEXT,
+  fingerprint TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS memory_proposals_agent_idx
+  ON memory_proposals (agent_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS memory_dismissals (
+  id TEXT PRIMARY KEY,
+  user_id TEXT,
+  fingerprint TEXT NOT NULL,
+  dismissed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  hidden_until TIMESTAMPTZ NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS memory_dismissals_user_fp
+  ON memory_dismissals (user_id, fingerprint)
+  WHERE user_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS memory_dismissals_anon_fp
+  ON memory_dismissals (fingerprint)
+  WHERE user_id IS NULL;
+`,
+  },
 ];
