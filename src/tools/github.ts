@@ -1,6 +1,9 @@
 import { asRecord, jsonResult, present, readJson, toolFetchInit } from "./http";
-import { warnMockFallback } from "./mock-fallback";
+import { isProductionBuild, mockEnabled, mockFlag } from "../mock-gate";
 import type { FetchLike, ToolDefinition } from "./types";
+
+/** The message production shows until per-user GitHub OAuth exists. */
+export const GITHUB_NOT_CONNECTED = "GitHub not connected";
 
 const ACTIONS = ["list_issues", "get_issue", "list_pulls", "get_pull", "get_file"] as const;
 type GithubAction = (typeof ACTIONS)[number];
@@ -145,9 +148,21 @@ export function githubTool(
     },
     async invoke(args, context) {
       const action = args.action as GithubAction;
+      if (isProductionBuild(env)) {
+        // GITHUB_TOKEN is a local development credential. Production needs per-user OAuth.
+        return {
+          content: `${GITHUB_NOT_CONNECTED}. Per-user GitHub OAuth is not available in production yet.`,
+          isError: true,
+        };
+      }
       const token = present(env.GITHUB_TOKEN);
       if (!token) {
-        warnMockFallback("github", "GITHUB_TOKEN");
+        if (!mockEnabled(env, "GITHUB")) {
+          return {
+            content: `${GITHUB_NOT_CONNECTED}. GITHUB_TOKEN is not set; it is a local development credential. Set ${mockFlag("GITHUB")}=1 to use labeled mock data outside production.`,
+            isError: true,
+          };
+        }
         return { content: jsonResult(mockResult(action, args)) };
       }
       const owner = String(args.owner);

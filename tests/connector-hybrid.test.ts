@@ -290,7 +290,7 @@ it("saves catalog defaults and keeps the api key off the client", async () => {
   setAppContext({
     store,
     provider: new MockProvider({ delayMs: 0 }),
-    tools: createDefaultTools({}),
+    tools: createDefaultTools(process.env),
   });
   const server = await startMockMcpServer({ auth: "apikey", token: "connector-key" });
   try {
@@ -402,7 +402,7 @@ it("asks before a legacy connector runs a send tool", async () => {
     setAppContext({
       store,
       provider: new MockProvider({ delayMs: 0 }),
-      tools: createDefaultTools({}),
+      tools: createDefaultTools(process.env),
     });
     await store.createConnector({
       name: "Demo",
@@ -482,7 +482,7 @@ it("skips the name heuristic when a write tool is set to always allow", async ()
     setAppContext({
       store,
       provider: new MockProvider({ delayMs: 0 }),
-      tools: createDefaultTools({}),
+      tools: createDefaultTools(process.env),
     });
     const setting = (approval: "ask" | "auto"): ConnectorToolSetting => ({
       enabled: true,
@@ -523,7 +523,7 @@ it("keeps stored tools that are missing from the current listing", async () => {
     setAppContext({
       store,
       provider: new MockProvider({ delayMs: 0 }),
-      tools: createDefaultTools({}),
+      tools: createDefaultTools(process.env),
     });
     const tools: Record<string, ConnectorToolSetting> = {
       echo: {
@@ -605,7 +605,7 @@ it("passes a saved stdio api key to the child as MCP_PROBE_KEY", async () => {
   setAppContext({
     store,
     provider: new MockProvider({ delayMs: 0 }),
-    tools: createDefaultTools({}),
+    tools: createDefaultTools(process.env),
   });
   const script = join(process.cwd(), "scripts/mock-mcp-server.mjs");
   const created = await createConnector(
@@ -640,7 +640,7 @@ it("creates a pasted oauth connector when the server asks for sign-in", async ()
     setAppContext({
       store,
       provider: new MockProvider({ delayMs: 0 }),
-      tools: createDefaultTools({}),
+      tools: createDefaultTools(process.env),
     });
     const created = await createConnector(
       jsonRequest({
@@ -685,7 +685,7 @@ it("returns a JSON error when connector creation cannot encrypt a secret", async
   setAppContext({
     store,
     provider: new MockProvider({ delayMs: 0 }),
-    tools: createDefaultTools({}),
+    tools: createDefaultTools(process.env),
   });
   const oauth = await startMockMcpServer({ auth: "oauth" });
   const keyed = await startMockMcpServer({ auth: "apikey", token: "connector-key" });

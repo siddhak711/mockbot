@@ -74,7 +74,7 @@ export type LlmMessage = {
   tool_call_id?: string;
 };
 
-export type ProviderId = "mock" | "openai";
+export type ProviderId = "mock" | "openai" | "unconfigured";
 
 export type MemoryKind = "profile" | "fact";
 

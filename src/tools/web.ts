@@ -1,5 +1,5 @@
 import { asRecord, jsonResult, present, readJson, toolFetchInit } from "./http";
-import { warnMockFallback } from "./mock-fallback";
+import { missingCredential, mockEnabled } from "../mock-gate";
 import type { FetchLike, ToolDefinition } from "./types";
 
 const SEARCH_URL = "https://api.tavily.com/search";
@@ -118,7 +118,12 @@ export function webSearchTool(
       const query = String(args.query ?? "");
       const apiKey = present(env.TAVILY_API_KEY);
       if (!apiKey) {
-        warnMockFallback("web_search", "TAVILY_API_KEY");
+        if (!mockEnabled(env, "WEB")) {
+          return {
+            content: missingCredential("web_search", "TAVILY_API_KEY", "WEB"),
+            isError: true,
+          };
+        }
         return { content: jsonResult(mockSearch(query)) };
       }
       const response = await readJson(
@@ -172,7 +177,12 @@ export function webFetchTool(
       const url = String(args.url ?? "");
       const apiKey = present(env.TAVILY_API_KEY);
       if (!apiKey) {
-        warnMockFallback("web_fetch", "TAVILY_API_KEY");
+        if (!mockEnabled(env, "WEB")) {
+          return {
+            content: missingCredential("web_fetch", "TAVILY_API_KEY", "WEB"),
+            isError: true,
+          };
+        }
         return { content: jsonResult(mockFetch(url)) };
       }
       const response = await readJson(
