@@ -20,6 +20,22 @@ export class SandboxTurnProvider implements LlmProvider {
     return this.#inner.model;
   }
 
+  /** Decision from the wrapped router, when this turn actually called it. */
+  get lastDecision(): {
+    tier: "cheap" | "strong";
+    reason: "chat" | "tool" | "plan" | "code" | "retry";
+    model: string;
+  } | null {
+    const inner = this.#inner as LlmProvider & {
+      lastDecision?: {
+        tier: "cheap" | "strong";
+        reason: "chat" | "tool" | "plan" | "code" | "retry";
+        model: string;
+      } | null;
+    };
+    return inner.lastDecision ?? null;
+  }
+
   async *stream(
     messages: LlmMessage[],
     input?: StreamOptions | AbortSignal,
@@ -33,6 +49,10 @@ export class SandboxTurnProvider implements LlmProvider {
       yield* this.#inner.stream(messages, input);
       return;
     }
+    // This turn never reaches the router. Drop a decision left by an earlier call
+    // so the scripted reply is not stamped with that tier.
+    const inner = this.#inner as { lastDecision?: unknown };
+    if ("lastDecision" in inner) inner.lastDecision = null;
 
     const next = plan[toolResultsSinceUser(messages)];
     if (!next) {

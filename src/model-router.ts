@@ -1,4 +1,3 @@
-import { AsyncLocalStorage } from "node:async_hooks";
 import type { Sql } from "./db/sql";
 import { streamOptions, type LlmProvider, type StreamOptions } from "./llm";
 import { estimateTokens } from "./memory/tokens";
@@ -26,6 +25,8 @@ export type TierRates = {
   id: string;
   inputUsdPerMillion: number;
   outputUsdPerMillion: number;
+  /** Completion cap sent as max_tokens. OpenRouter otherwise reserves the model maximum. */
+  maxTokens: number;
 };
 
 export type RouterConfig = {
@@ -49,11 +50,15 @@ export const DEFAULT_ROUTER_CONFIG: RouterConfig = {
     id: "deepseek/deepseek-v4.1-flash",
     inputUsdPerMillion: 0.3,
     outputUsdPerMillion: 1.2,
+    maxTokens: 4096,
   },
   strong: {
     id: "moonshotai/kimi-k3.1-pro",
     inputUsdPerMillion: 2,
     outputUsdPerMillion: 10,
+    // The strong model's own maximum is 65536. Requesting that makes OpenRouter
+    // reserve more credit than a small balance can cover and return 402.
+    maxTokens: 8192,
   },
 };
 
@@ -120,6 +125,7 @@ export function loadRouterConfig(
       env.MODEL_TIER_CHEAP,
       env.MODEL_TIER_CHEAP_INPUT_USD_PER_MTOK,
       env.MODEL_TIER_CHEAP_OUTPUT_USD_PER_MTOK,
+      env.MODEL_TIER_CHEAP_MAX_TOKENS,
       DEFAULT_ROUTER_CONFIG.cheap,
       env,
     ),
@@ -127,6 +133,7 @@ export function loadRouterConfig(
       env.MODEL_TIER_STRONG,
       env.MODEL_TIER_STRONG_INPUT_USD_PER_MTOK,
       env.MODEL_TIER_STRONG_OUTPUT_USD_PER_MTOK,
+      env.MODEL_TIER_STRONG_MAX_TOKENS,
       DEFAULT_ROUTER_CONFIG.strong,
       env,
     ),
@@ -137,6 +144,7 @@ function tierRates(
   explicitId: string | undefined,
   explicitInput: string | undefined,
   explicitOutput: string | undefined,
+  explicitMaxTokens: string | undefined,
   openWeights: TierRates,
   env: Record<string, string | undefined>,
 ): TierRates {
@@ -148,6 +156,7 @@ function tierRates(
     id,
     inputUsdPerMillion: readRate(explicitInput, listed ? openWeights.inputUsdPerMillion : 0),
     outputUsdPerMillion: readRate(explicitOutput, listed ? openWeights.outputUsdPerMillion : 0),
+    maxTokens: readMaxTokens(explicitMaxTokens, openWeights.maxTokens),
   };
 }
 
@@ -371,17 +380,6 @@ export function messagesForTurn(turn: RouterTurn): LlmMessage[] {
   return messages;
 }
 
-const routeContext = new AsyncLocalStorage<RouteDecision>();
-
-/** Tier chosen for the turn that is streaming in this async context. */
-export function currentModelRoute(): RouteDecision | null {
-  return routeContext.getStore() ?? null;
-}
-
-export function noteModelRoute(decision: RouteDecision): void {
-  routeContext.enterWith(decision);
-}
-
 export class RoutingProvider implements LlmProvider {
   readonly #inner: LlmProvider;
   readonly #config: RouterConfig;
@@ -416,13 +414,15 @@ export class RoutingProvider implements LlmProvider {
     const options = streamOptions(input);
     const turn = describeTurn(messages, { retryAfterFailure: options.retryAfterFailure });
     const decision = pickModel(turn, this.#config);
+    // Chat reads this field after the generator starts. A nested stream replaces
+    // it, so the caller copies the value before it consumes events that can delegate.
     this.lastDecision = decision;
-    noteModelRoute(decision);
     let outputTokens = 0;
     try {
       for await (const event of this.#inner.stream(messages, {
         ...options,
         model: decision.model,
+        maxTokens: this.#config[decision.tier].maxTokens,
       })) {
         outputTokens += outputTokensFrom(event);
         yield event;
@@ -466,34 +466,83 @@ function toolsForTurn(turn: RouterTurn): RouterToolCall[] {
   return tools;
 }
 
-const RUN_REQUEST = /\b(?:run|exec|execute)\b/i;
+const COMMANDS = new Set([
+  "npm",
+  "npx",
+  "yarn",
+  "pnpm",
+  "bun",
+  "node",
+  "python",
+  "python3",
+  "pip",
+  "git",
+  "cargo",
+  "go",
+  "make",
+  "gcc",
+  "clang",
+  "curl",
+  "wget",
+  "bash",
+  "sh",
+  "zsh",
+  "ls",
+  "cat",
+  "echo",
+  "mkdir",
+  "rm",
+  "cp",
+  "mv",
+  "docker",
+  "kubectl",
+  "psql",
+  "tsc",
+  "vitest",
+  "eslint",
+  "prettier",
+  "pytest",
+  "ruby",
+  "perl",
+  "java",
+  "javac",
+  "rustc",
+]);
 
 function impliedTools(text: string): RouterToolCall[] {
   const named = NAMED_CALL.exec(text.trim());
   if (named?.[1]) return [{ name: named[1], arguments: named[2] }];
   const computer = planComputerTurn(text) ?? [];
+  const command = runCommand(text);
   // planComputerTurn treats any backtick span as an exec. A mention such as
-  // "what does `npm ci` do?" is still chat. An exec counts only when the
-  // surrounding prose asks to run it.
-  const actions = computer.filter((action) => action.name !== "exec" || asksToRun(text));
-  if (!actions.some((action) => action.name === "exec") && asksToRun(text)) {
-    const command = runCommand(text);
-    if (command) actions.push({ name: "exec", args: { command } });
+  // "what does `npm ci` do?" is still chat, and so is "run a search".
+  const actions = computer.filter((action) => action.name !== "exec" || command != null);
+  if (!actions.some((action) => action.name === "exec") && command) {
+    actions.push({ name: "exec", args: { command } });
   }
   return actions.map((action) => ({ name: action.name, arguments: JSON.stringify(action.args) }));
 }
 
-function asksToRun(text: string): boolean {
-  return RUN_REQUEST.test(text.replace(/`[^`\n]*`/g, " "));
+function runCommand(text: string): string | null {
+  const prose = text.replace(/`[^`\n]*`/g, " ");
+  const plain = prose.match(/\b(?:run|exec|execute)\s+(.+)$/i);
+  if (plain?.[1]) {
+    const command = plain[1].replace(/[.?!]+$/, "").trim();
+    const token = command.split(/\s+/)[0]?.replace(/^['"]+|['",.]+$/g, "") ?? "";
+    if (command && isCommandToken(token)) return command;
+  }
+  if (!/\b(?:run|exec|execute)\b/i.test(prose)) return null;
+  const quoted = text.match(/`([^`\n]+)`/)?.[1]?.trim();
+  if (!quoted) return null;
+  const token = quoted.split(/\s+/)[0] ?? "";
+  return isCommandToken(token) ? quoted : null;
 }
 
-function runCommand(text: string): string | null {
-  const quoted = text.match(/`([^`\n]+)`/);
-  if (quoted?.[1]?.trim()) return quoted[1].trim();
-  const plain = text.replace(/`[^`\n]*`/g, " ").match(/\b(?:run|exec|execute)\s+(.+)$/i);
-  const command = plain?.[1]?.replace(/[.?!]+$/, "").trim();
-  if (!command || /^a command\b/i.test(command)) return null;
-  return command;
+function isCommandToken(token: string): boolean {
+  if (!token) return false;
+  if (COMMANDS.has(token.toLowerCase())) return true;
+  if (token.startsWith("./") || token.startsWith("/") || token.includes("/")) return true;
+  return /\.(sh|py|js|ts|mjs|cjs)$/i.test(token);
 }
 
 function isCode(text: string, tools: readonly RouterToolCall[]): boolean {
@@ -508,6 +557,15 @@ function readRate(value: string | undefined, fallback: number): number {
     throw new Error(
       `Model tier price "${value}" must be a non-negative number of USD per million tokens.`,
     );
+  }
+  return parsed;
+}
+
+function readMaxTokens(value: string | undefined, fallback: number): number {
+  if (value === undefined || value.trim() === "") return fallback;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 16384) {
+    throw new Error(`Model tier max tokens "${value}" must be an integer from 1 to 16384.`);
   }
   return parsed;
 }

@@ -23,6 +23,8 @@ export type StreamOptions = {
   conversationId?: string;
   /** The previous attempt on this turn failed. The router escalates when this is set. */
   retryAfterFailure?: boolean;
+  /** Completion cap for this request. The router sets it from the chosen tier. */
+  maxTokens?: number;
 };
 
 export interface LlmProvider {
@@ -42,6 +44,7 @@ export function streamOptions(input?: StreamOptions | AbortSignal): StreamOption
       model?: string;
       conversationId?: string;
       retryAfterFailure?: boolean;
+      maxTokens?: number;
     };
     return {
       signal: input,
@@ -49,6 +52,7 @@ export function streamOptions(input?: StreamOptions | AbortSignal): StreamOption
       ...(extra.model ? { model: extra.model } : {}),
       ...(extra.conversationId ? { conversationId: extra.conversationId } : {}),
       ...(extra.retryAfterFailure ? { retryAfterFailure: true } : {}),
+      ...(typeof extra.maxTokens === "number" ? { maxTokens: extra.maxTokens } : {}),
     };
   }
   return input;
@@ -542,7 +546,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     messages: LlmMessage[],
     input?: StreamOptions | AbortSignal,
   ): AsyncIterable<LlmStreamEvent> {
-    const { signal, tools = [], model } = streamOptions(input);
+    const { signal, tools = [], model, maxTokens } = streamOptions(input);
     let response: Response;
     try {
       response = await fetch(`${this.#baseUrl}/chat/completions`, {
@@ -556,6 +560,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
           model: model || this.model,
           stream: true,
           messages: messages.map(wireMessage),
+          ...(typeof maxTokens === "number" ? { max_tokens: maxTokens } : {}),
           ...(tools.length > 0 ? { tools: wireTools(tools), tool_choice: "auto" } : {}),
         }),
         signal,

@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { once } from "node:events";
 import { afterEach, expect, it, vi } from "vitest";
+import { POST as createAgent } from "../app/api/agents/route";
 import { POST } from "../app/api/chat/route";
 import { resetAppContext, setAppContext } from "../src/context";
 import { MockProvider, selectProvider } from "../src/llm";
@@ -118,6 +119,14 @@ it("routes an inline-code question cheap and an explicit run request strong", ()
     tier: "strong",
     reason: "code",
   });
+  expect(pickModel({ text: "run a search" })).toMatchObject({
+    tier: "cheap",
+    reason: "chat",
+  });
+  expect(pickModel({ text: "run through the notes" })).toMatchObject({
+    tier: "cheap",
+    reason: "chat",
+  });
 });
 
 it("routes each rule to the cheap or strong open-weights tier", () => {
@@ -157,6 +166,15 @@ it("reads tier ids and prices from env and refuses a closed model", () => {
     /open-weights/,
   );
   expect(() => loadRouterConfig({ MODEL_TIER_CHEAP_INPUT_USD_PER_MTOK: "-1" })).toThrow(/price/i);
+  const capped = loadRouterConfig({
+    LLM_BASE_URL: "https://openrouter.ai/api/v1",
+    MODEL_TIER_CHEAP_MAX_TOKENS: "1024",
+    MODEL_TIER_STRONG_MAX_TOKENS: "2048",
+  });
+  expect(capped.cheap.maxTokens).toBe(1024);
+  expect(capped.strong.maxTokens).toBe(2048);
+  expect(DEFAULT_ROUTER_CONFIG.strong.maxTokens).toBeLessThan(65536);
+  expect(() => loadRouterConfig({ MODEL_TIER_STRONG_MAX_TOKENS: "65536" })).toThrow(/16384/);
 });
 
 it("keeps a retry on the strong tier after the failed tool is stored as assistant text", async () => {
@@ -216,12 +234,13 @@ it("records the chosen tier on the log line and on the saved turn", async () => 
   const info = vi.spyOn(console, "info").mockImplementation(() => {});
   try {
     const store = await ConversationStore.open();
+    const routed = new RoutingProvider({
+      inner: new MockProvider({ delayMs: 0, chunkSize: 80 }),
+      config: DEFAULT_ROUTER_CONFIG,
+    });
     setAppContext({
       store,
-      provider: new RoutingProvider({
-        inner: new MockProvider({ delayMs: 0, chunkSize: 80 }),
-        config: DEFAULT_ROUTER_CONFIG,
-      }),
+      provider: new SandboxTurnProvider({ inner: routed, delayMs: 0 }),
     });
     const response = await POST(
       new Request("http://localhost/api/chat", {
@@ -234,7 +253,8 @@ it("records the chosen tier on the log line and on the saved turn", async () => 
     expect(info.mock.calls.some((call) => String(call[0]).includes("tier=cheap"))).toBe(true);
     expect(info.mock.calls.some((call) => String(call[0]).includes("reason=chat"))).toBe(true);
     const loaded = await store.getConversation((await store.listConversations())[0]!.id);
-    expect(loaded?.messages[1]?.trace?.route).toMatchObject({
+    const assistant = loaded?.messages.find((message) => message.role === "assistant");
+    expect(assistant?.trace?.route).toMatchObject({
       tier: "cheap",
       reason: "chat",
       model: DEFAULT_ROUTER_CONFIG.cheap.id,
@@ -242,6 +262,74 @@ it("records the chosen tier on the log line and on the saved turn", async () => 
   } finally {
     info.mockRestore();
   }
+});
+
+it("keeps the parent reply on its own tier when a delegate child uses another", async () => {
+  const store = await ConversationStore.open();
+  const routed = new RoutingProvider({
+    inner: new MockProvider({
+      delayMs: 0,
+      chunkSize: 80,
+      tools: (messages) => {
+        const system = messages.find((message) => message.role === "system")?.content ?? "";
+        if (system.includes("delegation: child")) return null;
+        return [
+          {
+            id: "call_delegate",
+            name: "delegate",
+            arguments: JSON.stringify({
+              agent: "Researcher",
+              task: "Implement the parser in TypeScript",
+            }),
+          },
+        ];
+      },
+      reply: (messages) => {
+        const system = messages.find((message) => message.role === "system")?.content ?? "";
+        if (system.includes("delegation: child")) return "Parser written.";
+        return undefined;
+      },
+    }),
+    config: DEFAULT_ROUTER_CONFIG,
+  });
+  setAppContext({
+    store,
+    provider: new SandboxTurnProvider({ inner: routed, delayMs: 0 }),
+  });
+  const created = await createAgent(
+    new Request("http://localhost/api/agents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Researcher", instructions: "You write parsers." }),
+    }),
+  );
+  expect(created.status).toBe(201);
+
+  const response = await POST(
+    new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Hello there" }),
+    }),
+  );
+  const events = await readSse(response);
+  expect(events.some((event) => event.event === "error")).toBe(false);
+
+  const conversations = await store.listConversations();
+  let parentRoute: { tier?: string; reason?: string } | undefined;
+  for (const item of conversations) {
+    const loaded = await store.getConversation(item.id);
+    const asked = loaded?.messages.some(
+      (message) => message.role === "user" && message.content === "Hello there",
+    );
+    if (!asked) continue;
+    parentRoute = loaded?.messages.find((message) => message.role === "assistant")?.trace?.route;
+  }
+  expect(parentRoute).toMatchObject({
+    tier: "cheap",
+    reason: "chat",
+    model: DEFAULT_ROUTER_CONFIG.cheap.id,
+  });
 });
 
 it("keeps both tiers on LLM_MODEL when tiers are unset and the base URL is not OpenRouter", async () => {
@@ -283,7 +371,12 @@ it("keeps both tiers on LLM_MODEL when tiers are unset and the base URL is not O
       new RoutingProvider({
         inner: new MockProvider({ delayMs: 0, chunkSize: 80 }),
         config: {
-          cheap: { id: "openai/gpt-4o", inputUsdPerMillion: 1, outputUsdPerMillion: 1 },
+          cheap: {
+            id: "openai/gpt-4o",
+            inputUsdPerMillion: 1,
+            outputUsdPerMillion: 1,
+            maxTokens: 128,
+          },
           strong: DEFAULT_ROUTER_CONFIG.strong,
         },
       }),
@@ -448,9 +541,11 @@ it("logs the tier and cost to run_events, and no-ops when the table is absent", 
 
 it("sends the cheap tier for chat and the strong tier after a failed tool", async () => {
   const models: string[] = [];
+  const limits: number[] = [];
   const server = createServer(async (request, response) => {
-    const body = JSON.parse(await readBody(request)) as { model?: string };
+    const body = JSON.parse(await readBody(request)) as { model?: string; max_tokens?: number };
     models.push(body.model ?? "");
+    limits.push(body.max_tokens ?? 0);
     response.writeHead(200, { "Content-Type": "text/event-stream" });
     if (models.length === 1) {
       writeSse(response, {
@@ -507,6 +602,11 @@ it("sends the cheap tier for chat and the strong tier after a failed tool", asyn
     const events = await readSse(response);
     expect(events.some((event) => event.event === "error")).toBe(false);
     expect(models).toEqual([DEFAULT_ROUTER_CONFIG.cheap.id, DEFAULT_ROUTER_CONFIG.strong.id]);
+    expect(limits).toEqual([
+      DEFAULT_ROUTER_CONFIG.cheap.maxTokens,
+      DEFAULT_ROUTER_CONFIG.strong.maxTokens,
+    ]);
+    expect(limits.every((limit) => limit < 65536)).toBe(true);
     expect(models).not.toContain("openai/gpt-4o-mini");
     const logged = recentRouteLogs();
     expect(logged.map((entry) => entry.tier)).toEqual(["cheap", "strong"]);

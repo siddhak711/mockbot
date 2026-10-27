@@ -18,7 +18,6 @@ import {
   STOPPED_TOOL_OUTPUT,
 } from "./tools/display";
 import type { ToolContext } from "./tools/types";
-import { currentModelRoute } from "./model-router";
 import { buildModelInput } from "./turn";
 import { applyStreamEvent, emptyTrace, hasVisibleStream, modelPromptParts } from "./trace";
 import type { LlmStreamEvent, LlmToolCall, MessageTrace } from "./types";
@@ -211,9 +210,10 @@ export async function streamChatTurn(options: {
   let persistQueue = Promise.resolve();
   let userStopped = false;
   const liveCalls: PendingCall[] = [];
+  let route: MessageTrace["route"];
 
   const persist = (text: string, current: MessageTrace) => {
-    const stamped = stampRoute(current);
+    const stamped = stampRoute(current, route);
     if (stamped !== current) trace = stamped;
     const encoded = JSON.stringify({ text, trace: stamped });
     persistQueue = persistQueue.then(async () => {
@@ -328,6 +328,7 @@ export async function streamChatTurn(options: {
             tools: exposed,
             conversationId: conversationSnapshot.id,
           });
+          let capturedRoute = false;
           const events = delegateTool
             ? runWithDelegate(modelEvents, async (call) => {
                 let args: Record<string, unknown>;
@@ -347,6 +348,13 @@ export async function streamChatTurn(options: {
 
           try {
             for await (const event of events) {
+              if (!capturedRoute) {
+                const decision = providerDecision(provider);
+                if (decision) {
+                  route = decision;
+                  capturedRoute = true;
+                }
+              }
               if (signal?.aborted || userStopped) break;
               if (!sawStart && event.type !== "start") {
                 sawStart = true;
@@ -603,8 +611,20 @@ function toLlmToolCall(call: PendingCall): LlmToolCall {
   };
 }
 
-function stampRoute(current: MessageTrace): MessageTrace {
-  const route = currentModelRoute();
+function providerDecision(provider: LlmProvider): MessageTrace["route"] | undefined {
+  const routed = provider as LlmProvider & {
+    lastDecision?: {
+      tier: "cheap" | "strong";
+      reason: "chat" | "tool" | "plan" | "code" | "retry";
+      model: string;
+    } | null;
+  };
+  const decision = routed.lastDecision;
+  if (!decision?.model) return undefined;
+  return { tier: decision.tier, reason: decision.reason, model: decision.model };
+}
+
+function stampRoute(current: MessageTrace, route: MessageTrace["route"]): MessageTrace {
   if (!route) return current;
   if (
     current.route?.tier === route.tier &&
@@ -613,10 +633,7 @@ function stampRoute(current: MessageTrace): MessageTrace {
   ) {
     return current;
   }
-  return {
-    ...current,
-    route: { tier: route.tier, reason: route.reason, model: route.model },
-  };
+  return { ...current, route: { ...route } };
 }
 
 export function toolActivity(
