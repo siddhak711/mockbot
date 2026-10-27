@@ -338,6 +338,32 @@ export class ConversationStore {
     return row ? mapConversation(row) : null;
   }
 
+  /** The newest non-empty message in each agent's thread, keyed by agent id. */
+  async latestAgentMessages(
+    userId?: string | null,
+  ): Promise<Map<string, { role: Role; content: string; createdAt: string }>> {
+    const result = await this.db.query<{
+      agent_id: string;
+      role: Role;
+      content: string;
+      created_at: string | Date;
+    }>(
+      `SELECT DISTINCT ON (c.agent_id) c.agent_id, m.role, m.content, m.created_at
+       FROM messages m
+       JOIN conversations c ON c.id = m.conversation_id
+       WHERE ($1::text IS NULL OR c.user_id IS NOT DISTINCT FROM $1)
+         AND btrim(m.content) <> ''
+       ORDER BY c.agent_id, m.seq DESC`,
+      [userId ?? null],
+    );
+    return new Map(
+      result.rows.map((row) => [
+        row.agent_id,
+        { role: row.role, content: row.content, createdAt: asIso(row.created_at) },
+      ]),
+    );
+  }
+
   async getConversation(
     id: string,
     agentId?: string,
@@ -409,6 +435,72 @@ export class ConversationStore {
       content,
       traceParam(trace),
     ]);
+  }
+
+  /**
+   * One stored tool call. Call ids repeat across conversations and turns, so a
+   * call is named by (conversation, message, id). Without a message, the newest
+   * call with that id in the conversation is returned.
+   */
+  async getToolCall(
+    id: string,
+    scope: { conversationId: string; messageId?: string },
+  ): Promise<StoredToolCall | null> {
+    const result = await this.db.query<ToolCallRow>(
+      `SELECT id, conversation_id, message_id, name, arguments, status, output, created_at
+       FROM tool_calls
+       WHERE id = $1 AND conversation_id = $2 AND ($3::text IS NULL OR message_id = $3)
+       ORDER BY seq DESC
+       LIMIT 1`,
+      [id, scope.conversationId, scope.messageId ?? null],
+    );
+    const row = result.rows[0];
+    return row ? mapToolCall(row) : null;
+  }
+
+  /** ask_user rows still waiting under this call id, newest first. */
+  async openAsks(id: string, conversationId?: string): Promise<StoredToolCall[]> {
+    const result = await this.db.query<ToolCallRow>(
+      `SELECT id, conversation_id, message_id, name, arguments, status, output, created_at
+       FROM tool_calls
+       WHERE id = $1 AND status = 'ask' AND name = 'ask_user'
+         AND ($2::text IS NULL OR conversation_id = $2)
+       ORDER BY seq DESC`,
+      [id, conversationId ?? null],
+    );
+    return result.rows.map(mapToolCall);
+  }
+
+  /** True while a stored ask_user row in this conversation still waits for an answer. */
+  async hasOpenAsk(conversationId: string): Promise<boolean> {
+    const result = await this.db.query<{ id: string }>(
+      `SELECT id FROM tool_calls
+       WHERE conversation_id = $1 AND status = 'ask' AND name = 'ask_user'
+       LIMIT 1`,
+      [conversationId],
+    );
+    return result.rows.length > 0;
+  }
+
+  /**
+   * Move one stored ask_user row out of `ask`. A second caller gets null so two
+   * instances cannot both continue the same question.
+   */
+  async claimToolCall(
+    tool: { id: string; conversationId: string; messageId: string },
+    status: ToolCallStatus,
+    output: string,
+  ): Promise<StoredToolCall | null> {
+    const result = await this.db.query<ToolCallRow>(
+      `UPDATE tool_calls
+       SET status = $4, output = $5, updated_at = NOW()
+       WHERE id = $1 AND conversation_id = $2 AND message_id = $3
+         AND status = 'ask' AND name = 'ask_user'
+       RETURNING id, conversation_id, message_id, name, arguments, status, output, created_at`,
+      [tool.id, tool.conversationId, tool.messageId, status, output],
+    );
+    const row = result.rows[0];
+    return row ? mapToolCall(row) : null;
   }
 
   async saveToolCall(input: {

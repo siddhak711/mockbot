@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { isLeadAgent } from "../src/agents/ids";
 import type { Agent } from "../src/agents/types";
 import { spriteColorForAgent, type SpriteState } from "../src/sprite";
 import { BotSprite } from "./bot-sprite";
-import { CloseIcon, PlusIcon } from "./icons";
+import { CloseIcon } from "./icons";
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -22,11 +23,80 @@ export type AgentDraft = {
   connectorId: string;
 };
 
+const SEEN_KEY = "mockbot.agent-seen";
+
+function readSeen(): Record<string, string> | null {
+  try {
+    const raw = window.localStorage.getItem(SEEN_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, string>) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeSeen(seen: Record<string, string>) {
+  try {
+    window.localStorage.setItem(SEEN_KEY, JSON.stringify(seen));
+  } catch {
+    // Unread dots are a convenience. A blocked store only means no dots.
+  }
+}
+
+/**
+ * Agents whose newest reply arrived after this browser last opened them.
+ * The first visit marks every thread as seen, so old replies never light up.
+ */
+function useUnread(agents: Agent[], activeAgentId: string): Set<string> {
+  const [seen, setSeen] = useState<Record<string, string> | null>(null);
+
+  useEffect(() => {
+    if (agents.length === 0) return;
+    setSeen((current) => {
+      const base = current ?? readSeen();
+      const next: Record<string, string> = { ...base };
+      let changed = base === null;
+      for (const agent of agents) {
+        const at = agent.lastMessageAt;
+        if (!at) continue;
+        const firstVisit = base === null;
+        const isActive = agent.id === activeAgentId;
+        if ((firstVisit || isActive) && next[agent.id] !== at) {
+          next[agent.id] = at;
+          changed = true;
+        }
+      }
+      if (!changed) return current ?? base;
+      writeSeen(next);
+      return next;
+    });
+  }, [agents, activeAgentId]);
+
+  return useMemo(() => {
+    const unread = new Set<string>();
+    if (!seen) return unread;
+    for (const agent of agents) {
+      if (agent.id === activeAgentId || agent.lastMessageRole !== "assistant") continue;
+      const at = agent.lastMessageAt;
+      if (at && (!seen[agent.id] || seen[agent.id]! < at)) unread.add(agent.id);
+    }
+    return unread;
+  }, [agents, activeAgentId, seen]);
+}
+
+function newestFirst(a: Agent, b: Agent): number {
+  const left = a.lastMessageAt ?? a.createdAt;
+  const right = b.lastMessageAt ?? b.createdAt;
+  return right.localeCompare(left);
+}
+
 export function AgentPanel({
   agents,
   activeAgentId,
   spriteState,
   busy,
+  query = "",
+  formOpen,
+  onFormOpenChange,
   onSelect,
   onCreate,
 }: {
@@ -34,10 +104,22 @@ export function AgentPanel({
   activeAgentId: string;
   spriteState: SpriteState;
   busy: boolean;
+  query?: string;
+  formOpen: boolean;
+  onFormOpenChange: (open: boolean) => void;
   onSelect: (id: string) => void;
   onCreate: (draft: AgentDraft) => Promise<string | null>;
 }) {
-  const [open, setOpen] = useState(false);
+  const open = formOpen;
+  const setOpen = onFormOpenChange;
+  const unread = useUnread(agents, activeAgentId);
+  const needle = query.trim().toLowerCase();
+  const matches = (agent: Agent) =>
+    !needle ||
+    agent.name.toLowerCase().includes(needle) ||
+    (agent.preview ?? "").toLowerCase().includes(needle);
+  const pinned = agents.filter((agent) => isLeadAgent(agent) && matches(agent));
+  const rows = agents.filter((agent) => !isLeadAgent(agent) && matches(agent)).sort(newestFirst);
   const [name, setName] = useState("");
   const [instructions, setInstructions] = useState("");
   const [memoryNote, setMemoryNote] = useState("");
@@ -139,43 +221,60 @@ export function AgentPanel({
 
   return (
     <section className="agent-section" aria-label="Agents">
-      <div className="section-head">
-        <div className="label">Agents</div>
-        <button
-          type="button"
-          className="icon-btn"
-          aria-expanded={open}
-          aria-label={open ? "Close form" : "New agent"}
-          onClick={() => {
-            if (pendingRef.current) return;
-            setOpen((value) => !value);
-          }}
-          disabled={busy || pending}
-        >
-          {open ? <CloseIcon /> : <PlusIcon />}
-        </button>
-      </div>
-      <div className="list">
-        {agents.map((agent) => {
+      {pinned.length > 0 ? (
+        <div className="roster-pins">
+          {pinned.map((agent) => {
+            const selected = agent.id === activeAgentId;
+            return (
+              <button
+                key={agent.id}
+                type="button"
+                className={selected ? "roster-pin on" : "roster-pin"}
+                aria-current={selected ? "true" : undefined}
+                onClick={() => onSelect(agent.id)}
+                disabled={busy}
+              >
+                <BotSprite
+                  state={selected ? spriteState : "idle"}
+                  color={spriteColorForAgent(agent)}
+                  size={56}
+                />
+                <span className="roster-pin-name">{agent.name}</span>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+      <div className="roster">
+        {rows.map((agent) => {
           const selected = agent.id === activeAgentId;
+          const fresh = unread.has(agent.id);
           return (
             <button
               key={agent.id}
               type="button"
-              className={selected ? "item on" : "item"}
+              className={selected ? "roster-row on" : "roster-row"}
               aria-current={selected ? "true" : undefined}
+              aria-label={fresh ? `${agent.name}, new reply` : undefined}
               onClick={() => onSelect(agent.id)}
               disabled={busy}
             >
               <BotSprite
                 state={selected ? spriteState : "idle"}
                 color={spriteColorForAgent(agent)}
-                size={32}
+                size={44}
               />
-              <span className="item-label">{agent.name}</span>
+              <span className="roster-copy">
+                <span className="roster-name">{agent.name}</span>
+                <span className="roster-preview">{agent.preview || "Message"}</span>
+              </span>
+              {fresh ? <span className="roster-dot" aria-hidden="true" /> : null}
             </button>
           );
         })}
+        {needle && pinned.length === 0 && rows.length === 0 ? (
+          <p className="empty">No agent matches “{query.trim()}”.</p>
+        ) : null}
       </div>
       {open && typeof document !== "undefined"
         ? createPortal(

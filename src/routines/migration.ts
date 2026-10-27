@@ -1,5 +1,5 @@
 /**
- * The routines tables live in the tracked migration 015_agent_grants_and_routines.
+ * The routines tables live in the tracked migration 017_agent_grants_and_routines.
  * This repair stays on attach: an ownerless routine is adopted by the earliest
  * account's lead once that lead exists, which can be after the schema ran.
  * It touches only rows whose user_id is still NULL.

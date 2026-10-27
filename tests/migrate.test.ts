@@ -59,13 +59,13 @@ it("applies each migration once when two cold starts migrate together", async ()
   expect(await ledger(db)).toEqual(["001_hits", "002_more"]);
 });
 
-it("records 015 on a database whose routines tables came from the old attach path", async () => {
+it("records 017 on a database whose routines tables came from the old attach path", async () => {
   const db = await pglite();
-  const tracked = MIGRATIONS.filter((item) => item.id !== "015_agent_grants_and_routines");
-  const consolidated = MIGRATIONS.find((item) => item.id === "015_agent_grants_and_routines");
+  const tracked = MIGRATIONS.filter((item) => item.id !== "017_agent_grants_and_routines");
+  const consolidated = MIGRATIONS.find((item) => item.id === "017_agent_grants_and_routines");
   expect(consolidated).toBeDefined();
   await migrate(db, tracked);
-  // Before 015, attach created these tables on every cold start, untracked.
+  // Before 017, attach created these tables on every cold start, untracked.
   await db.exec(consolidated!.sql);
   await db.query(
     `INSERT INTO routines (id, name, prompt, trigger_kind, event_name)
@@ -73,7 +73,7 @@ it("records 015 on a database whose routines tables came from the old attach pat
   );
 
   await migrate(db);
-  expect(await ledger(db)).toContain("015_agent_grants_and_routines");
+  expect(await ledger(db)).toContain("017_agent_grants_and_routines");
   const kept = await db.query<{ id: string }>("SELECT id FROM routines");
   expect(kept.rows).toEqual([{ id: "kept" }]);
 });

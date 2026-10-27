@@ -87,7 +87,9 @@ export function runtimeStatusLabel(status: RuntimeStatusView): {
       ? "OpenAI-compatible"
       : status.provider === "mock"
         ? "Mock provider"
-        : status.provider;
+        : status.provider === "unconfigured"
+          ? "Model not configured"
+          : status.provider;
   const database = status.database === "neon" ? "Neon" : "Local";
   const model = status.model?.trim() || null;
   const title = model ?? provider;

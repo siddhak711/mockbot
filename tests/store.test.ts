@@ -160,3 +160,19 @@ it("restores titles and messages from the same embedded database", async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+it("returns the newest non-empty message in each agent's thread", async () => {
+  const store = await openStore();
+  const lead = await store.getOrCreateAgentConversation("agent_default", null);
+  const helper = await store.getOrCreateAgentConversation("agent_helper", null);
+  await store.getOrCreateAgentConversation("agent_quiet", null);
+  await store.addMessage(lead.id, "user", "First");
+  await store.addMessage(lead.id, "assistant", "Lead answer");
+  await store.addMessage(helper.id, "assistant", "Helper answer");
+  await store.addMessage(helper.id, "assistant", "   ");
+
+  const latest = await store.latestAgentMessages(null);
+  expect(latest.get("agent_default")).toMatchObject({ role: "assistant", content: "Lead answer" });
+  expect(latest.get("agent_helper")).toMatchObject({ role: "assistant", content: "Helper answer" });
+  expect(latest.has("agent_quiet")).toBe(false);
+});

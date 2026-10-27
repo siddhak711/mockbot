@@ -200,7 +200,8 @@ it("shows a collapsed rail of agent avatars and opens that agent's thread", asyn
 
   const person = screen.getByRole("button", { name: "Expand sidebar, Ada" });
   expect(person.getAttribute("title")).toBe("Ada");
-  const divider = screen.getByRole("separator");
+  const divider = document.querySelector(".agent-rail [role='separator']");
+  if (!divider) throw new Error("missing rail divider");
   const mockbot = screen.getByRole("button", { name: "Mockbot" });
   const researcher = screen.getByRole("button", { name: "Researcher" });
   expect(person.compareDocumentPosition(divider) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -384,8 +385,8 @@ it("shows Loading history instead of the greeting, and Connecting before status 
 
   expect(await screen.findByText("Loading history")).toBeTruthy();
   expect(screen.queryByRole("heading", { name: /Hello from/ })).toBeNull();
-  expect(document.querySelector("footer.me")?.textContent).toContain("Connecting…");
-  expect(document.querySelector("footer.me")?.textContent).not.toContain("Mock provider");
+  expect(document.querySelector("footer.me")?.getAttribute("title")).toContain("Connecting…");
+  expect(document.querySelector("footer.me")?.getAttribute("title")).not.toContain("Mock provider");
 
   await act(async () => {
     releaseLead(Response.json(threads.agent_default));
@@ -393,7 +394,9 @@ it("shows Loading history instead of the greeting, and Connecting before status 
   });
   expect(await screen.findByText("Remember the grove")).toBeTruthy();
   expect(screen.queryByText("Loading history")).toBeNull();
-  await waitFor(() => expect(document.querySelector("footer.me")?.textContent).toContain("m-1"));
+  await waitFor(() =>
+    expect(document.querySelector("footer.me")?.getAttribute("title")).toContain("m-1"),
+  );
 });
 
 it("shows a visible error and Retry when startup requests fail", async () => {
@@ -415,7 +418,9 @@ it("shows a visible error and Retry when startup requests fail", async () => {
   expect(screen.queryByRole("heading", { name: /Hello from/ })).toBeNull();
   expect(screen.queryByText("Loading memories")).toBeNull();
   await waitFor(() =>
-    expect(document.querySelector("footer.me")?.textContent).toContain("Status unavailable"),
+    expect(document.querySelector("footer.me")?.getAttribute("title")).toContain(
+      "Status unavailable",
+    ),
   );
 
   failing = false;

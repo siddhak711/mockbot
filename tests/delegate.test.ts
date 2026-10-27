@@ -324,6 +324,11 @@ it("runs the live mock handoff for a delegate phrase", async () => {
   setAppContext({
     store,
     provider: withAgentMock(new MockProvider({ delayMs: 0, chunkSize: 24 })),
+    computer: {
+      async read(computerId, path) {
+        return `Granted computer ${computerId} (${path}).`;
+      },
+    },
   });
   const created = await createAgent(
     new Request("http://localhost/api/agents", {

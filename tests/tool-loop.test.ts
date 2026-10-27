@@ -561,7 +561,7 @@ it("executes a tool call streamed by an OpenAI-compatible provider", async () =>
         LLM_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
         LLM_MODEL: "gpt-test",
       }),
-      tools: createDefaultTools({}),
+      tools: createDefaultTools(process.env),
     });
     const response = await postChat(
       new Request("http://localhost/api/chat", {

@@ -124,6 +124,7 @@ export async function runTool(
       content,
       isError: result.isError,
       ...(result.blocked ? { blocked: result.blocked } : {}),
+      ...(result.halt ? { halt: true } : {}),
     };
   } catch (error) {
     if (isAbortError(error)) throw error;

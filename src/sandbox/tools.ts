@@ -1,5 +1,6 @@
 import type { ToolContext } from "../tools/types";
-import { computerIdFor } from "./limits";
+import { DEFAULT_AGENT_ID } from "./limits";
+import { sandboxOwnerId } from "./owner";
 import type { ComputerSupervisor } from "./supervisor";
 import type { ComputerToolName, ComputerToolResult } from "./types";
 
@@ -21,17 +22,39 @@ export type ComputerTool = {
   invoke: (args: Record<string, unknown>, context: ToolContext) => Promise<ComputerToolResult>;
 };
 
+type ComputerRunner = (
+  name: ComputerToolName,
+  args: Record<string, unknown>,
+  context: ToolContext,
+) => Promise<ComputerToolResult>;
+
 /**
- * The tools are registered once per process. Each call runs in the sandbox of
- * the agent speaking that turn (ToolContext.agentId). `agentId` pins every call
- * to one sandbox instead, for callers outside a chat turn.
+ * The sandbox is chosen per call from the turn's agent and user, so one shared
+ * registry serves every agent. agentId applies only to callers with no agent in
+ * their context.
  */
 export function createComputerTools(
   supervisor: ComputerSupervisor,
-  agentId?: string,
+  agentId = DEFAULT_AGENT_ID,
 ): ComputerTool[] {
+  return computerTools(async (name, args, context) => {
+    const owner = sandboxOwnerId({
+      agentId: context.agentId ?? agentId,
+      userId: context.userId,
+    });
+    const { result } = await supervisor.invoke(owner, name, args, context.signal);
+    return result;
+  });
+}
+
+/** Same tools, each failing with the reason the sandbox could not open. */
+export function createUnavailableComputerTools(reason: string): ComputerTool[] {
+  return computerTools(async () => ({ content: reason, isError: true }));
+}
+
+function computerTools(run: ComputerRunner): ComputerTool[] {
   return [
-    tool(supervisor, agentId, {
+    tool(run, {
       name: "list",
       description: "List files in this agent's sandbox workspace.",
       properties: {
@@ -42,7 +65,7 @@ export function createComputerTools(
         return { args: { path } };
       },
     }),
-    tool(supervisor, agentId, {
+    tool(run, {
       name: "read",
       description: "Read a file in this agent's sandbox workspace.",
       properties: {
@@ -56,7 +79,7 @@ export function createComputerTools(
         return { args: { path: args.path.trim() } };
       },
     }),
-    tool(supervisor, agentId, {
+    tool(run, {
       name: "write",
       description: "Write a file in this agent's sandbox workspace.",
       properties: {
@@ -72,7 +95,7 @@ export function createComputerTools(
         return { args: { path: args.path.trim(), content: args.content } };
       },
     }),
-    tool(supervisor, agentId, {
+    tool(run, {
       name: "exec",
       description: "Run one command in this agent's sandbox. The command cannot see the host.",
       properties: {
@@ -90,8 +113,7 @@ export function createComputerTools(
 }
 
 function tool(
-  supervisor: ComputerSupervisor,
-  agentId: string | undefined,
+  run: ComputerRunner,
   spec: {
     name: ComputerToolName;
     description: string;
@@ -115,15 +137,7 @@ function tool(
     async invoke(args, context) {
       const prepared = spec.prepare(args);
       if ("error" in prepared) return { content: prepared.error, isError: true };
-      const speaker = agentId ?? context.agentId;
-      if (!speaker) return { content: "No agent owns this computer call.", isError: true };
-      const { result } = await supervisor.invoke(
-        computerIdFor(speaker),
-        spec.name,
-        prepared.args,
-        context.signal,
-      );
-      return result;
+      return run(spec.name, prepared.args, context);
     },
   };
 }

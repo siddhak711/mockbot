@@ -470,6 +470,16 @@ CREATE UNIQUE INDEX conversations_user_agent_key
   ON conversations (user_id, agent_id) NULLS NOT DISTINCT;
 `,
   },
+  // 010_ask_user sits between 009_one_thread_per_agent and 011_run_events.
+  // Main reserved 010 for this pull request.
+  {
+    id: "010_ask_user",
+    sql: `
+ALTER TABLE tool_calls DROP CONSTRAINT IF EXISTS tool_calls_status_check;
+ALTER TABLE tool_calls ADD CONSTRAINT tool_calls_status_check
+  CHECK (status IN ('running', 'approval', 'ask', 'done', 'denied', 'error'));
+`,
+  },
   // 011_run_events stays after 009_one_thread_per_agent. PR #37 claims
   // 010_ask_user, so this id is 011. A preview already applied this table as
   // 007_run_events. That SQL has the same columns, check, and primary key, so
@@ -527,12 +537,39 @@ $run_events_constraints$;
 DELETE FROM schema_migrations WHERE id = '007_run_events';
 `,
   },
+  // 012_plan_mode. 008, 009, 010, and 011 are already used on main and other branches.
+  {
+    id: "012_plan_mode",
+    sql: `
+ALTER TABLE tool_calls DROP CONSTRAINT IF EXISTS tool_calls_status_check;
+ALTER TABLE tool_calls ADD CONSTRAINT tool_calls_status_check
+  CHECK (status IN ('running', 'approval', 'ask', 'plan', 'done', 'denied', 'error'));
+`,
+  },
+  {
+    id: "013_site_tools",
+    sql: `
+CREATE TABLE IF NOT EXISTS site_tools (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  "schema" JSONB NOT NULL,
+  script TEXT NOT NULL,
+  version INTEGER NOT NULL CHECK (version >= 1),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (user_id, name, version)
+);
+
+CREATE INDEX IF NOT EXISTS site_tools_latest_idx
+  ON site_tools (user_id, lower(name), version DESC);
+`,
+  },
   // Connectors belong to one account. Rows from before this migration keep a
   // null owner: nobody can tell whose key they hold, so signed-in accounts do
   // not see them. The first account adopts them, as it adopts other orphan rows
   // (src/auth/scope.ts). Each account gets its own row per catalog app.
   {
-    id: "012_connectors_user",
+    id: "014_connectors_user",
     sql: `
 ALTER TABLE connectors ADD COLUMN IF NOT EXISTS user_id TEXT REFERENCES users(id) ON DELETE CASCADE;
 
@@ -549,7 +586,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS connectors_user_catalog_idx
   // conversations. A call is unique within its assistant message, which belongs
   // to one conversation.
   {
-    id: "013_tool_call_scope",
+    id: "015_tool_call_scope",
     sql: `
 ALTER TABLE tool_calls DROP CONSTRAINT IF EXISTS tool_calls_id_key;
 
@@ -560,7 +597,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS tool_calls_message_call_idx
 `,
   },
   {
-    id: "014_waitlist",
+    id: "016_waitlist",
     sql: `
 CREATE TABLE IF NOT EXISTS waitlist (
   email TEXT PRIMARY KEY,
@@ -568,12 +605,12 @@ CREATE TABLE IF NOT EXISTS waitlist (
 );
 `,
   },
-  // 015_agent_grants_and_routines tracks schema that AgentDirectory.attach and
+  // 017_agent_grants_and_routines tracks schema that AgentDirectory.attach and
   // RoutineStore.attach used to re-run on every cold start. Every statement is
   // IF NOT EXISTS, so a database that already has these tables is unchanged.
   // The agents table itself is defined once, in 006_auth.
   {
-    id: "015_agent_grants_and_routines",
+    id: "017_agent_grants_and_routines",
     sql: `
 CREATE TABLE IF NOT EXISTS agent_grants (
   id TEXT PRIMARY KEY,

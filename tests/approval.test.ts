@@ -15,7 +15,7 @@ function tool(partial: Partial<ToolDefinition> & Pick<ToolDefinition, "name">): 
 }
 
 it("requires approval for send, post, delete, pay, and calendar invites", () => {
-  const tools = createDefaultTools({});
+  const tools = createDefaultTools(process.env);
   const calendar = tools.get("google_calendar")!;
   const search = tools.get("web_search")!;
   const github = tools.get("github")!;

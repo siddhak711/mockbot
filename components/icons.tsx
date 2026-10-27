@@ -25,6 +25,17 @@ export function ComposeIcon() {
   );
 }
 
+export function AppsIcon() {
+  return (
+    <Icon>
+      <rect x="4" y="4" width="6.5" height="6.5" rx="1.5" />
+      <rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5" />
+      <rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5" />
+      <path d="M16.75 13.5v6.5M13.5 16.75H20" strokeLinecap="round" />
+    </Icon>
+  );
+}
+
 export function ClockIcon() {
   return (
     <Icon>
@@ -140,6 +151,16 @@ export function TraceIcon() {
   return (
     <Icon>
       <path d="M3 12h4l2.5-6 5 12L17 12h4" strokeLinecap="round" strokeLinejoin="round" />
+    </Icon>
+  );
+}
+
+export function PopOutIcon() {
+  return (
+    <Icon>
+      <path d="M14 5h5v5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M19 5 10 14" strokeLinecap="round" />
+      <path d="M17 13.5V19H5V7h5.5" strokeLinecap="round" strokeLinejoin="round" />
     </Icon>
   );
 }

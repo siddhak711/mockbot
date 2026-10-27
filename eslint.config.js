@@ -12,6 +12,7 @@ export default tseslint.config(
       ".data/**",
       "test-results/**",
       "playwright-report/**",
+      "blob-report/**",
     ],
   },
   js.configs.recommended,

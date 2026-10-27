@@ -23,11 +23,14 @@ suite("neon durable memory", () => {
         "007_composio_connections",
         "008_connector_catalog",
         "009_one_thread_per_agent",
+        "010_ask_user",
         "011_run_events",
-        "012_connectors_user",
-        "013_tool_call_scope",
-        "014_waitlist",
-        "015_agent_grants_and_routines",
+        "012_plan_mode",
+        "013_site_tools",
+        "014_connectors_user",
+        "015_tool_call_scope",
+        "016_waitlist",
+        "017_agent_grants_and_routines",
       ]);
       const written = await store.memories.write({
         agentId,

@@ -1,5 +1,6 @@
 import { AgentInputError } from "../../../src/agents/directory";
 import { requireApiUser } from "../../../src/auth/guard";
+import { rosterPreview } from "../../../src/agents/preview";
 import { getAgents, getAppContext } from "../../../src/context";
 
 export const runtime = "nodejs";
@@ -16,12 +17,22 @@ export async function GET(request?: Request): Promise<Response> {
   const directory = actor.scoped
     ? (await getAgents(context)).forUser(actor.user.id)
     : await getAgents(context);
-  const [agents, grants] = await Promise.all([directory.list(), directory.listAllGrants()]);
+  const [agents, grants, latest] = await Promise.all([
+    directory.list(),
+    directory.listAllGrants(),
+    context.store.latestAgentMessages(actor.scoped ? actor.user.id : null),
+  ]);
   return Response.json({
-    agents: agents.map((agent) => ({
-      ...agent,
-      grants: grants.filter((grant) => grant.agentId === agent.id),
-    })),
+    agents: agents.map((agent) => {
+      const last = latest.get(agent.id);
+      return {
+        ...agent,
+        grants: grants.filter((grant) => grant.agentId === agent.id),
+        preview: last ? rosterPreview(last.content) : "",
+        lastMessageAt: last?.createdAt ?? null,
+        lastMessageRole: last?.role ?? null,
+      };
+    }),
   });
 }
 

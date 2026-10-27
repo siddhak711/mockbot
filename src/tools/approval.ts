@@ -1,4 +1,4 @@
-import type { ToolDefinition } from "./types";
+import type { ToolContext, ToolDefinition } from "./types";
 
 export type ApprovalDecision = "approve" | "deny";
 
@@ -19,7 +19,29 @@ export function requiresApproval(tool: ToolDefinition, args: Record<string, unkn
   const action = typeof args.action === "string" ? args.action : "";
   if (ACTION_VERBS.test(action)) return true;
   if (tool.approval === "never") return false;
-  if (typeof tool.approval === "function") return tool.approval(args);
+  if (typeof tool.approval === "function") {
+    const decision = tool.approval(args);
+    if (typeof decision !== "boolean") {
+      throw new Error(`Tool ${tool.name} approval is async. Use approvalNeeded.`);
+    }
+    return decision;
+  }
+  return false;
+}
+
+/** Same rules as requiresApproval, and it awaits a tool whose gate reads stored state. */
+export async function approvalNeeded(
+  tool: ToolDefinition,
+  args: Record<string, unknown>,
+  context?: ToolContext,
+): Promise<boolean> {
+  if (tool.skipHeuristicApproval) return false;
+  if (tool.approval === "always") return true;
+  if (NAME_VERBS.test(tool.name)) return true;
+  const action = typeof args.action === "string" ? args.action : "";
+  if (ACTION_VERBS.test(action)) return true;
+  if (tool.approval === "never") return false;
+  if (typeof tool.approval === "function") return Boolean(await tool.approval(args, context));
   return false;
 }
 

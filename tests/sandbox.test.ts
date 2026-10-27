@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GET, POST } from "../app/api/computer/route";
-import { resetAppContext, setAppContext } from "../src/context";
 import { withAgentMock } from "../src/agents/mock-script";
 import { MockProvider } from "../src/llm";
 import { commandTimeoutMs, resolveWorkspacePath, toSandboxPath } from "../src/sandbox/limits";
@@ -14,6 +13,10 @@ import type { ExecOutcome, SandboxEntry, SandboxRuntime } from "../src/sandbox/r
 import { ComputerSupervisor, DIFF_MAX_BYTES, DIFF_MAX_FILES } from "../src/sandbox/supervisor";
 import { SandboxStore } from "../src/sandbox/store";
 import { createComputerTools } from "../src/sandbox/tools";
+import { sandboxOwnerId } from "../src/sandbox/owner";
+import { registerComputerTools, resetAppContext, setAppContext } from "../src/context";
+import { sandboxBrowseTool } from "../src/browser/open";
+import { ToolRegistry } from "../src/tools/registry";
 import { SandboxTurnProvider } from "../src/sandbox/turn";
 import { ConversationStore } from "../src/store";
 import {
@@ -100,8 +103,7 @@ describe("sandbox", { concurrent: false }, () => {
   });
 
   it("creates a file, reads it back, and runs a command that prints it", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const supervisor = await openComputer({ env: {}, dataDir: "memory://" });
+    const supervisor = await openComputer({ env: { MOCK_SANDBOX: "1" }, dataDir: "memory://" });
     const write = await supervisor.invoke("agent", "write", {
       path: "hello.txt",
       content: "hello from the sandbox",
@@ -114,10 +116,6 @@ describe("sandbox", { concurrent: false }, () => {
     expect(read.result.content).toContain("hello from the sandbox");
     expect(read.result.content.startsWith('{"provider":"mock"}\n')).toBe(true);
     expect(exec.result.content.startsWith('{"provider":"mock"}\n')).toBe(true);
-    expect(warn).toHaveBeenCalledWith(
-      "sandbox is using a mock implementation because DAYTONA_API_KEY is not set.",
-    );
-    warn.mockRestore();
     expect(exec.result.isError).toBeUndefined();
     expect(exec.run.command).toBe("cat hello.txt");
     expect(exec.run.stdout).toBe("hello from the sandbox");
@@ -140,7 +138,7 @@ describe("sandbox", { concurrent: false }, () => {
     process.env.HOST_ENV_CANARY = canary;
 
     const supervisor = await openComputer({
-      env: { HOST_ENV_CANARY: canary },
+      env: { MOCK_SANDBOX: "1", HOST_ENV_CANARY: canary },
       dataDir: "memory://",
     });
     try {
@@ -187,7 +185,7 @@ describe("sandbox", { concurrent: false }, () => {
 
   it("kills a command that exceeds its time limit and reports a failed tool result", async () => {
     const supervisor = await openComputer({
-      env: { SANDBOX_COMMAND_TIMEOUT_MS: "40" },
+      env: { MOCK_SANDBOX: "1", SANDBOX_COMMAND_TIMEOUT_MS: "40" },
       dataDir: "memory://",
     });
     const started = Date.now();
@@ -272,8 +270,13 @@ describe("sandbox", { concurrent: false }, () => {
     const other = await supervisor.invoke("agent-b", "read", { path: "note.txt" });
     expect(other.result.isError).toBe(true);
     expect(other.result.content).not.toContain("from-a");
+    // A read only looks. agent-b gets no sandbox until something writes or runs.
+    expect(fleet.creates).toHaveLength(1);
+    await supervisor.invoke("agent-b", "write", { path: "b.txt", content: "from-b" });
     expect(fleet.creates).toHaveLength(2);
     expect(fleet.creates[0]?.id).not.toBe(fleet.creates[1]?.id);
+    const isolated = await supervisor.invoke("agent-b", "read", { path: "note.txt" });
+    expect(isolated.result.isError).toBe(true);
 
     const again = await supervisor.invoke("agent-a", "exec", { command: "cat note.txt" });
     expect(again.run.stdout).toContain("from-a");
@@ -403,6 +406,77 @@ describe("sandbox", { concurrent: false }, () => {
     await supervisor.close();
   });
 
+  it("creates a replacement when the cached Daytona sandbox is gone", async () => {
+    const fleet = new FakeFleet();
+    const store = await SandboxStore.open("memory://");
+    const runtime = new DaytonaRuntime(fleet, store, "secret");
+    const supervisor = new ComputerSupervisor(store, runtime, 1_000);
+    const first = await supervisor.invoke("agent", "exec", { command: "echo hi" });
+    expect(first.run.exitCode).toBe(0);
+    const id = fleet.creates[0]?.id ?? "";
+    fleet.drop(id);
+
+    const replaced = await supervisor.invoke("agent", "exec", { command: "echo next" });
+    expect(replaced.run.exitCode).toBe(0);
+    expect(replaced.run.stdout).toBe("next\n");
+    expect(fleet.creates).toHaveLength(2);
+    const nextId = fleet.creates[1]?.id ?? "";
+    expect(nextId).not.toBe(id);
+    expect(fleet.reconnects).toEqual([id]);
+    expect((await store.getComputer("agent"))?.sandboxId).toBe(nextId);
+    await supervisor.close();
+  });
+
+  it("throws when reconnect fails transiently and does not create a sandbox", async () => {
+    const fleet = new FakeFleet();
+    const store = await SandboxStore.open("memory://");
+    const runtime = new DaytonaRuntime(fleet, store, "secret");
+    const assigned: string[] = [];
+    const claimSandboxId = store.claimSandboxId.bind(store);
+    store.claimSandboxId = async (agentId, sandboxId, expected) => {
+      assigned.push(sandboxId);
+      return claimSandboxId(agentId, sandboxId, expected);
+    };
+    await runtime.prepare("agent");
+    const id = fleet.creates[0]?.id ?? "";
+    expect(fleet.creates).toHaveLength(1);
+    expect(assigned).toEqual([id]);
+
+    fleet.stop(id);
+    fleet.failNextStart = true;
+    fleet.failNextReconnect = new Error("Daytona rate limit");
+    await expect(runtime.prepare("agent")).rejects.toThrow("Daytona rate limit");
+    expect(fleet.creates).toHaveLength(1);
+    expect(assigned).toEqual([id]);
+    expect((await store.getComputer("agent"))?.sandboxId).toBe(id);
+  });
+
+  it("creates one replacement sandbox when an abort overlaps a retry", async () => {
+    const fleet = new FakeFleet();
+    const store = await SandboxStore.open("memory://");
+    const runtime = new DaytonaRuntime(fleet, store, "secret");
+    await runtime.prepare("agent");
+    const id = fleet.creates[0]?.id ?? "";
+    fleet.drop(id);
+    fleet.bootMs = 150;
+
+    const controller = new AbortController();
+    const aborted = runtime.prepare("agent", controller.signal);
+    const started = Date.now();
+    while (fleet.createEntered < 2) {
+      if (Date.now() - started > 2_000) throw new Error("replacement create did not start");
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    controller.abort();
+    const retried = runtime.prepare("agent");
+
+    await expect(aborted).rejects.toMatchObject({ name: "AbortError" });
+    await retried;
+    expect(fleet.createEntered).toBe(2);
+    expect(fleet.creates).toHaveLength(2);
+    expect((await store.getComputer("agent"))?.sandboxId).toBe(fleet.creates[1]?.id);
+  });
+
   it("cancels prepare and exec when the abort signal fires", async () => {
     const store = await SandboxStore.open("memory://");
     const runtime = new GateRuntime();
@@ -524,6 +598,135 @@ describe("sandbox", { concurrent: false }, () => {
     await supervisor.close();
   });
 
+  it("never creates or replaces a sandbox from list, read, or snapshot", async () => {
+    const fleet = new FakeFleet();
+    const store = await SandboxStore.open("memory://");
+    const runtime = new DaytonaRuntime(fleet, store, "secret");
+    const supervisor = new ComputerSupervisor(store, runtime, 1_000);
+
+    // No sandbox yet: everything that only looks stays empty.
+    expect((await supervisor.snapshot("agent")).files).toEqual([]);
+    expect(await runtime.list("agent", "")).toEqual({ ok: true, entries: [] });
+    const listed = await supervisor.invoke("agent", "list", {});
+    expect(listed.result.isError).toBeUndefined();
+    const missing = await supervisor.invoke("agent", "read", { path: "notes.txt" });
+    expect(missing.result.isError).toBe(true);
+    expect(fleet.creates).toHaveLength(0);
+
+    // write may create.
+    await supervisor.invoke("agent", "write", { path: "notes.txt", content: "hi" });
+    expect(fleet.creates).toHaveLength(1);
+    const first = fleet.creates[0]?.id ?? "";
+
+    // The cached sandbox is gone. Looking does not replace it.
+    fleet.drop(first);
+    expect((await supervisor.snapshot("agent")).files).toEqual([]);
+    expect(await runtime.list("agent", "")).toEqual({ ok: true, entries: [] });
+    expect((await supervisor.invoke("agent", "list", {})).result.isError).toBeUndefined();
+    expect((await supervisor.invoke("agent", "read", { path: "notes.txt" })).result.isError).toBe(
+      true,
+    );
+    expect(fleet.creates).toHaveLength(1);
+    expect((await store.getComputer("agent"))?.sandboxId).toBe(first);
+
+    // exec may replace it.
+    const ran = await supervisor.invoke("agent", "exec", { command: "echo back" });
+    expect(ran.run.exitCode).toBe(0);
+    expect(fleet.creates).toHaveLength(2);
+    const second = fleet.creates[1]?.id ?? "";
+    expect((await store.getComputer("agent"))?.sandboxId).toBe(second);
+
+    // browse (through its sandbox host) may replace it too.
+    fleet.drop(second);
+    expect((await supervisor.snapshot("agent")).files).toEqual([]);
+    expect(fleet.creates).toHaveLength(2);
+    await supervisor.browserHost("agent")?.prepare?.();
+    expect(fleet.creates).toHaveLength(3);
+
+    // write after a drop replaces as well.
+    fleet.drop(fleet.creates[2]?.id ?? "");
+    await supervisor.invoke("agent", "write", { path: "again.txt", content: "x" });
+    expect(fleet.creates).toHaveLength(4);
+    expect((await supervisor.snapshot("agent")).files.map((file) => file.path)).toEqual([
+      "again.txt",
+    ]);
+    await supervisor.close();
+  });
+
+  it("routes the shared computer tools to each turn's own agent and user sandbox", async () => {
+    const fleet = new FakeFleet();
+    const store = await SandboxStore.open("memory://");
+    const supervisor = new ComputerSupervisor(
+      store,
+      new DaytonaRuntime(fleet, store, "secret"),
+      1_000,
+    );
+    const registry = new ToolRegistry();
+    registerComputerTools(registry, supervisor);
+    const write = registry.get("write");
+    const read = registry.get("read");
+    if (!write || !read) throw new Error("computer tools missing");
+
+    const a = { agentId: "agent-a" };
+    const b = { agentId: "agent-b" };
+    await write.invoke({ path: "secret.txt", content: "for a" }, a);
+    await write.invoke({ path: "secret.txt", content: "for b" }, b);
+    expect((await read.invoke({ path: "secret.txt" }, a)).content).toContain("for a");
+    expect((await read.invoke({ path: "secret.txt" }, b)).content).toContain("for b");
+    expect(fleet.creates.map((item) => item.agentId)).toEqual(["agent-a", "agent-b"]);
+    const recordA = await store.getComputer("agent-a");
+    const recordB = await store.getComputer("agent-b");
+    expect(recordA?.sandboxId).toBe(fleet.creates[0]?.id);
+    expect(recordB?.sandboxId).toBe(fleet.creates[1]?.id);
+    expect(recordA?.id).not.toBe(recordB?.id);
+
+    // The lead agent's id is shared by every user, so the user is part of the key.
+    const userOne = { agentId: "agent_default", userId: "user-1" };
+    const userTwo = { agentId: "agent_default", userId: "user-2" };
+    await write.invoke({ path: "mine.txt", content: "user one" }, userOne);
+    const leaked = await read.invoke({ path: "mine.txt" }, userTwo);
+    expect(leaked.isError).toBe(true);
+    expect(leaked.content).not.toContain("user one");
+    const ownerOne = sandboxOwnerId(userOne);
+    const ownerTwo = sandboxOwnerId(userTwo);
+    expect(ownerOne).not.toBe(ownerTwo);
+    expect((await store.getComputer(ownerOne))?.sandboxId).toBe(fleet.creates[2]?.id);
+    expect((await store.getComputer(ownerTwo))?.sandboxId ?? null).toBeNull();
+
+    // Only a call with no agent at all falls back to the default sandbox.
+    await write.invoke({ path: "plain.txt", content: "none" }, {});
+    expect(fleet.creates.at(-1)?.agentId).toBe("agent");
+    await supervisor.close();
+  });
+
+  it("drives the browse tool in the turn agent's sandbox, one browser per owner", async () => {
+    const fleet = new FakeFleet();
+    const store = await SandboxStore.open("memory://");
+    const supervisor = new ComputerSupervisor(
+      store,
+      new DaytonaRuntime(fleet, store, "secret"),
+      1_000,
+    );
+    const hosts: string[] = [];
+    vi.spyOn(supervisor, "browserHost").mockImplementation((agentId?: string) => {
+      hosts.push(agentId ?? "");
+      return null;
+    });
+    const browse = sandboxBrowseTool(supervisor, {});
+    await browse.invoke({ action: "open", url: "https://example.com" }, { agentId: "agent-a" });
+    await browse.invoke(
+      { action: "open", url: "https://example.com" },
+      { agentId: "agent_default", userId: "user-1" },
+    );
+    await browse.invoke({ action: "open", url: "https://example.com" }, {});
+    expect(hosts).toEqual([
+      "agent-a",
+      sandboxOwnerId({ agentId: "agent_default", userId: "user-1" }),
+      "agent",
+    ]);
+    await supervisor.close();
+  });
+
   it("lists nested Daytona files in the snapshot", async () => {
     const fleet = new FakeFleet();
     const store = await SandboxStore.open("memory://");
@@ -539,7 +742,7 @@ describe("sandbox", { concurrent: false }, () => {
   });
 
   it("streams the sandbox tools through chat and the computer API", async () => {
-    const supervisor = await openComputer({ env: {}, dataDir: "memory://" });
+    const supervisor = await openComputer({ env: { MOCK_SANDBOX: "1" }, dataDir: "memory://" });
     const store = await ConversationStore.open();
     setAppContext({
       store,
@@ -600,7 +803,7 @@ describe("sandbox", { concurrent: false }, () => {
   });
 
   it("leaves an ordinary mock reply alone", async () => {
-    const supervisor = await openComputer({ env: {}, dataDir: "memory://" });
+    const supervisor = await openComputer({ env: { MOCK_SANDBOX: "1" }, dataDir: "memory://" });
     const store = await ConversationStore.open();
     const provider = new SandboxTurnProvider({
       inner: new MockProvider({ delayMs: 0, chunkSize: 80, reply: () => "Still a mock reply" }),
@@ -857,6 +1060,8 @@ describe("sandbox", { concurrent: false }, () => {
 
   class FakeFleet implements RemoteSandboxFleet {
     readonly creates: Array<{ id: string; agentId: string; envVars?: unknown }> = [];
+    /** Increments when create begins, before the boot delay. */
+    createEntered = 0;
     readonly execs: Array<{ command: string; cwd: string; timeoutSec: number }> = [];
     readonly starts: string[] = [];
     readonly reconnects: string[] = [];
@@ -864,6 +1069,8 @@ describe("sandbox", { concurrent: false }, () => {
     readonly destroyed: string[] = [];
     bootMs = 0;
     failNextStart = false;
+    /** Set while the sandbox still exists. The next reconnect rejects instead of returning null. */
+    failNextReconnect: Error | null = null;
     readonly #sandboxes = new Map<string, Map<string, string>>();
     readonly #running = new Set<string>();
 
@@ -871,7 +1078,14 @@ describe("sandbox", { concurrent: false }, () => {
       this.#running.delete(id);
     }
 
+    /** The sandbox is gone, not merely stopped. Reconnect cannot bring it back. */
+    drop(id: string): void {
+      this.#sandboxes.delete(id);
+      this.#running.delete(id);
+    }
+
     async create(agentId: string): Promise<RemoteSandbox> {
+      this.createEntered += 1;
       if (this.bootMs > 0) await new Promise((resolve) => setTimeout(resolve, this.bootMs));
       const id = `sbx-${this.creates.length + 1}`;
       this.creates.push({ id, agentId });
@@ -888,6 +1102,11 @@ describe("sandbox", { concurrent: false }, () => {
 
     async reconnect(sandboxId: string): Promise<RemoteSandbox | null> {
       this.reconnects.push(sandboxId);
+      if (this.failNextReconnect) {
+        const error = this.failNextReconnect;
+        this.failNextReconnect = null;
+        throw error;
+      }
       if (!this.#sandboxes.has(sandboxId)) return null;
       if (!this.#running.has(sandboxId)) {
         this.starts.push(sandboxId);
@@ -904,6 +1123,7 @@ describe("sandbox", { concurrent: false }, () => {
       return {
         id,
         ensureRunning: async () => {
+          if (!this.#sandboxes.has(id)) throw new Error("Sandbox is gone");
           if (this.#running.has(id)) return;
           if (this.failNextStart) {
             this.failNextStart = false;

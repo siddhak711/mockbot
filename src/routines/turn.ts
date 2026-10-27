@@ -1,18 +1,14 @@
 import { AgentDirectory } from "../agents/directory";
 import { NoteMemory } from "../agents/ports";
-import { buildAgentSystemPrompt } from "../agents/prompt";
 import type { AgentMemoryPort } from "../agents/types";
 import { SYSTEM_PROMPT, type LlmProvider } from "../llm";
-import {
-  RunLog,
-  captureModelEvent,
-  elapsedMs,
-  emptyModelCapture,
-  ignoreRunLog,
-} from "../runs/events";
 import type { ConversationStore } from "../store";
-import { applyStreamEvent, emptyTrace } from "../trace";
-import { buildModelInput } from "../turn";
+import { streamChatTurn } from "../chat";
+import { SseParser } from "../sse";
+import { ApprovalGate } from "../tools/approval";
+import { AskGate, askUserTool } from "../tools/ask-user";
+import { PlanGate } from "../tools/plan";
+import { ToolRegistry } from "../tools/registry";
 import type { LlmMessage, Role } from "../types";
 
 /**
@@ -38,20 +34,7 @@ export function modelMessages(messages: Array<{ role: Role; content: string }>):
   ];
 }
 
-/** Keep the prepared system prompt, and drop an abandoned user turn from the rest. */
-function routineHistory(prepared: LlmMessage[]): LlmMessage[] {
-  const system = prepared.filter((message) => message.role === "system");
-  const turns: Array<{ role: Role; content: string }> = [];
-  for (const message of prepared) {
-    if (message.role === "user" || message.role === "assistant") {
-      turns.push({ role: message.role, content: message.content });
-    }
-  }
-  const kept = modelMessages(turns).filter((message) => message.role !== "system");
-  return [...system, ...kept];
-}
-
-/** A model stream that runs longer than this is aborted, so a stalled provider frees the worker. */
+/** A turn that runs longer than this is aborted, so a stalled provider frees the worker. */
 export const ROUTINE_STREAM_TIMEOUT_MS = 5 * 60_000;
 
 function timeoutError(ms: number): Error {
@@ -59,40 +42,11 @@ function timeoutError(ms: number): Error {
 }
 
 /**
- * Stop iterating when the signal fires, even if the provider ignores it.
- * A provider that never yields again would otherwise hold the worker forever.
- */
-async function* untilAborted<T>(
-  source: AsyncIterable<T>,
-  signal: AbortSignal,
-  reason: () => Error,
-): AsyncIterable<T> {
-  const iterator = source[Symbol.asyncIterator]();
-  let onAbort: () => void = () => {};
-  const aborted = new Promise<never>((_, reject) => {
-    onAbort = () => reject(reason());
-    if (signal.aborted) onAbort();
-    else signal.addEventListener("abort", onAbort, { once: true });
-  });
-  aborted.catch(() => undefined);
-  try {
-    while (true) {
-      const next = await Promise.race([iterator.next(), aborted]);
-      if (next.done) return;
-      yield next.value;
-    }
-  } finally {
-    signal.removeEventListener("abort", onAbort);
-    void Promise.resolve(iterator.return?.()).catch(() => undefined);
-  }
-}
-
-/**
- * The only place a routine invokes the agent loop.
- * It stores the prompt and the finished reply on the routine's conversation.
- * The system prompt carries the target agent's instructions, memory note, and
- * grants, as chat and delegate build it. Tools are not offered: the shared
- * tool loop lives in the chat route and the worker cannot reach it yet.
+ * The only place a routine invokes the agent loop. It runs the same chat turn
+ * a person's message runs, as the agent that owns the routine's conversation,
+ * marked unattended: ask_user and approval-gated tools return at once instead
+ * of waiting for somebody who is not there. The turn is aborted after
+ * `timeoutMs`, and the worker stops reading even if the provider ignores that.
  */
 export async function runRoutineTurn(options: {
   store: ConversationStore;
@@ -103,68 +57,72 @@ export async function runRoutineTurn(options: {
   agents?: AgentDirectory;
   memory?: AgentMemoryPort;
   timeoutMs?: number;
+  /** Tools the routine may call. Defaults to ask_user only, which unattended runs refuse. */
+  tools?: ToolRegistry;
 }): Promise<{ assistantMessageId: string; text: string; runId: string }> {
-  const log = new RunLog(options.store.connection, options.runId);
-  await ignoreRunLog(log.mark("run.started", { conversationId: options.conversationId }));
-  try {
-    await options.store.addMessage(options.conversationId, "user", options.prompt);
-    const stored = await options.store.getConversation(options.conversationId);
-    if (!stored) throw new Error("Conversation disappeared before the routine ran");
-    const agents = options.agents ?? (await AgentDirectory.attach(options.store));
-    const memory = options.memory ?? new NoteMemory(agents);
-    const speaker = (await agents.get(stored.conversation.agentId)) ?? (await agents.lead());
-    if (!speaker) throw new Error("Agent not found");
-    const [memories, grants] = await Promise.all([
-      memory.list(speaker.id),
-      agents.listGrants(speaker.id),
-    ]);
-    const prepared = await buildModelInput({
-      store: options.store,
-      conversationId: options.conversationId,
-      agentId: stored.conversation.agentId,
-      agentPrompt: buildAgentSystemPrompt({ agent: speaker, memories, grants, child: false }),
-    });
-    if (!prepared) throw new Error("Conversation disappeared before the routine ran");
-    const history = routineHistory(prepared.messages);
-    let trace = emptyTrace();
-    const capture = emptyModelCapture();
-    const started = performance.now();
-    const timeoutMs = options.timeoutMs ?? ROUTINE_STREAM_TIMEOUT_MS;
-    const signal = AbortSignal.timeout(timeoutMs);
-    try {
-      const events = options.provider.stream(history, { signal });
-      for await (const event of untilAborted(events, signal, () => timeoutError(timeoutMs))) {
-        captureModelEvent(capture, event);
-        trace = applyStreamEvent(trace, event);
-      }
-      // A provider that honors the signal may end quietly instead of throwing.
-      if (signal.aborted) throw timeoutError(timeoutMs);
-    } finally {
-      await ignoreRunLog(
-        log.recordModel({
-          model: options.provider.model,
-          messages: history,
-          capture,
-          ms: elapsedMs(started),
-        }),
-      );
-    }
-    const assistant = await options.store.addMessage(
-      options.conversationId,
-      "assistant",
-      trace.text,
-      trace,
-    );
-    await ignoreRunLog(
-      log.mark("run.finished", { status: "completed", assistantMessageId: assistant.id }),
-    );
-    return { assistantMessageId: assistant.id, text: trace.text, runId: log.id };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Routine run failed";
-    await ignoreRunLog(log.fail(message));
-    await ignoreRunLog(log.mark("run.finished", { status: "error" }));
-    throw error;
+  const tools = options.tools ?? routineTools();
+  const runId = options.runId ?? `run_${crypto.randomUUID()}`;
+  const timeoutMs = options.timeoutMs ?? ROUTINE_STREAM_TIMEOUT_MS;
+  const signal = AbortSignal.timeout(timeoutMs);
+  const agents = options.agents ?? (await AgentDirectory.attach(options.store));
+  const response = await streamChatTurn({
+    store: options.store,
+    provider: options.provider,
+    tools,
+    approvals: new ApprovalGate(),
+    asks: new AskGate(),
+    plans: new PlanGate(),
+    unattended: true,
+    runId,
+    conversationId: options.conversationId,
+    message: options.prompt,
+    agents,
+    memory: options.memory ?? new NoteMemory(agents),
+    signal,
+  });
+  if (!response.body || !response.headers.get("content-type")?.includes("text/event-stream")) {
+    const body = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? "Routine run failed");
   }
+  let assistantMessageId: string | null = null;
+  let failure: string | null = null;
+  const parser = new SseParser();
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let onAbort: () => void = () => {};
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(timeoutError(timeoutMs));
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+  });
+  aborted.catch(() => undefined);
+  try {
+    while (true) {
+      const { done, value } = await Promise.race([reader.read(), aborted]);
+      if (done) break;
+      for (const message of parser.push(decoder.decode(value, { stream: true }))) {
+        const data = JSON.parse(message.data) as { assistantMessageId?: string; message?: string };
+        if (message.event === "done") assistantMessageId = data.assistantMessageId ?? null;
+        if (message.event === "error") failure = data.message ?? "Routine run failed";
+      }
+    }
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+    if (signal.aborted) void reader.cancel().catch(() => undefined);
+  }
+  // A turn that honors the signal may end quietly instead of failing.
+  if (signal.aborted) throw timeoutError(timeoutMs);
+  if (failure) throw new Error(failure);
+  if (!assistantMessageId) throw new Error("The routine produced no reply");
+  const stored = await options.store.getConversation(options.conversationId);
+  const reply = stored?.messages.find((message) => message.id === assistantMessageId);
+  return { assistantMessageId, text: reply?.content ?? "", runId };
+}
+
+function routineTools(): ToolRegistry {
+  const registry = new ToolRegistry();
+  registry.register(askUserTool());
+  return registry;
 }
 
 export function promptForRun(

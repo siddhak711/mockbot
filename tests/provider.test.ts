@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage } from "node:http";
 import { once } from "node:events";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, sep } from "node:path";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it } from "vitest";
 import { POST } from "../app/api/chat/route";
 import { GET as readStatus } from "../app/api/status/route";
 import { resetAppContext, setAppContext } from "../src/context";
@@ -22,10 +22,31 @@ async function readBody(request: IncomingMessage): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-it("selects the mock provider unless openai and an API key are both set", () => {
-  expect(selectProvider({}).id).toBe("mock");
+it("uses the mock provider only on explicit opt-in and fails visibly otherwise", async () => {
   expect(selectProvider({ LLM_PROVIDER: "mock", LLM_API_KEY: SECRET }).id).toBe("mock");
-  expect(() => selectProvider({ LLM_PROVIDER: "openai" })).toThrow(/LLM_API_KEY/);
+  expect(selectProvider({ MOCK_LLM: "1" }).id).toBe("mock");
+
+  const cases: Array<[Record<string, string>, RegExp]> = [
+    [{}, /LLM_PROVIDER is not set/],
+    [{ LLM_PROVIDER: "openai" }, /LLM_API_KEY is required/],
+    [{ LLM_PROVIDER: "nope" }, /Unknown LLM_PROVIDER "nope"/],
+    [
+      { LLM_PROVIDER: "openrouter", LLM_API_KEY: SECRET, LLM_BASE_URL: "not a url" },
+      /LLM_BASE_URL is not a valid/,
+    ],
+    [{ LLM_PROVIDER: "mock", NODE_ENV: "production" }, /not allowed in a production build/],
+    [{ MOCK_LLM: "1", VERCEL_ENV: "production" }, /MOCK_LLM=1 is not allowed/],
+  ];
+  for (const [env, reason] of cases) {
+    const provider = selectProvider(env);
+    expect(provider.id).toBe("unconfigured");
+    await expect(
+      (async () => {
+        for await (const event of provider.stream([])) void event;
+      })(),
+    ).rejects.toThrow(reason);
+  }
+
   const provider = selectProvider({
     LLM_PROVIDER: "openai",
     LLM_API_KEY: SECRET,
@@ -42,25 +63,25 @@ it("selects the mock provider unless openai and an API key are both set", () => 
   });
   expect(aliased.id).toBe("openai");
   expect(aliased.model).toBe("deepseek/deepseek-v4.1-flash");
-  expect(() => selectProvider({ LLM_PROVIDER: "nope" })).toThrow(/Unknown LLM_PROVIDER/);
-  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-  try {
-    expect(
-      selectProvider({
-        LLM_PROVIDER: "openrouter",
-        LLM_API_KEY: SECRET,
-        LLM_BASE_URL: "not a url",
-      }).id,
-    ).toBe("mock");
-    expect(warn).toHaveBeenCalledWith(
-      "LLM is using a mock implementation because LLM_BASE_URL is not a valid http(s) URL.",
-    );
-    warn.mockClear();
-    expect(selectProvider({}).id).toBe("mock");
-    expect(warn).not.toHaveBeenCalled();
-  } finally {
-    warn.mockRestore();
-  }
+});
+
+it("shows the missing model as a chat error instead of a mock reply", async () => {
+  const store = await ConversationStore.open();
+  setAppContext({ store, provider: selectProvider({}) });
+  const events = await readSse(
+    await POST(
+      new Request("http://localhost/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "Say hello" }),
+      }),
+    ),
+  );
+  const error = events.find((event) => event.event === "error");
+  expect(String((error?.data as { message?: string }).message)).toContain(
+    "LLM_PROVIDER is not set",
+  );
+  expect(deltas(events)).toBe("");
 });
 
 it("sends the turn to the configured base URL and keeps the key off the client response", async () => {

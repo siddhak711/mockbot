@@ -14,8 +14,12 @@ afterEach(async () => {
   await resetAppContext();
 });
 
-it("streams a mock reply when no API key is configured", async () => {
-  const provider = selectProvider({ MOCK_STREAM_DELAY_MS: "0", MOCK_CHUNK_SIZE: "16" });
+it("streams a labeled mock reply when the mock provider is opted in", async () => {
+  const provider = selectProvider({
+    LLM_PROVIDER: "mock",
+    MOCK_STREAM_DELAY_MS: "0",
+    MOCK_CHUNK_SIZE: "16",
+  });
   expect(provider.id).toBe("mock");
   const store = await ConversationStore.open();
   setAppContext({ store, provider });
@@ -128,7 +132,7 @@ it("does not keep the turn lock after an unread event stream finishes", async ()
 });
 
 it("finishes a second conversation while the first waits on approval", async () => {
-  const tools = createDefaultTools({});
+  const tools = createDefaultTools(process.env);
   tools.register({
     name: "send_note",
     description: "Send a note. Requires approval.",

@@ -1,6 +1,6 @@
 import { requireApiUser, type ApiUser } from "../../../src/auth/guard";
 import { getAgents, getAppContext, type AppContext } from "../../../src/context";
-import { computerIdFor } from "../../../src/sandbox/limits";
+import { sandboxOwnerId } from "../../../src/sandbox/owner";
 import type { ComputerToolName } from "../../../src/sandbox/types";
 
 export const runtime = "nodejs";
@@ -20,15 +20,17 @@ async function ownedComputer(
   const directory = await getAgents(context);
   const agents = actor.scoped ? directory.forUser(actor.user.id) : directory;
   const agent = requested?.trim() ? await agents.get(requested.trim()) : await agents.lead();
-  return agent ? computerIdFor(agent.id) : null;
+  if (!agent) return null;
+  // The same (user, agent) sandbox the chat tools use for this person.
+  return sandboxOwnerId({ agentId: agent.id, userId: actor.scoped ? actor.user.id : undefined });
 }
 
 export async function GET(request: Request): Promise<Response> {
   const actor = await requireApiUser(request);
   if (!actor.ok) return actor.response;
   const context = await getAppContext();
-  const { sandbox } = context;
-  if (!sandbox) return Response.json({ error: "Sandbox is not available" }, { status: 503 });
+  const { sandbox, sandboxError } = context;
+  if (!sandbox) return unavailable(sandboxError);
   const requested = new URL(request.url).searchParams.get("agentId") ?? undefined;
   const computerId = await ownedComputer(context, actor, requested);
   if (!computerId) return Response.json({ error: "Unknown agent" }, { status: 404 });
@@ -39,8 +41,8 @@ export async function POST(request: Request): Promise<Response> {
   const actor = await requireApiUser(request);
   if (!actor.ok) return actor.response;
   const context = await getAppContext();
-  const { sandbox } = context;
-  if (!sandbox) return Response.json({ error: "Sandbox is not available" }, { status: 503 });
+  const { sandbox, sandboxError } = context;
+  if (!sandbox) return unavailable(sandboxError);
   let body: unknown;
   try {
     body = await request.json();
@@ -82,4 +84,15 @@ export async function POST(request: Request): Promise<Response> {
     const message = error instanceof Error ? error.message : "Sandbox request failed";
     return Response.json({ error: message }, { status: 400 });
   }
+}
+
+/** 503 for the Computer pane. sandboxError names the missing setting when there is one. */
+function unavailable(sandboxError: string | undefined): Response {
+  return Response.json(
+    {
+      error: sandboxError ?? "Sandbox is not available",
+      ...(sandboxError ? { sandboxError } : {}),
+    },
+    { status: 503 },
+  );
 }

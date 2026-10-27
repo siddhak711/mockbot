@@ -69,3 +69,22 @@ export function deltas(events: Array<{ event: string; data: unknown }>): string 
     .map((event) => String((event.data as { text?: string }).text ?? ""))
     .join("");
 }
+
+/** The newest stored tool call with this id, in any conversation. Tests only. */
+export async function toolCallById(
+  store: ConversationStore,
+  id: string,
+): Promise<{ status: string; output: string | null; conversationId: string } | null> {
+  const result = await store.connection.query<{
+    status: string;
+    output: string | null;
+    conversation_id: string;
+  }>(
+    `SELECT status, output, conversation_id FROM tool_calls WHERE id = $1 ORDER BY seq DESC LIMIT 1`,
+    [id],
+  );
+  const row = result.rows[0];
+  return row
+    ? { status: row.status, output: row.output, conversationId: row.conversation_id }
+    : null;
+}

@@ -205,7 +205,7 @@ describe("per-account isolation", { concurrent: false }, () => {
 
   it("gives each account's agent its own computer", async () => {
     process.env.MOCKBOT_REQUIRE_AUTH = "1";
-    const supervisor = await openComputer({ env: {}, dataDir: "memory://" });
+    const supervisor = await openComputer({ env: { MOCK_SANDBOX: "1" }, dataDir: "memory://" });
     const store = await ConversationStore.open();
     setAppContext({
       store,
