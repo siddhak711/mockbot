@@ -94,9 +94,7 @@ it("does not run a delegate emitted in the same round as a self-proposed plan", 
   expect(provider.calls).toBe(1);
   expect(pending.events.some((event) => event.event === "tool_start")).toBe(false);
   expect(
-    pending.events.some(
-      (event) => event.event === "tool_result" && event.data.name === "delegate",
-    ),
+    pending.events.some((event) => event.event === "tool_result" && event.data.name === "delegate"),
   ).toBe(false);
   expect(deltas(pending.events)).not.toContain("Delegated");
   expect(deltas(pending.events)).not.toContain("Finished:");
@@ -140,7 +138,9 @@ it("does not wait on a plan during an unattended turn", async () => {
   const events = (await readSse(response)) as SseEvent[];
   expect(Date.now() - started).toBeLessThan(1_000);
   expect(events.some((event) => event.event === "plan_required")).toBe(false);
-  const conversationId = String(events.find((event) => event.event === "meta")?.data.conversationId);
+  const conversationId = String(
+    events.find((event) => event.event === "meta")?.data.conversationId,
+  );
   expect(plans.hasPending(conversationId)).toBe(false);
   const result = events.find(
     (event) => event.event === "tool_result" && event.data.name === "propose_plan",

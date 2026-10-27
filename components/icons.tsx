@@ -163,6 +163,16 @@ export function TraceIcon() {
   );
 }
 
+export function PopOutIcon() {
+  return (
+    <Icon>
+      <path d="M14 5h5v5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M19 5 10 14" strokeLinecap="round" />
+      <path d="M17 13.5V19H5V7h5.5" strokeLinecap="round" strokeLinejoin="round" />
+    </Icon>
+  );
+}
+
 export function HidePanelIcon() {
   return (
     <Icon>

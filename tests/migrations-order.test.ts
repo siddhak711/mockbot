@@ -30,9 +30,7 @@ it("applies every migration in order on a fresh database", async () => {
       expect(definition).toContain(`'${status}'`);
     }
 
-    await db.query(
-      `INSERT INTO conversations (id, title) VALUES ('conv_plan', 'plan')`,
-    );
+    await db.query(`INSERT INTO conversations (id, title) VALUES ('conv_plan', 'plan')`);
     await db.query(
       `INSERT INTO messages (id, conversation_id, role, content) VALUES ('msg_plan', 'conv_plan', 'assistant', '')`,
     );

@@ -420,10 +420,14 @@ it("finishes a routine that tries to ask_user without waiting for a person", asy
     prompt: "Ask whether to go",
   });
   expect(Date.now() - started).toBeLessThan(1_000);
-  expect(turn.text).toBe(ASK_UNATTENDED);
   const loaded = await store.getConversation(conversation.id);
   const tools = loaded?.messages.flatMap((message) => message.tools ?? []) ?? [];
+  expect(tools.length).toBeGreaterThan(0);
   expect(tools.some((tool) => tool.status === "ask")).toBe(false);
+  for (const tool of tools) {
+    expect(tool).toMatchObject({ name: "ask_user", status: "error", output: ASK_UNATTENDED });
+  }
+  expect(loaded?.messages.find((message) => message.id === turn.assistantMessageId)).toBeTruthy();
 });
 
 it("ends a pending question on stop and times out when nobody answers", async () => {

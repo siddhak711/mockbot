@@ -55,7 +55,7 @@ export function Transcript({
   onOpenTrace,
   spriteState = "idle",
   spriteColor = DEFAULT_SPRITE_COLOR,
-  spriteName = "Mockbot",
+  agentName = "Mockbot",
   reconnectFor,
   onReconnect,
 }: {
@@ -64,7 +64,6 @@ export function Transcript({
   livePhase?: LivePhase | null;
   spriteState?: SpriteState;
   spriteColor?: SpriteColor;
-  spriteName?: string;
   activities?: ToolActivity[];
   decidingId?: string | null;
   onDecide?: (id: string, decision: "approve" | "deny") => void;
@@ -78,6 +77,7 @@ export function Transcript({
   ) => void;
   onSelectTool?: (id: string) => void;
   onOpenTrace?: () => void;
+  agentName?: string;
   reconnectFor?: (activity: ToolActivity) => string | null;
   onReconnect?: (activity: ToolActivity) => void;
 }) {
@@ -143,14 +143,14 @@ export function Transcript({
               state="idle"
               color={spriteColor}
               size={64}
-              label={botSpriteLabel(spriteName, "idle")}
+              label={botSpriteLabel(agentName, "idle")}
             />
-            <h2>Start a conversation</h2>
+            <h2>Hello from {agentName}</h2>
             <p>
-              Ask Mockbot to remember a fact. It can use that fact in a later chat. Replies stream
-              as a clean answer. Open the Trace tab for the full raw transcript, including the
-              system prompt and every tool call. Create another agent, then send{" "}
-              <code>delegate to Name: task</code>.
+              {agentName} keeps this conversation. Ask a question, or ask {agentName} to remember a
+              fact. Replies stream as a clean answer. Open the Trace tab for the full raw
+              transcript, including the system prompt and every tool call. From the lead, send{" "}
+              <code>delegate to Name: task</code> and the result lands on that agent's thread.
             </p>
           </div>
         ) : (

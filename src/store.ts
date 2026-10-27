@@ -205,6 +205,13 @@ function traceParam(trace: MessageTrace | null): string | null {
   return trace ? JSON.stringify(trace) : null;
 }
 
+function isUniqueViolation(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  if ("code" in error && String((error as { code: unknown }).code) === "23505") return true;
+  const message = error instanceof Error ? error.message : "";
+  return message.toLowerCase().includes("duplicate") || message.toLowerCase().includes("unique");
+}
+
 export function titleFromMessage(message: string): string {
   const oneLine = message.replace(/\s+/g, " ").trim();
   if (!oneLine) return "New chat";
@@ -272,6 +279,64 @@ export class ConversationStore {
     return mapConversation(row);
   }
 
+  /**
+   * The one thread for this user and agent. A second caller, including a race,
+   * gets the same row.
+   */
+  async getOrCreateAgentConversation(
+    agentId: string,
+    userId?: string | null,
+  ): Promise<Conversation> {
+    const existing = await this.findAgentConversation(agentId, userId ?? null);
+    if (existing) return existing;
+    try {
+      return await this.createConversation("Chat", agentId, userId ?? null);
+    } catch (error) {
+      if (!isUniqueViolation(error)) throw error;
+      const raced = await this.findAgentConversation(agentId, userId ?? null);
+      if (raced) return raced;
+      throw error;
+    }
+  }
+
+  /** Names a thread that has no messages yet. A later turn leaves the title alone. */
+  async nameIfEmpty(
+    id: string,
+    title: string,
+    userId?: string | null,
+  ): Promise<Conversation | null> {
+    const result = await this.db.query<ConversationRow>(
+      `UPDATE conversations
+       SET title = $2, updated_at = NOW()
+       WHERE id = $1
+         AND ($3::text IS NULL OR user_id IS NOT DISTINCT FROM $3)
+         AND NOT EXISTS (SELECT 1 FROM messages WHERE conversation_id = conversations.id)
+       RETURNING id, title, agent_id, created_at, updated_at`,
+      [id, title, userId ?? null],
+    );
+    const row = result.rows[0];
+    if (row) return mapConversation(row);
+    const loaded = await this.getConversation(id, undefined, userId ?? undefined);
+    return loaded?.conversation ?? null;
+  }
+
+  private async findAgentConversation(
+    agentId: string,
+    userId: string | null,
+  ): Promise<Conversation | null> {
+    const result = await this.db.query<ConversationRow>(
+      `SELECT id, title, agent_id, created_at, updated_at
+       FROM conversations
+       WHERE agent_id = $1
+         AND user_id IS NOT DISTINCT FROM $2
+       ORDER BY created_at ASC, id ASC
+       LIMIT 1`,
+      [agentId, userId],
+    );
+    const row = result.rows[0];
+    return row ? mapConversation(row) : null;
+  }
+
   async listConversations(userId?: string): Promise<Conversation[]> {
     const result = await this.db.query<ConversationRow>(
       `SELECT id, title, agent_id, created_at, updated_at
@@ -322,32 +387,6 @@ export class ConversationStore {
     };
   }
 
-  async renameConversation(
-    id: string,
-    title: string,
-    userId?: string,
-  ): Promise<Conversation | null> {
-    const result = await this.db.query<ConversationRow>(
-      `UPDATE conversations
-       SET title = $2, updated_at = NOW()
-       WHERE id = $1 AND ($3::text IS NULL OR user_id = $3)
-       RETURNING id, title, agent_id, created_at, updated_at`,
-      [id, title, userId ?? null],
-    );
-    const row = result.rows[0];
-    return row ? mapConversation(row) : null;
-  }
-
-  async deleteConversation(id: string, userId?: string): Promise<boolean> {
-    const result = await this.db.query<{ id: string }>(
-      `DELETE FROM conversations
-       WHERE id = $1 AND ($2::text IS NULL OR user_id = $2)
-       RETURNING id`,
-      [id, userId ?? null],
-    );
-    return result.rows.length > 0;
-  }
-
   async addMessage(
     conversationId: string,
     role: Role,
@@ -391,6 +430,17 @@ export class ConversationStore {
     );
     const row = result.rows[0];
     return row ? mapToolCall(row) : null;
+  }
+
+  /** True while a stored ask_user row in this conversation still waits for an answer. */
+  async hasOpenAsk(conversationId: string): Promise<boolean> {
+    const result = await this.db.query<{ id: string }>(
+      `SELECT id FROM tool_calls
+       WHERE conversation_id = $1 AND status = 'ask' AND name = 'ask_user'
+       LIMIT 1`,
+      [conversationId],
+    );
+    return result.rows.length > 0;
   }
 
   /**

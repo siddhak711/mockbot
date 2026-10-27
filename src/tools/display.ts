@@ -1,6 +1,6 @@
 import { readAskUser } from "./ask-user";
 import { PROPOSE_PLAN_TOOL, readPlan } from "./plan";
-import type { StoredToolCall } from "../types";
+import type { MessageTrace, StoredToolCall } from "../types";
 
 export type ToolActivityState = StoredToolCall["status"];
 
@@ -72,15 +72,6 @@ export function previewText(output: string, max = 160): string {
   const one = output.replace(/\s+/g, " ").trim();
   if (one.length <= max) return one;
   return `${one.slice(0, max - 1)}…`;
-}
-
-export function formatToolPayload(raw: string): string {
-  if (!raw.trim()) return "";
-  try {
-    return JSON.stringify(JSON.parse(raw) as unknown, null, 2);
-  } catch {
-    return raw;
-  }
 }
 
 export const BLOCKED_MEMORY_OUTPUT = "Blocked. A secret was not stored.";
@@ -257,6 +248,26 @@ export function activitiesFromMessages(
   messages: Array<{ tools?: StoredToolCall[] }>,
 ): ToolActivity[] {
   return messages.flatMap((message) => (message.tools ?? []).map((tool) => toToolActivity(tool)));
+}
+
+/**
+ * Where a turn stands after the person settled one of its paused tools. The
+ * turn is done once its trace has ended, and paused again when another of its
+ * tools waits on the person. Text alone proves nothing: it may be the round
+ * before the pause.
+ */
+export function resumeProgress(
+  messages: Array<{ id: string; trace: MessageTrace | null; tools?: StoredToolCall[] }>,
+  toolId: string,
+): "running" | "paused" | "done" {
+  const message = messages.find((item) => item.tools?.some((tool) => tool.id === toolId));
+  if (!message) return "done";
+  if (message.trace?.ended) return "done";
+  if (message !== messages.at(-1)) return "done";
+  const waiting = (message.tools ?? []).some(
+    (tool) => tool.id !== toolId && isPausedActivity(toToolActivity(tool).state),
+  );
+  return waiting ? "paused" : "running";
 }
 
 export const STOPPED_TOOL_OUTPUT = "Stopped before the tool ran.";

@@ -27,6 +27,12 @@ export default defineConfig({
     env: {
       AUTH_SECRET: "test-only-auth-secret-0123456789abcdef",
       AUTH_URL: "http://localhost:3000",
+      // Tests opt in to the labeled mocks. Without these flags each service fails visibly.
+      LLM_PROVIDER: "mock",
+      MOCK_WEB: "1",
+      MOCK_GITHUB: "1",
+      MOCK_CALENDAR: "1",
+      MOCK_SANDBOX: "1",
     },
   },
 });

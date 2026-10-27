@@ -1,7 +1,11 @@
 import { SYSTEM_PROMPT, type LlmProvider } from "../llm";
 import type { ConversationStore } from "../store";
-import { applyStreamEvent, emptyTrace } from "../trace";
-import { ASK_UNATTENDED, ASK_USER_TOOL } from "../tools/ask-user";
+import { streamChatTurn } from "../chat";
+import { SseParser } from "../sse";
+import { ApprovalGate } from "../tools/approval";
+import { AskGate, askUserTool } from "../tools/ask-user";
+import { PlanGate } from "../tools/plan";
+import { ToolRegistry } from "../tools/registry";
 import type { LlmMessage, Role } from "../types";
 
 /**
@@ -28,46 +32,62 @@ export function modelMessages(messages: Array<{ role: Role; content: string }>):
 }
 
 /**
- * The only place a routine invokes the agent loop.
- * It stores the prompt and the finished reply on the routine's conversation.
- * Later milestones can replace this with the shared tool loop.
+ * The only place a routine invokes the agent loop. It runs the same chat turn
+ * a person's message runs, marked unattended: ask_user and approval-gated tools
+ * return at once instead of waiting for somebody who is not there.
  */
 export async function runRoutineTurn(options: {
   store: ConversationStore;
   provider: LlmProvider;
   conversationId: string;
   prompt: string;
-}): Promise<{ assistantMessageId: string; text: string }> {
-  await options.store.addMessage(options.conversationId, "user", options.prompt);
+  runId?: string;
+  /** Tools the routine may call. Defaults to ask_user only, which unattended runs refuse. */
+  tools?: ToolRegistry;
+}): Promise<{ assistantMessageId: string; text: string; runId: string }> {
+  const tools = options.tools ?? routineTools();
+  const runId = options.runId ?? `run_${crypto.randomUUID()}`;
+  const response = await streamChatTurn({
+    store: options.store,
+    provider: options.provider,
+    tools,
+    approvals: new ApprovalGate(),
+    asks: new AskGate(),
+    plans: new PlanGate(),
+    unattended: true,
+    runId,
+    conversationId: options.conversationId,
+    message: options.prompt,
+  });
+  if (!response.body || !response.headers.get("content-type")?.includes("text/event-stream")) {
+    const body = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? "Routine run failed");
+  }
+  let assistantMessageId: string | null = null;
+  let failure: string | null = null;
+  const parser = new SseParser();
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    for (const message of parser.push(decoder.decode(value, { stream: true }))) {
+      const data = JSON.parse(message.data) as { assistantMessageId?: string; message?: string };
+      if (message.event === "done") assistantMessageId = data.assistantMessageId ?? null;
+      if (message.event === "error") failure = data.message ?? "Routine run failed";
+    }
+  }
+  if (failure) throw new Error(failure);
+  if (!assistantMessageId) throw new Error("The routine produced no reply");
   const stored = await options.store.getConversation(options.conversationId);
-  if (!stored) throw new Error("Conversation disappeared before the routine ran");
-  const history = modelMessages(stored.messages);
-  let trace = emptyTrace();
-  for await (const event of options.provider.stream(history)) {
-    trace = applyStreamEvent(trace, event);
-  }
-  if (trace.tools.some((tool) => tool.name === ASK_USER_TOOL)) {
-    trace = {
-      ...trace,
-      started: true,
-      role: "assistant",
-      text: ASK_UNATTENDED,
-      ended: true,
-      finishReason: "stop",
-      tools: trace.tools.map((tool) =>
-        tool.name === ASK_USER_TOOL && tool.result == null
-          ? { ...tool, result: ASK_UNATTENDED }
-          : tool,
-      ),
-    };
-  }
-  const assistant = await options.store.addMessage(
-    options.conversationId,
-    "assistant",
-    trace.text,
-    trace,
-  );
-  return { assistantMessageId: assistant.id, text: trace.text };
+  const reply = stored?.messages.find((message) => message.id === assistantMessageId);
+  return { assistantMessageId, text: reply?.content ?? "", runId };
+}
+
+function routineTools(): ToolRegistry {
+  const registry = new ToolRegistry();
+  registry.register(askUserTool());
+  return registry;
 }
 
 export function promptForRun(

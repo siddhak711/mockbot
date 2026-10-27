@@ -52,12 +52,12 @@ it("does not create a data directory when Vercel or production has no DATABASE_U
 it("keeps the dev sandbox on local PGlite and reopens the same files", async () => {
   const dir = await mkdtemp(join(tmpdir(), "mockbot-sandbox-"));
   try {
-    const first = await openComputer({ env: { SANDBOX_DATA_DIR: dir } });
+    const first = await openComputer({ env: { MOCK_SANDBOX: "1", SANDBOX_DATA_DIR: dir } });
     expect(first.driver).toBe("pglite");
     await first.invoke("agent", "write", { path: "hello.txt", content: "local disk" });
     await first.close();
 
-    const second = await openComputer({ env: {}, dataDir: dir });
+    const second = await openComputer({ env: { MOCK_SANDBOX: "1" }, dataDir: dir });
     expect(second.driver).toBe("pglite");
     const read = await second.invoke("agent", "read", { path: "hello.txt" });
     expect(read.run.stdout).toBe("local disk");
@@ -138,10 +138,16 @@ suite("postgres sandbox store", () => {
         DATABASE_URL: databaseUrl,
         NODE_ENV: "production",
         VERCEL: "1",
+        DAYTONA_API_KEY: "test-only-daytona-key",
         SANDBOX_DATA_DIR: dir,
         DATA_DIR: dir,
       },
       dataDir: dir,
+      // Production has no mock computer. A fleet that is never called stands in for Daytona.
+      fleet: {
+        create: () => Promise.reject(new Error("not used")),
+        reconnect: () => Promise.resolve(null),
+      },
     });
     try {
       expect(supervisor.driver).toBe("neon");

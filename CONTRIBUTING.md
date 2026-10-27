@@ -14,6 +14,22 @@ Every pull request description must include:
 2. The tests that were run, with their results and output.
 3. A screenshot or screen recording that proves the change works.
 
+## Spec check
+
+Pull requests that change the UI or the data model must say which product-model invariants in [AGENTS.md](AGENTS.md) they touch and how the change keeps them. Reviewers flag a pull request whose screenshots or recordings contradict those invariants.
+
+## No mock providers outside tests
+
+No mock, stub, or fake provider may be reachable outside tests unless it meets the three conditions below. A missing credential must fail loudly with a visible error, never a silent mock fallback. Every review greps the non-test code the pull request touches for `mock`, `stub`, and `fake` and states the result. A hit on a reachable code path blocks the pull request unless it meets those conditions. A mock outside tests is allowed only if (1) it is behind an explicit opt-in flag such as `MOCK_<SERVICE>=1`, off by default; (2) it hard-fails when that flag is set in a production build (`NODE_ENV=production` or `VERCEL_ENV=production`); and (3) its output is labeled as mock to the user. A silent fallback when a credential is missing always blocks the pull request. See [AGENTS.md](AGENTS.md) section 4.
+
+## Retry rule
+
+Every retry of failed work must change something: the failure evidence, the worker, a fresh context, or the plan. Attempt 2 is the same worker with the failure evidence, attempt 3 is a fresh context, and after that the plan changes. See [AGENTS.md](AGENTS.md) section 5.
+
+## Tool credentials in production
+
+Every tool declares its credential source (env var or per-user OAuth). A pull request that adds or changes a tool lists those sources and confirms production provides each one: `vercel env ls --environment production` names only for env vars, or, for OAuth, a test log or live API output from a real call returning real data, with tokens redacted (a screenshot or recording is optional, never required; Screenshot/recording proof paused per Siddha, Oct 26, 2026.) A tool with no credential in production must fail visibly. Production uses per-user GitHub OAuth; `GITHUB_TOKEN` is for local development only. Until per-user GitHub OAuth exists in production, the GitHub tool must fail visibly in production with the message `GitHub not connected`. See [AGENTS.md](AGENTS.md) section 6.
+
 ## Checks
 
 Requires Node.js 22 or newer.
@@ -26,4 +42,4 @@ npm run format:check
 npm run test
 ```
 
-GitHub Actions runs lint, typecheck, the format check, and tests on every push and pull request.
+GitHub Actions runs lint, typecheck, the format check, and tests on every push and pull request. A separate `e2e-smoke` workflow signs in against the Vercel deployment for that commit. It is the check to require on `main`. See the Smoke test section in the README for the GitHub secrets and the Vercel bypass secret.
