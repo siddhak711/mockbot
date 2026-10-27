@@ -10,6 +10,7 @@ import { SseParser } from "../src/sse";
 import { ConversationStore } from "../src/store";
 import { ApprovalGate } from "../src/tools/approval";
 import { AskGate, ASK_UNATTENDED, parseAskUser } from "../src/tools/ask-user";
+import { PlanGate } from "../src/tools/plan";
 import { createDefaultTools } from "../src/tools/builtins";
 import { activitiesFromMessages } from "../src/tools/display";
 import type { ToolDefinition } from "../src/tools/types";
@@ -375,6 +376,7 @@ it("does not wait for ask_user when the turn has nobody watching", async () => {
     tools: createDefaultTools({}),
     approvals: new ApprovalGate(60_000),
     asks: new AskGate(60_000),
+    plans: new PlanGate(),
     unattended: true,
     message: 'Call ask_user {"question":"Go?","options":["Yes"],"allowCustom":false}',
   });

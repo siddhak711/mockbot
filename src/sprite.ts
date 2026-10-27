@@ -194,7 +194,8 @@ export function spriteStateForRun(run: SpriteRun): SpriteState {
   const toolFailed = scoped.some((activity) => activity.state === "error");
   const toolRunning = scoped.some((activity) => activity.state === "running");
   const approvalPending = scoped.some(
-    (activity) => activity.state === "approval" || activity.state === "ask",
+    (activity) =>
+      activity.state === "approval" || activity.state === "ask" || activity.state === "plan",
   );
 
   if (run.turnError || toolFailed) return "error";

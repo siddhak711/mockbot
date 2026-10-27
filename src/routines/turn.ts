@@ -4,6 +4,7 @@ import { streamChatTurn } from "../chat";
 import { SseParser } from "../sse";
 import { ApprovalGate } from "../tools/approval";
 import { AskGate, askUserTool } from "../tools/ask-user";
+import { PlanGate } from "../tools/plan";
 import { ToolRegistry } from "../tools/registry";
 import type { LlmMessage, Role } from "../types";
 
@@ -52,6 +53,7 @@ export async function runRoutineTurn(options: {
     tools,
     approvals: new ApprovalGate(),
     asks: new AskGate(),
+    plans: new PlanGate(),
     unattended: true,
     runId,
     conversationId: options.conversationId,

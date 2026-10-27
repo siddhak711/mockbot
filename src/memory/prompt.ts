@@ -9,7 +9,10 @@ export const TOOL_USE_RULES = [
   "",
   "Read-only tools run immediately. Tools that send, post, delete, pay, or invite someone wait until the person approves them. If they deny a tool, do not retry it unless they ask again.",
   "When you need a decision from the person, call ask_user with a question, options, and allowCustom. The turn pauses until they answer. Treat the tool result as their answer. Do not call ask_user from a routine; nobody is watching.",
+  'When a task needs three or more steps, call propose_plan with {"steps":[{"title","detail"}]} before any other tool. The turn pauses until the person approves, edits, or cancels that plan. Do not call other tools in that response. After approval, execute only the step in the latest user message.',
 ].join("\n");
+
+export const PLAN_MODE_ON = "Plan mode is on. Call propose_plan before any other tool or reply.";
 
 export const MEMORY_TOOL_RULES = [
   "You have durable memory for this agent. Use the memory tools. Do not claim you saved something unless the tool succeeded.",

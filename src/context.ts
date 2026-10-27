@@ -12,6 +12,7 @@ import { SandboxTurnProvider } from "./sandbox/turn";
 import { ConversationStore } from "./store";
 import { AskGate } from "./tools/ask-user";
 import { ApprovalGate } from "./tools/approval";
+import { PlanGate } from "./tools/plan";
 import { createDefaultTools } from "./tools/builtins";
 import { registerMemoryTools, type ToolRegistry } from "./tools/registry";
 
@@ -21,6 +22,7 @@ export type AppContext = {
   tools: ToolRegistry;
   approvals: ApprovalGate;
   asks: AskGate;
+  plans: PlanGate;
   sandbox?: ComputerSupervisor;
   /** Why the sandbox did not open, shown in the computer pane and tool results. */
   sandboxError?: string;
@@ -69,6 +71,7 @@ export function setAppContext(context: {
   tools?: ToolRegistry;
   approvals?: ApprovalGate;
   asks?: AskGate;
+  plans?: PlanGate;
   sandbox?: ComputerSupervisor;
   sandboxError?: string;
   routines?: RoutineStore;
@@ -87,6 +90,7 @@ export function setAppContext(context: {
     tools,
     approvals: context.approvals ?? new ApprovalGate(),
     asks: context.asks ?? new AskGate(),
+    plans: context.plans ?? new PlanGate(),
     sandbox: context.sandbox,
     sandboxError: context.sandboxError,
     routines: context.routines,
@@ -163,6 +167,7 @@ async function openApp(): Promise<AppContext> {
       tools,
       approvals: new ApprovalGate(),
       asks: new AskGate(),
+      plans: new PlanGate(),
       agents,
       memory: new NoteMemory(agents),
       computer: defaultComputer,

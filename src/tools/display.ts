@@ -1,4 +1,5 @@
 import { readAskUser } from "./ask-user";
+import { PROPOSE_PLAN_TOOL, readPlan } from "./plan";
 import type { MessageTrace, StoredToolCall } from "../types";
 
 export type ToolActivityState = StoredToolCall["status"];
@@ -110,6 +111,7 @@ export function toolTitle(name: string, args: Record<string, unknown> | null): s
     const question = typeof args?.question === "string" ? args.question.trim() : "";
     return question || "Question";
   }
+  if (name === PROPOSE_PLAN_TOOL) return "Plan";
   return name.replaceAll("_", " ");
 }
 
@@ -142,6 +144,11 @@ export function toolDetail(name: string, args: Record<string, unknown> | null): 
     if (!request) return "";
     return request.options.join(" · ");
   }
+  if (name === PROPOSE_PLAN_TOOL) {
+    const plan = readPlan(JSON.stringify(args));
+    if (!plan) return "";
+    return `${plan.steps.length} steps`;
+  }
   if (name.startsWith("memory_")) {
     if (typeof args.query === "string") return args.query;
     if (typeof args.key === "string") return args.key;
@@ -152,13 +159,18 @@ export function toolDetail(name: string, args: Record<string, unknown> | null): 
 }
 
 export function isPausedActivity(state: ToolActivity["state"]): boolean {
-  return state === "approval" || state === "ask";
+  return state === "approval" || state === "ask" || state === "plan";
 }
 
 export function approvalSummary(name: string, args: Record<string, unknown> | null): string {
   if (name === "ask_user") {
     const question = typeof args?.question === "string" ? args.question.trim() : "";
     return question;
+  }
+  if (name === PROPOSE_PLAN_TOOL) {
+    const plan = readPlan(JSON.stringify(args ?? {}));
+    if (!plan) return "Approve this plan?";
+    return plan.steps.map((step) => step.title).join(" · ");
   }
   if (name === "memory_delete") {
     const key = typeof args?.key === "string" && args.key.trim() ? args.key.trim() : "this memory";

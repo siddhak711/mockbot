@@ -1,4 +1,5 @@
 import { askUserTool } from "./ask-user";
+import { proposePlanTool } from "./plan";
 import { calendarTool } from "./calendar";
 import { githubTool } from "./github";
 import { toolSearchTool, ToolRegistry } from "./registry";
@@ -12,6 +13,7 @@ export function createDefaultTools(
   const registry = new ToolRegistry();
   registry.register(toolSearchTool(registry));
   registry.register(askUserTool());
+  registry.register(proposePlanTool());
   registry.register(webSearchTool(env, fetchImpl));
   registry.register(webFetchTool(env, fetchImpl));
   registry.register(githubTool(env, fetchImpl));

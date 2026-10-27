@@ -122,6 +122,7 @@ export async function POST(request: Request): Promise<Response> {
           tools: fresh,
           approvals: context.approvals,
           asks,
+          plans: context.plans,
           agents,
           memory: context.memory,
           computer: context.computer,

@@ -1,5 +1,6 @@
 import { parseDelegatePhrase } from "../agents/mock-script";
 import { streamOptions, type LlmProvider, type StreamOptions } from "../llm";
+import { shouldDeferToPlanModel } from "../tools/plan";
 import type { LlmMessage, LlmStreamEvent, ProviderId } from "../types";
 import { planComputerTurn, type ComputerAction } from "./plan";
 
@@ -24,9 +25,13 @@ export class SandboxTurnProvider implements LlmProvider {
     messages: LlmMessage[],
     input?: StreamOptions | AbortSignal,
   ): AsyncIterable<LlmStreamEvent> {
-    const { signal } = streamOptions(input);
+    const options = streamOptions(input);
+    const { signal } = options;
     const lastUser = [...messages].reverse().find((message) => message.role === "user");
     const text = lastUser?.content ?? "";
+    if (this.#inner.id === "mock" && shouldDeferToPlanModel(text, Boolean(options.plan))) {
+      return this.#inner.stream(messages, input);
+    }
     const plan =
       this.#inner.id === "mock" && ownsComputerTurn(messages, text) ? planComputerTurn(text) : null;
     if (!plan) {
