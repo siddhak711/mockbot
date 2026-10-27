@@ -1,3 +1,5 @@
+import { beginComposioConnect, completeComposioConnect } from "../composio/flow";
+import { catalogUsesComposio } from "../composio/config";
 import { catalogById, catalogIsWired, catalogTarget, type CatalogEntry } from "../catalog";
 import { discoverTool, resolveToolSettings } from "../policy";
 import type { ConnectorRecord } from "../../connectors";
@@ -23,6 +25,7 @@ import {
   openPending,
   readCookie,
   sealPending,
+  type PendingOAuth,
 } from "./pending";
 import { serializeOAuthToken, type StoredOAuthToken } from "./token";
 
@@ -45,6 +48,9 @@ export async function handleOAuthStart(request: Request): Promise<Response> {
   const entry = catalogId ? catalogById(catalogId) : undefined;
   if (!entry) return json({ error: "Unknown connector." }, 400);
   if (!catalogIsWired(entry)) return json({ error: `${entry.name} is not available yet.` }, 400);
+  if (catalogUsesComposio(entry, process.env)) {
+    return startComposio(request, entry, actor.user.id, record.connectorId);
+  }
   const connectorId = typeof record.connectorId === "string" ? record.connectorId.trim() : "";
   if (connectorId && !UUID.test(connectorId)) {
     return json({ error: "Unknown connector." }, 400);
@@ -94,6 +100,9 @@ export async function handleOAuthCallback(request: Request): Promise<Response> {
   const pending = await openPending(readCookie(request.headers.get("cookie"), OAUTH_COOKIE));
   if (!pending) {
     return fail("Sign-in expired", "Start the connection again. The sign-in session expired.");
+  }
+  if (pending.broker === "composio") {
+    return finishComposio(request, pending, actor.user.id, origin, secure, fail);
   }
   const entry = catalogById(pending.catalogId);
   if (!entry || !catalogIsWired(entry)) {
@@ -162,6 +171,67 @@ export async function handleOAuthCallback(request: Request): Promise<Response> {
   }
 }
 
+async function startComposio(
+  request: Request,
+  entry: CatalogEntry,
+  userId: string,
+  connectorId: unknown,
+): Promise<Response> {
+  const origin = publicOrigin(request, process.env);
+  try {
+    const started = await beginComposioConnect({
+      entry,
+      userId,
+      origin,
+      connectorId: typeof connectorId === "string" ? connectorId.trim() : undefined,
+      env: process.env,
+    });
+    const sealed = await sealPending(started.pending);
+    const response = json({ authorizeUrl: started.authorizeUrl }, 200);
+    response.headers.set("set-cookie", oauthSetCookie(sealed, origin.startsWith("https:")));
+    return response;
+  } catch (error) {
+    return json({ error: messageOf(error) }, statusFor(error));
+  }
+}
+
+async function finishComposio(
+  request: Request,
+  pending: PendingOAuth,
+  userId: string,
+  origin: string,
+  secure: boolean,
+  fail: (title: string, message: string, status?: number) => Response,
+): Promise<Response> {
+  const url = new URL(request.url);
+  const entry = catalogById(pending.catalogId);
+  const name = entry?.name ?? "Connector";
+  try {
+    const finished = await completeComposioConnect({
+      pending,
+      userId,
+      returnedState: url.searchParams.get("state") ?? "",
+      status: url.searchParams.get("status") ?? "",
+      connectedAccountId: url.searchParams.get("connected_account_id") ?? "",
+      signal: request.signal,
+    });
+    return htmlResponse(
+      {
+        ok: true,
+        title: `${name} connected`,
+        message: `${finished.account} is connected. You can close this window.`,
+        account: finished.account,
+        connectorId: finished.connector.id,
+        origin,
+      },
+      200,
+      secure,
+    );
+  } catch (error) {
+    return fail(`Could not connect ${name}`, messageOf(error), statusFor(error));
+  }
+}
+
 async function saveCatalogConnector(options: {
   entry: CatalogEntry;
   token: StoredOAuthToken;
@@ -223,8 +293,7 @@ async function saveCatalogConnector(options: {
     if (!saved) throw new Error("That connector no longer exists.");
     return saved;
   }
-  return store.createConnector({
-    id: draft.id,
+  return store.insertCatalogConnector({
     name: options.entry.name,
     transport: "http",
     target,
