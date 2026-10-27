@@ -20,7 +20,7 @@ import { createDefaultTools } from "../src/tools/builtins";
 import { BASE_SYSTEM_PROMPT } from "../src/memory/prompt";
 import { emptyTrace } from "../src/trace";
 import type { LlmMessage, LlmStreamEvent } from "../src/types";
-import { deltas, readSse } from "./helpers";
+import { deltas, listConversations, readSse, seedConversation } from "./helpers";
 
 afterEach(async () => {
   await resetAppContext();
@@ -68,7 +68,7 @@ it("streams start, reasoning, answer text, and end from the mock provider", asyn
   expect(deltas(events)).toBe(buildMockReply("Say hello"));
   expect(events.find((event) => event.event === "end")?.data).toEqual({ finishReason: "stop" });
 
-  const loaded = await store.getConversation((await store.listConversations())[0]!.id);
+  const loaded = await store.getConversation((await listConversations(store))[0]!.id);
   const assistant = loaded?.messages[1];
   expect(assistant?.content).toBe(buildMockReply("Say hello"));
   expect(assistant?.trace).toMatchObject({
@@ -124,7 +124,7 @@ it("streams a scripted tool call only when the test option is set", async () => 
     content: MOCK_TOOL_RESULT,
   });
 
-  const loaded = await store.getConversation((await store.listConversations())[0]!.id);
+  const loaded = await store.getConversation((await listConversations(store))[0]!.id);
   expect(loaded?.messages[1]?.trace?.tools).toEqual([
     {
       index: 0,
@@ -236,7 +236,7 @@ it("forwards upstream reasoning, tool calls, text, and the finish reason", async
       { event: "end", data: { finishReason: "stop" } },
     ]);
 
-    const loaded = await store.getConversation((await store.listConversations())[0]!.id);
+    const loaded = await store.getConversation((await listConversations(store))[0]!.id);
     expect(loaded?.messages[1]?.trace?.tools[0]).toMatchObject({
       id: "call_1",
       name: "get_weather",
@@ -307,7 +307,7 @@ it("keeps partial reasoning and a partial tool call when the stream is stopped",
     if (!(error instanceof Error) || error.name !== "AbortError") throw error;
   }
 
-  const loaded = await store.getConversation((await store.listConversations())[0]!.id);
+  const loaded = await store.getConversation((await listConversations(store))[0]!.id);
   expect(loaded?.messages.map((message) => [message.role, message.content])).toEqual([
     ["user", "Remember this"],
     ["assistant", ""],
@@ -335,7 +335,7 @@ it("does not send an empty partial assistant message back to the model", async (
   };
   const store = await ConversationStore.open();
   setAppContext({ store, provider });
-  const conversation = await store.createConversation("Existing");
+  const conversation = await seedConversation(store, "Existing");
   await store.addMessage(conversation.id, "user", "First");
   await store.addMessage(conversation.id, "assistant", "", {
     ...emptyTrace(),

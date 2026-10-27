@@ -464,6 +464,26 @@ function finiteCount(value: number): number {
   return Math.round(value);
 }
 
+/** Conversation a run belongs to, from its `run.started` event. Null when the run never started. */
+export async function runConversationId(db: Sql, runId: string): Promise<string | null> {
+  const result = await db.query<{ output: string | null }>(
+    `SELECT output
+     FROM run_events
+     WHERE run_id = $1 AND type = 'event' AND input = $2
+     ORDER BY seq ASC
+     LIMIT 1`,
+    [runId, JSON.stringify({ name: "run.started" })],
+  );
+  const output = result.rows[0]?.output;
+  if (!output) return null;
+  try {
+    const detail = JSON.parse(output) as { conversationId?: unknown };
+    return typeof detail.conversationId === "string" ? detail.conversationId : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function listRunEvents(db: Sql, runId: string): Promise<RunEvent[]> {
   const result = await db.query<EventRow>(
     `SELECT run_id, seq, type, input, output, tokens, cost_usd, ms

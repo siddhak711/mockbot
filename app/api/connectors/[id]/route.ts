@@ -30,20 +30,21 @@ export async function PATCH(request: Request, context: RouteContext): Promise<Re
   const parsed = parseConnectorPatch(body);
   if (!parsed.ok) return Response.json({ error: parsed.error }, { status: 400 });
   const { store } = await getAppContext();
-  let connector = (await store.listConnectors()).find((item) => item.id === id) ?? null;
+  const owner = actor.scoped ? actor.user.id : undefined;
+  let connector = await store.getConnector(id, owner);
   if (!connector) return Response.json({ error: "Connector not found" }, { status: 404 });
   if (parsed.reconnected) {
     const refused = await verifyReconnect(connector, parsed.apiKey, request.signal);
     if (refused) return refused;
-    connector = await store.setConnectorStatus(id, "connected", null, []);
+    connector = await store.setConnectorStatus(id, "connected", null, [], owner);
     if (!connector) return Response.json({ error: "Connector not found" }, { status: 404 });
     if (parsed.apiKey) {
-      connector = await store.setConnectorSecret(id, await encryptSecret(parsed.apiKey));
+      connector = await store.setConnectorSecret(id, await encryptSecret(parsed.apiKey), owner);
       if (!connector) return Response.json({ error: "Connector not found" }, { status: 404 });
     }
   }
   if (typeof parsed.enabled === "boolean") {
-    connector = await store.setConnectorEnabled(id, parsed.enabled);
+    connector = await store.setConnectorEnabled(id, parsed.enabled, owner);
     if (!connector) return Response.json({ error: "Connector not found" }, { status: 404 });
   }
   return Response.json({ connector: toPublicConnector(connector) });
@@ -54,15 +55,18 @@ export async function DELETE(request: Request, context: RouteContext): Promise<R
   if (!actor.ok) return actor.response;
   const { id } = await context.params;
   const { store } = await getAppContext();
-  const existing = (await store.listConnectors()).find((item) => item.id === id) ?? null;
+  const owner = actor.scoped ? actor.user.id : undefined;
+  const existing = await store.getConnector(id, owner);
   if (!existing) return Response.json({ error: "Connector not found" }, { status: 404 });
   if (existing.catalogId && composioToolkitForConnector(existing.catalogId, process.env)) {
     await store.deleteComposioConnection(actor.user.id, existing.catalogId);
-    if ((await store.countComposioConnections(existing.catalogId)) > 0) {
+    // A row without an owner is shared by every linked account. It stays until
+    // the last link is removed. An owned row goes with its owner's link.
+    if (!existing.userId && (await store.countComposioConnections(existing.catalogId)) > 0) {
       return new Response(null, { status: 204 });
     }
   }
-  const deleted = await store.deleteConnector(id);
+  const deleted = await store.deleteConnector(id, owner);
   if (!deleted) return Response.json({ error: "Connector not found" }, { status: 404 });
   return new Response(null, { status: 204 });
 }

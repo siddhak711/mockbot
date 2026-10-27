@@ -36,32 +36,6 @@ type RefreshOptions = {
   ) => Promise<void> | void;
 };
 
-let queue: Promise<void> = Promise.resolve();
-
-export async function withFreshTools<T>(run: () => Promise<T>): Promise<T> {
-  let released = false;
-  let resolveHold: () => void = () => undefined;
-  const hold = new Promise<void>((resolve) => {
-    resolveHold = () => {
-      if (released) return;
-      released = true;
-      resolve();
-    };
-  });
-  const previous = queue;
-  // A failed refresh must not reject the queue, or every later turn waits forever.
-  queue = previous.then(
-    () => hold,
-    () => hold,
-  );
-  await previous.catch(() => undefined);
-  try {
-    return await run();
-  } finally {
-    resolveHold();
-  }
-}
-
 type RemoteTool = McpToolInfo;
 
 type ListedBatch = {

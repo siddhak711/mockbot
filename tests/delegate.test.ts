@@ -12,7 +12,7 @@ import type { LlmMessage } from "../src/types";
 import { resetAppContext, setAppContext } from "../src/context";
 import { buildMockReply, MockProvider } from "../src/llm";
 import { ConversationStore } from "../src/store";
-import { deltas, readSse } from "./helpers";
+import { deltas, listConversations, readSse } from "./helpers";
 
 afterEach(async () => {
   await resetAppContext();
@@ -127,7 +127,7 @@ it("delegates a subtask and gives the child its own memory and computer", async 
   expect(reads).toEqual(["desk:notes.txt"]);
   expect(connectorCalls).toEqual([]);
 
-  const listed = await store.listConversations();
+  const listed = await listConversations(store);
   const child = listed.find((conversation) => conversation.agentId === researcherId);
   const parent = listed.find((conversation) => conversation.agentId === LEAD_AGENT_ID);
   expect(child?.title).toBe("Read the notes");
@@ -234,7 +234,7 @@ it("shows a grant refusal on the parent turn and leaves that conversation usable
   expect(reads).toEqual([]);
   expect(connectorCalls).toEqual([]);
 
-  const parent = (await store.listConversations()).find(
+  const parent = (await listConversations(store)).find(
     (conversation) => conversation.agentId === LEAD_AGENT_ID,
   );
   const followUp = await POST(
@@ -254,7 +254,7 @@ it("shows a grant refusal on the parent turn and leaves that conversation usable
     "Still here",
     "Still working",
   ]);
-  const child = (await store.listConversations()).find(
+  const child = (await listConversations(store)).find(
     (conversation) => conversation.agentId === researcherId,
   );
   expect(child).toBeTruthy();
@@ -310,12 +310,10 @@ it("refuses a nested delegate from the child", async () => {
   );
   expect(result).toContain("cannot delegate further");
   expect(deltas(events)).toBe("The handoff failed. This conversation can continue.");
-  const names = new Set(
-    (await store.listConversations()).map((conversation) => conversation.title),
-  );
+  const names = new Set((await listConversations(store)).map((conversation) => conversation.title));
   expect(names.has("again")).toBe(false);
   expect(
-    (await store.listConversations()).filter(
+    (await listConversations(store)).filter(
       (conversation) => conversation.agentId !== LEAD_AGENT_ID,
     ),
   ).toHaveLength(1);
@@ -363,7 +361,7 @@ it("runs the live mock handoff for a delegate phrase", async () => {
   expect(result).toContain("The grove code is 42");
   expect(result).toContain("Granted computer desk");
   expect(result).toContain("You study groves.");
-  const child = (await store.listConversations()).find(
+  const child = (await listConversations(store)).find(
     (conversation) => conversation.agentId === researcherId,
   );
   expect(child?.title).toBe("What is the grove code?");
@@ -449,7 +447,7 @@ it("keeps the child result in the next lead turn", async () => {
   );
   const events = await readSse(response);
   expect(events.some((event) => event.event === "error")).toBe(false);
-  const parent = (await store.listConversations()).find(
+  const parent = (await listConversations(store)).find(
     (conversation) => conversation.agentId === LEAD_AGENT_ID,
   );
   const saved = await store.getConversation(parent!.id);
@@ -513,7 +511,7 @@ it("refuses a delegation from Mockbot to itself and keeps the conversation", asy
   expect(result.startsWith("Delegation failed")).toBe(true);
   expect(result).toContain("cannot delegate to itself");
   expect(deltas(events)).toBe("The handoff failed. This conversation can continue.");
-  const listed = await store.listConversations();
+  const listed = await listConversations(store);
   expect(listed).toHaveLength(1);
   expect(listed[0]?.agentId).toBe(LEAD_AGENT_ID);
   expect(listed.some((conversation) => conversation.title === "hello")).toBe(false);
@@ -577,7 +575,7 @@ it("does not register delegate on another agent's conversation", async () => {
     .join("\n");
   expect(toolOutput).toContain("Unknown tool");
   expect(toolOutput).not.toContain("file this");
-  const listed = await store.listConversations();
+  const listed = await listConversations(store);
   expect(listed).toHaveLength(1);
   expect(listed[0]?.agentId).toBe(researcherId);
   expect(listed.some((conversation) => conversation.title === "file this")).toBe(false);
@@ -625,7 +623,7 @@ it("refuses an ungranted connector from the live delegate phrase", async () => {
   expect(result).toContain("not granted connector mail");
   expect(connectorCalls).toEqual([]);
 
-  const parent = (await store.listConversations()).find(
+  const parent = (await listConversations(store)).find(
     (conversation) => conversation.agentId === LEAD_AGENT_ID,
   );
   const followUp = await POST(

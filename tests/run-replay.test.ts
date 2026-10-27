@@ -13,7 +13,7 @@ import { RunLog, listRunEvents, runTotals } from "../src/runs/events";
 import { redactSecrets } from "../src/runs/redact";
 import { ConversationStore } from "../src/store";
 import type { LlmMessage, LlmStreamEvent } from "../src/types";
-import { deltas, readSse } from "./helpers";
+import { deltas, readSse, seedConversation } from "./helpers";
 
 afterEach(async () => {
   await resetAppContext();
@@ -316,7 +316,7 @@ it("does not 404 a pending routine run that has no events yet", async () => {
 
 it("records the model row when a routine stream throws", async () => {
   const store = await ConversationStore.open();
-  const conversation = await store.createConversation("Routine");
+  const conversation = await seedConversation(store, "Routine");
   const provider: LlmProvider = {
     id: "mock",
     model: "gpt-4o-mini",

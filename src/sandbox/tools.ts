@@ -1,5 +1,5 @@
 import type { ToolContext } from "../tools/types";
-import { DEFAULT_AGENT_ID } from "./limits";
+import { computerIdFor } from "./limits";
 import type { ComputerSupervisor } from "./supervisor";
 import type { ComputerToolName, ComputerToolResult } from "./types";
 
@@ -21,9 +21,14 @@ export type ComputerTool = {
   invoke: (args: Record<string, unknown>, context: ToolContext) => Promise<ComputerToolResult>;
 };
 
+/**
+ * The tools are registered once per process. Each call runs in the sandbox of
+ * the agent speaking that turn (ToolContext.agentId). `agentId` pins every call
+ * to one sandbox instead, for callers outside a chat turn.
+ */
 export function createComputerTools(
   supervisor: ComputerSupervisor,
-  agentId = DEFAULT_AGENT_ID,
+  agentId?: string,
 ): ComputerTool[] {
   return [
     tool(supervisor, agentId, {
@@ -86,7 +91,7 @@ export function createComputerTools(
 
 function tool(
   supervisor: ComputerSupervisor,
-  agentId: string,
+  agentId: string | undefined,
   spec: {
     name: ComputerToolName;
     description: string;
@@ -110,7 +115,14 @@ function tool(
     async invoke(args, context) {
       const prepared = spec.prepare(args);
       if ("error" in prepared) return { content: prepared.error, isError: true };
-      const { result } = await supervisor.invoke(agentId, spec.name, prepared.args, context.signal);
+      const speaker = agentId ?? context.agentId;
+      if (!speaker) return { content: "No agent owns this computer call.", isError: true };
+      const { result } = await supervisor.invoke(
+        computerIdFor(speaker),
+        spec.name,
+        prepared.args,
+        context.signal,
+      );
       return result;
     },
   };

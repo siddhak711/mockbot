@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 export const DEFAULT_AGENT_ID = "agent";
 
 export const DEFAULT_COMMAND_TIMEOUT_MS = 10_000;
@@ -17,6 +19,15 @@ const AGENT_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 export function normalizeAgentId(value: string | undefined): string | null {
   const id = (value ?? DEFAULT_AGENT_ID).trim() || DEFAULT_AGENT_ID;
   return AGENT_ID.test(id) ? id : null;
+}
+
+/**
+ * Sandbox id for an agent row. Agent ids are global, so each agent, and so each
+ * account, gets its own computer. An id the sandbox cannot use as a name is hashed.
+ */
+export function computerIdFor(agentId: string): string {
+  if (AGENT_ID.test(agentId)) return agentId;
+  return `a-${createHash("sha256").update(agentId).digest("hex").slice(0, 40)}`;
 }
 
 export function commandTimeoutMs(env: Record<string, string | undefined>): number {

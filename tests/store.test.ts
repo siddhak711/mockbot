@@ -5,6 +5,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { afterEach, expect, it } from "vitest";
 import { ConversationStore } from "../src/store";
 import { emptyTrace } from "../src/trace";
+import { listConversations, seedConversation } from "./helpers";
 
 const openStores: ConversationStore[] = [];
 
@@ -20,11 +21,11 @@ async function openStore(dataDir?: string): Promise<ConversationStore> {
 
 it("stores a conversation, its title, and every message", async () => {
   const store = await openStore();
-  const conversation = await store.createConversation("First chat");
+  const conversation = await seedConversation(store, "First chat");
   await store.addMessage(conversation.id, "user", "Hello");
   await store.addMessage(conversation.id, "assistant", "Hi there");
 
-  const listed = await store.listConversations();
+  const listed = await listConversations(store);
   expect(listed.map((item) => item.title)).toEqual(["First chat"]);
 
   const loaded = await store.getConversation(conversation.id);
@@ -51,12 +52,17 @@ it("returns the same conversation id for the same agent", async () => {
   expect(bea.id).not.toBe(ada.id);
   expect(other.id).not.toBe(ada.id);
   expect(ada.id).not.toBe(first.id);
-  await expect(store.createConversation("Another", "agent_default", "user_a")).rejects.toThrow();
+  await expect(
+    store.connection.query(
+      `INSERT INTO conversations (id, title, agent_id, user_id)
+       VALUES ('second_thread', 'Another', 'agent_default', 'user_a')`,
+    ),
+  ).rejects.toThrow();
 });
 
 it("stores and reloads a stream trace", async () => {
   const store = await openStore();
-  const conversation = await store.createConversation("Traced");
+  const conversation = await seedConversation(store, "Traced");
   const trace = {
     ...emptyTrace(),
     started: true,
@@ -114,7 +120,7 @@ it("adds a trace column when opening a database created before traces", async ()
     await prep.close();
 
     const store = await openStore(dir);
-    const conversation = await store.createConversation("Migrated");
+    const conversation = await seedConversation(store, "Migrated");
     await store.addMessage(conversation.id, "assistant", "Hi", {
       ...emptyTrace(),
       started: true,
@@ -140,13 +146,13 @@ it("restores titles and messages from the same embedded database", async () => {
   const dir = await mkdtemp(join(tmpdir(), "mockbot-"));
   try {
     const first = await ConversationStore.open(dir);
-    const conversation = await first.createConversation("Persisted");
+    const conversation = await seedConversation(first, "Persisted");
     await first.addMessage(conversation.id, "user", "Remember this");
     await first.addMessage(conversation.id, "assistant", "Stored");
     await first.close();
 
     const second = await openStore(dir);
-    const listed = await second.listConversations();
+    const listed = await listConversations(second);
     expect(listed.map((item) => item.title)).toEqual(["Persisted"]);
     const loaded = await second.getConversation(conversation.id);
     expect(loaded?.messages.map((message) => message.content)).toEqual(["Remember this", "Stored"]);

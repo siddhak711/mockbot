@@ -6,7 +6,7 @@ import { resetAppContext, setAppContext } from "../src/context";
 import { SYSTEM_PROMPT, MockProvider } from "../src/llm";
 import { BASE_SYSTEM_PROMPT } from "../src/memory/prompt";
 import { ConversationStore } from "../src/store";
-import { deltas, readSse } from "./helpers";
+import { deltas, readSse, seedConversation } from "./helpers";
 
 afterEach(async () => {
   await resetAppContext();
@@ -64,8 +64,8 @@ it("seeds the milestone 1 prompt and creates a second agent", async () => {
   );
   expect(again.status).toBe(409);
 
-  const leadChat = await store.createConversation("Lead thread");
-  const childChat = await store.createConversation("Child thread", agent.agent.id);
+  const leadChat = await seedConversation(store, "Lead thread");
+  const childChat = await seedConversation(store, "Child thread", agent.agent.id);
   expect(leadChat.agentId).toBe(LEAD_AGENT_ID);
   expect(childChat.agentId).toBe(agent.agent.id);
   expect((await store.getConversation(childChat.id))?.conversation.agentId).toBe(agent.agent.id);

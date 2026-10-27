@@ -17,7 +17,7 @@ import { prepareUser } from "../src/auth/scope";
 import { AgentDirectory } from "../src/agents/directory";
 import { SseParser } from "../src/sse";
 import { ConversationStore } from "../src/store";
-import { deltas } from "./helpers";
+import { deltas, listConversations, seedConversation } from "./helpers";
 
 const originalRequireAuth = process.env.MOCKBOT_REQUIRE_AUTH;
 const originalGoogleId = process.env.GOOGLE_CLIENT_ID;
@@ -155,7 +155,7 @@ it("signs up, stores a bcrypt hash, and restores the session from the cookie", a
 it("gives each account its own agents and conversations, and adopts orphan rows once", async () => {
   const store = await openStore();
   await AgentDirectory.attach(store);
-  const orphan = await store.createConversation("Before accounts");
+  const orphan = await seedConversation(store, "Before accounts");
   await store.memories.write({
     agentId: "agent_default",
     key: "city",
@@ -274,7 +274,7 @@ it("registers the Google callback when client credentials are set", async () => 
 it("does not adopt orphan rows for a later account", async () => {
   const store = await openStore();
   await AgentDirectory.attach(store);
-  await store.createConversation("Legacy");
+  await seedConversation(store, "Legacy");
   const { signUpWithPassword } = await import("../src/auth/password");
   const first = await signUpWithPassword(store.connection, {
     email: "owner@example.com",
@@ -285,9 +285,9 @@ it("does not adopt orphan rows for a later account", async () => {
     password: "guest password value",
   });
   await prepareUser(store.connection, second.user.id);
-  expect(await store.listConversations(second.user.id)).toEqual([]);
+  expect(await listConversations(store, second.user.id)).toEqual([]);
   await prepareUser(store.connection, first.user.id);
-  expect((await store.listConversations(first.user.id)).map((item) => item.title)).toEqual([
+  expect((await listConversations(store, first.user.id)).map((item) => item.title)).toEqual([
     "Legacy",
   ]);
 });

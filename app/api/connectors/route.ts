@@ -32,7 +32,8 @@ export async function GET(request?: Request): Promise<Response> {
   const { store } = await getAppContext();
   const connections = await store.listComposioConnections(actor.user.id);
   const byCatalog = new Map(connections.map((item) => [item.catalogId, item]));
-  const connectors = (await store.listConnectors()).map((record) => {
+  const owner = actor.scoped ? actor.user.id : undefined;
+  const connectors = (await store.listConnectors(owner)).map((record) => {
     const visible = toPublicConnector(record);
     if (!record.catalogId || !composioToolkitForConnector(record.catalogId, process.env)) {
       return visible;
@@ -103,7 +104,8 @@ export async function POST(request: Request): Promise<Response> {
     : resolveSecret(parsed.value.secretRef, process.env);
   if (!resolved.ok) return Response.json({ error: resolved.error }, { status: 400 });
   const { store, tools: registry } = await getAppContext();
-  const existing = await store.listConnectors();
+  const owner = actor.scoped ? actor.user.id : null;
+  const existing = await store.listConnectors(owner);
   const draft: ConnectorRecord = {
     id: crypto.randomUUID(),
     name: parsed.value.name,
@@ -163,6 +165,7 @@ export async function POST(request: Request): Promise<Response> {
     );
     const connector = await store.createConnector({
       ...parsed.value,
+      userId: owner,
       secretRef: apiKey ? null : parsed.value.secretRef,
       secretCipher: apiKey ? await encryptSecret(apiKey) : null,
       authType: probe.auth,

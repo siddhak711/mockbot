@@ -269,8 +269,4 @@ export class MemoryRepository {
     );
     return result.rows.map(mapMemory);
   }
-
-  async purgeAgent(agentId: string): Promise<void> {
-    await this.db.query("DELETE FROM memories WHERE agent_id = $1", [agentId]);
-  }
 }

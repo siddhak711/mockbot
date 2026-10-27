@@ -32,6 +32,8 @@ export type MemoryToolDeps = {
 
 export type ToolContext = {
   signal?: AbortSignal;
+  /** Agent speaking this turn. Computer tools run in this agent's sandbox. */
+  agentId?: string;
   promote?: (names: string[]) => void;
   memory?: MemoryToolDeps;
 };

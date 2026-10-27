@@ -4,12 +4,11 @@ import { POST } from "../app/api/chat/route";
 import { POST as postApproval } from "../app/api/tools/approvals/route";
 import { buildMockReply, MockProvider, selectProvider, type LlmProvider } from "../src/llm";
 import { resetAppContext, setAppContext } from "../src/context";
-import { withFreshTools } from "../src/mcp/sync";
 import { SseParser } from "../src/sse";
 import { ConversationStore } from "../src/store";
 import { createDefaultTools } from "../src/tools/builtins";
 import type { LlmMessage, LlmStreamEvent } from "../src/types";
-import { deltas, readSse } from "./helpers";
+import { deltas, listConversations, readSse, seedConversation } from "./helpers";
 
 afterEach(async () => {
   await resetAppContext();
@@ -36,7 +35,7 @@ it("streams a mock reply when no API key is configured", async () => {
   expect(events.at(-1)?.event).toBe("done");
   expect(deltas(events)).toBe(buildMockReply("Say hello"));
 
-  const listed = await store.listConversations();
+  const listed = await listConversations(store);
   expect(listed).toHaveLength(1);
   expect(listed[0]?.title).toBe("Say hello");
   const loaded = await store.getConversation(listed[0]!.id);
@@ -54,7 +53,7 @@ it("appends a later turn to the same conversation", async () => {
     store,
     provider: new MockProvider({ delayMs: 0, chunkSize: 32, reply: () => "Second reply" }),
   });
-  const conversation = await store.createConversation("Existing");
+  const conversation = await seedConversation(store, "Existing");
   await store.addMessage(conversation.id, "user", "First");
   await store.addMessage(conversation.id, "assistant", "Earlier");
 
@@ -100,7 +99,7 @@ it("rejects an empty message and an unknown conversation", async () => {
     }),
   );
   expect(missing.status).toBe(404);
-  expect(await store.listConversations()).toEqual([]);
+  expect(await listConversations(store)).toEqual([]);
 });
 
 it("does not keep the turn lock after an unread event stream finishes", async () => {
@@ -126,28 +125,6 @@ it("does not keep the turn lock after an unread event stream finishes", async ()
   );
   expect(second.status).toBe(400);
   await first.body?.cancel();
-});
-
-it("releases the refresh lock before the event stream finishes", async () => {
-  let releaseProducer: () => void = () => undefined;
-  const producerDone = new Promise<void>((resolve) => {
-    releaseProducer = resolve;
-  });
-  const response = await withFreshTools(async () => {
-    const stream = new ReadableStream({
-      async start(controller) {
-        await producerDone;
-        controller.enqueue(new TextEncoder().encode("data: hi\n\n"));
-        controller.close();
-      },
-    });
-    return new Response(stream, { headers: { "content-type": "text/event-stream" } });
-  });
-
-  const next = await withFreshTools(async () => Response.json({ ok: true }));
-  expect(next.status).toBe(200);
-  releaseProducer();
-  await response.body?.cancel();
 });
 
 it("finishes a second conversation while the first waits on approval", async () => {
@@ -215,16 +192,6 @@ it("finishes a second conversation while the first waits on approval", async () 
   expect(decision.status).toBe(200);
   const rest = await readRest(pending.reader, pending.parser, pending.decoder);
   expect(rest.some((event) => event.event === "done")).toBe(true);
-});
-
-it("releases the turn lock when preparing a turn throws", async () => {
-  await expect(
-    withFreshTools(async () => {
-      throw new Error("boom");
-    }),
-  ).rejects.toThrow("boom");
-  const response = await withFreshTools(async () => Response.json({ ok: true }));
-  expect(response.status).toBe(200);
 });
 
 class ApprovalProvider implements LlmProvider {

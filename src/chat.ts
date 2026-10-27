@@ -202,6 +202,7 @@ export async function streamChatTurn(options: {
   const promoted = new Set<string>();
   const toolContext: ToolContext = {
     signal,
+    agentId: speaker.id,
     memory: memoryDeps,
     promote(names) {
       for (const name of names) promoted.add(name);

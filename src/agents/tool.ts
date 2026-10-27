@@ -8,10 +8,7 @@ import type { AgentDirectory } from "./directory";
 import { DELEGATE_TOOL_NAME, isLeadAgent } from "./ids";
 import type { AgentMemoryPort, ComputerPort, ConnectorPort } from "./types";
 
-/**
- * Subset of the milestone 2 tool definition (src/tools/types.ts).
- * `registerDelegateTool` can be pointed at ToolRegistry.register when that file lands.
- */
+/** Subset of the tool definition in src/tools/types.ts. */
 export type AgentToolResult = {
   content: string;
   isError?: boolean;
@@ -34,26 +31,6 @@ export type AgentTool = {
   approval?: "always" | "never";
   invoke: (args: Record<string, unknown>, context: AgentToolContext) => Promise<AgentToolResult>;
 };
-
-export interface AgentToolHost {
-  register(tool: AgentTool): void;
-  get(name: string): AgentTool | undefined;
-}
-
-export class MapToolHost implements AgentToolHost {
-  #tools = new Map<string, AgentTool>();
-
-  register(tool: AgentTool): void {
-    if (this.#tools.has(tool.name)) {
-      throw new Error(`Tool ${tool.name} is already registered`);
-    }
-    this.#tools.set(tool.name, tool);
-  }
-
-  get(name: string): AgentTool | undefined {
-    return this.#tools.get(name);
-  }
-}
 
 export type DelegateDeps = {
   directory: AgentDirectory;
@@ -91,10 +68,6 @@ export function delegateTool(deps: DelegateDeps): AgentTool {
       return { content: outcome.content, isError: outcome.isError };
     },
   };
-}
-
-export function registerDelegateTool(host: AgentToolHost, deps: DelegateDeps): void {
-  host.register(delegateTool(deps));
 }
 
 /** Lead conversations see `delegate`. Every other agent keeps the shared registry unchanged. */

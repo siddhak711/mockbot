@@ -13,7 +13,7 @@ import { createDefaultTools } from "../src/tools/builtins";
 import { toolSearchTool, ToolRegistry } from "../src/tools/registry";
 import type { LlmMessage, LlmStreamEvent, StoredToolCall } from "../src/types";
 import type { ToolDefinition } from "../src/tools/types";
-import { deltas, readSse } from "./helpers";
+import { deltas, listConversations, readSse } from "./helpers";
 
 afterEach(async () => {
   await resetAppContext();
@@ -151,7 +151,7 @@ it("streams a mock tool_search and web_search before the reply and stores the ca
   expect(String(results[1]?.data.output)).toContain("Say hello");
   expect(deltas(events)).toContain("mock reply");
 
-  const loaded = await store.getConversation((await store.listConversations())[0]!.id);
+  const loaded = await store.getConversation((await listConversations(store))[0]!.id);
   const assistant = loaded?.messages.find((message) => message.role === "assistant");
   expect(assistant?.tools?.map((tool) => [tool.name, tool.status])).toEqual([
     ["tool_search", "done"],
@@ -211,7 +211,7 @@ it("pauses a write tool on an approval card and continues after the decision", a
   expect(deltas(events)).toContain("planning meeting");
   expect(events.at(-1)?.event).toBe("done");
 
-  const loaded = await store.getConversation((await store.listConversations())[0]!.id);
+  const loaded = await store.getConversation((await listConversations(store))[0]!.id);
   const tools = loaded?.messages.find((message) => message.role === "assistant")?.tools ?? [];
   expect(tools.map((tool) => tool.status)).toEqual(["done", "done"]);
 });
@@ -326,7 +326,7 @@ it("keeps a pending approval when the chat client disconnects", async () => {
   await pending.reader.cancel().catch(() => undefined);
   await new Promise((resolve) => setTimeout(resolve, 50));
 
-  const conversationId = (await store.listConversations())[0]!.id;
+  const conversationId = (await listConversations(store))[0]!.id;
   const before = await store.getConversation(conversationId);
   const waiting = before?.messages
     .find((message) => message.role === "assistant")
@@ -383,7 +383,7 @@ it("ends a pending approval on an explicit stop", async () => {
   );
   expect(calendarResult).toBeUndefined();
   expect(deltas(events)).not.toContain("created a **planning meeting**");
-  const loaded = await store.getConversation((await store.listConversations())[0]!.id);
+  const loaded = await store.getConversation((await listConversations(store))[0]!.id);
   const calendar = loaded?.messages
     .find((message) => message.role === "assistant")
     ?.tools?.find((tool) => tool.id === id);
@@ -455,7 +455,7 @@ it("shows a tool failure in the stream and keeps the conversation usable", async
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         message: "Again",
-        conversationId: (await store.listConversations())[0]!.id,
+        conversationId: (await listConversations(store))[0]!.id,
       }),
     }),
   );

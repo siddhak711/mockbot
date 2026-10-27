@@ -9,9 +9,10 @@ export async function noteConnectorOutcome(
   connectorId: string,
   result: { isError: boolean; content: string; authExpired?: boolean },
   userId?: string,
+  /** Signed-in owner. A failure pauses only that account's connector. */
+  ownerId?: string | null,
 ): Promise<void> {
-  const connectors = await store.listConnectors();
-  const connector = connectors.find((item) => item.id === connectorId);
+  const connector = await store.getConnector(connectorId, ownerId);
   if (!connector) return;
   if (connector.catalogId && composioToolkitForConnector(connector.catalogId, process.env)) {
     if (userId) await noteComposioOutcome(store, userId, connector.catalogId, result);
@@ -20,18 +21,18 @@ export async function noteConnectorOutcome(
   if (connector.status === "reconnect") return;
   if (!result.isError) {
     if (connector.status === "error")
-      await store.setConnectorStatus(connectorId, "connected", null, []);
+      await store.setConnectorStatus(connectorId, "connected", null, [], ownerId);
     return;
   }
   if (result.authExpired || isAuthFailure(result.content)) {
-    await store.setConnectorStatus(connectorId, "reconnect", result.content);
+    await store.setConnectorStatus(connectorId, "reconnect", result.content, undefined, ownerId);
     return;
   }
   const now = Date.now();
   const recent = [...(connector.failures ?? []), now].filter((time) => now - time <= WINDOW_MS);
   const status = recent.length >= 3 || connector.status === "error" ? "error" : "connected";
   const detail = status === "error" ? result.content : (connector.statusDetail ?? null);
-  await store.setConnectorStatus(connectorId, status, detail, recent);
+  await store.setConnectorStatus(connectorId, status, detail, recent, ownerId);
 }
 
 async function noteComposioOutcome(

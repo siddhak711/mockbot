@@ -8,7 +8,7 @@ import { GET as readStatus } from "../app/api/status/route";
 import { resetAppContext, setAppContext } from "../src/context";
 import { MockProvider, selectProvider } from "../src/llm";
 import { ConversationStore } from "../src/store";
-import { deltas, readSse } from "./helpers";
+import { deltas, listConversations, readSse } from "./helpers";
 
 const SECRET = "super-secret-key-do-not-leak";
 
@@ -119,7 +119,7 @@ it("sends the turn to the configured base URL and keeps the key off the client r
     expect(raw).not.toContain(SECRET);
     expect(raw).not.toContain("LLM_API_KEY");
 
-    const loaded = await store.getConversation((await store.listConversations())[0]!.id);
+    const loaded = await store.getConversation((await listConversations(store))[0]!.id);
     expect(JSON.stringify(loaded)).not.toContain(SECRET);
 
     const status = await readStatus();
@@ -166,7 +166,7 @@ it("redacts an upstream error that echoes the API key", async () => {
     expect(events.some((event) => event.event === "error")).toBe(true);
     expect(raw).toContain("[redacted]");
     expect(raw).not.toContain(SECRET);
-    const loaded = await store.getConversation((await store.listConversations())[0]!.id);
+    const loaded = await store.getConversation((await listConversations(store))[0]!.id);
     expect(loaded?.messages.map((message) => message.role)).toEqual(["user"]);
   } finally {
     server.close();
