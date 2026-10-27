@@ -8,7 +8,7 @@ export type Conversation = {
   updatedAt: string;
 };
 
-export type ToolCallStatus = "running" | "approval" | "ask" | "done" | "denied" | "error";
+export type ToolCallStatus = "running" | "approval" | "ask" | "plan" | "done" | "denied" | "error";
 
 export type StoredToolCall = {
   id: string;

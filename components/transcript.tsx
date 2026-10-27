@@ -5,6 +5,7 @@ import { DEFAULT_SPRITE_COLOR, type SpriteColor, type SpriteState } from "../src
 import { showThinkingRow } from "../src/token-stream";
 import type { LivePhase, Message } from "../src/types";
 import type { ToolActivity } from "../src/tools/display";
+import type { PlanStep } from "../src/tools/plan";
 import { AssistantStream } from "./assistant-stream";
 import { DownIcon } from "./icons";
 import { BotSprite, botSpriteLabel } from "./bot-sprite";
@@ -49,6 +50,7 @@ export function Transcript({
   decidingId,
   onDecide,
   onAnswer,
+  onPlan,
   onSelectTool,
   onOpenTrace,
   spriteState = "idle",
@@ -67,6 +69,13 @@ export function Transcript({
   decidingId?: string | null;
   onDecide?: (id: string, decision: "approve" | "deny") => void;
   onAnswer?: (id: string, answer: string) => void;
+  onPlan?: (
+    id: string,
+    action:
+      | { type: "approve"; steps?: PlanStep[] }
+      | { type: "edit"; steps: PlanStep[] }
+      | { type: "cancel" },
+  ) => void;
   onSelectTool?: (id: string) => void;
   onOpenTrace?: () => void;
   reconnectFor?: (activity: ToolActivity) => string | null;
@@ -175,6 +184,7 @@ export function Transcript({
                       decidingId={decidingId}
                       onDecide={onDecide}
                       onAnswer={onAnswer}
+                      onPlan={onPlan}
                       onSelect={onSelectTool}
                       reconnectFor={reconnectFor}
                       onReconnect={onReconnect}

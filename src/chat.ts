@@ -9,8 +9,18 @@ import { findSecrets } from "./memory/scrub";
 import { encodeSse, ssePadding } from "./sse";
 import { titleFromMessage, type ConversationStore } from "./store";
 import type { LlmProvider } from "./llm";
+import { PLAN_MODE_ON } from "./memory/prompt";
 import { ASK_USER_TOOL, type AskGate } from "./tools/ask-user";
 import { requiresApproval, type ApprovalGate } from "./tools/approval";
+import {
+  approvedPlanMessage,
+  PROPOSE_PLAN_TOOL,
+  parsePlan,
+  fallbackPlan,
+  stepCommand,
+  type PlanGate,
+  type PlanStep,
+} from "./tools/plan";
 import { runTool, type ToolRegistry } from "./tools/registry";
 import {
   activityTitle,
@@ -21,7 +31,7 @@ import {
 import type { ToolContext } from "./tools/types";
 import { buildModelInput } from "./turn";
 import { applyStreamEvent, emptyTrace, hasVisibleStream, modelPromptParts } from "./trace";
-import type { LlmStreamEvent, LlmToolCall, MessageTrace } from "./types";
+import type { LlmStreamEvent, LlmToolCall, MessageTrace, ToolCallStatus } from "./types";
 
 const MAX_MESSAGE_LENGTH = 20_000;
 const MAX_ROUNDS = 8;
@@ -39,7 +49,7 @@ type PendingCall = {
   name: string;
   arguments: string;
   result: string | null;
-  status: "running" | "approval" | "ask" | "done" | "denied" | "error";
+  status: ToolCallStatus;
   output: string | null;
 };
 
@@ -116,6 +126,8 @@ export async function streamChatTurn(options: {
   tools: ToolRegistry;
   approvals: ApprovalGate;
   asks: AskGate;
+  plans: PlanGate;
+  plan?: boolean;
   message: string;
   conversationId?: string;
   agentId?: string;
@@ -167,6 +179,12 @@ export async function streamChatTurn(options: {
       { status: 409 },
     );
   }
+  if (options.plans.hasPending(conversation.id)) {
+    return Response.json(
+      { error: "A plan is still waiting for approval in this conversation." },
+      { status: 409 },
+    );
+  }
 
   const user = await options.store.addMessage(conversation.id, "user", message);
   const speaker = (await agents.get(conversation.agentId)) ?? (await agents.lead());
@@ -183,9 +201,13 @@ export async function streamChatTurn(options: {
   });
   if (!prepared) return Response.json({ error: "Conversation not found" }, { status: 404 });
   const history = prepared.messages;
+  if (options.plan) {
+    const system = history.find((item) => item.role === "system");
+    if (system) system.content = `${system.content}\n\n${PLAN_MODE_ON}`;
+  }
   const memoryDeps = prepared.deps;
 
-  const { store, provider, approvals, asks, signal } = options;
+  const { store, provider, approvals, asks, plans, signal } = options;
   const tools = toolsForSpeaker(options.tools, speaker, {
     directory: agents,
     store,
@@ -296,13 +318,66 @@ export async function streamChatTurn(options: {
 
       const stopOpenCalls = async () => {
         for (const call of liveCalls) {
-          if (call.status !== "running" && call.status !== "approval" && call.status !== "ask") {
+          if (
+            call.status !== "running" &&
+            call.status !== "approval" &&
+            call.status !== "ask" &&
+            call.status !== "plan"
+          ) {
             continue;
           }
           call.status = "error";
           call.output = "Stopped before the tool finished.";
           await saveCall(call);
         }
+      };
+
+      type ActivePlan = { call: PendingCall; steps: PlanStep[]; index: number };
+      let activePlan: ActivePlan | null = null;
+
+      const publishPlan = async (status: ToolCallStatus) => {
+        if (!activePlan) return;
+        activePlan.call.status = status;
+        activePlan.call.arguments = JSON.stringify({ steps: activePlan.steps });
+        await saveCall(activePlan.call);
+        enqueue("plan_progress", {
+          id: activePlan.call.id,
+          name: activePlan.call.name,
+          steps: activePlan.steps,
+          status,
+          arguments: activePlan.call.arguments,
+          assistantMessageId: assistantId,
+        });
+      };
+
+      const advancePlan = async (assistantCommitted: boolean, text: string): Promise<boolean> => {
+        if (!activePlan) return false;
+        const current = activePlan.steps[activePlan.index];
+        if (!current) return false;
+        current.state = "done";
+        activePlan.index += 1;
+        if (activePlan.index >= activePlan.steps.length) {
+          activePlan.call.output = activePlan.steps.map((step) => step.title).join("\n");
+          activePlan.call.result = activePlan.call.output;
+          await publishPlan("done");
+          enqueue("tool_result", {
+            id: activePlan.call.id,
+            name: activePlan.call.name,
+            status: "done",
+            output: activePlan.call.output,
+            assistantMessageId: assistantId,
+          });
+          return false;
+        }
+        const next = activePlan.steps[activePlan.index];
+        if (!next) return false;
+        next.state = "active";
+        await publishPlan("running");
+        if (!assistantCommitted) {
+          history.push({ role: "assistant", content: text || `Finished: ${current.title}` });
+        }
+        history.push({ role: "user", content: stepCommand(next, activePlan.index) });
+        return true;
       };
 
       try {
@@ -327,8 +402,10 @@ export async function streamChatTurn(options: {
           const roundAbort = new AbortController();
           const providerSignal = roundAbort.signal as AbortSignal & {
             tools?: typeof exposed;
+            plan?: boolean;
           };
           providerSignal.tools = exposed;
+          if (options.plan) providerSignal.plan = true;
           const abortRound = () => roundAbort.abort(signal?.reason);
           if (followRequest) {
             if (signal?.aborted) abortRound();
@@ -336,22 +413,23 @@ export async function streamChatTurn(options: {
           }
 
           const modelEvents = provider.stream(history, providerSignal);
-          const events = delegateTool
-            ? runWithDelegate(modelEvents, async (call) => {
-                let args: Record<string, unknown>;
-                try {
-                  const parsed: unknown = JSON.parse(call.arguments);
-                  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          const events =
+            delegateTool && (!options.plan || activePlan)
+              ? runWithDelegate(modelEvents, async (call) => {
+                  let args: Record<string, unknown>;
+                  try {
+                    const parsed: unknown = JSON.parse(call.arguments);
+                    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+                      return "Delegation failed: arguments are not JSON.";
+                    }
+                    args = parsed as Record<string, unknown>;
+                  } catch {
                     return "Delegation failed: arguments are not JSON.";
                   }
-                  args = parsed as Record<string, unknown>;
-                } catch {
-                  return "Delegation failed: arguments are not JSON.";
-                }
-                const result = await delegateTool.invoke(args, { signal });
-                return result.content;
-              })
-            : modelEvents;
+                  const result = await delegateTool.invoke(args, { signal });
+                  return result.content;
+                })
+              : modelEvents;
 
           try {
             for await (const event of events) {
@@ -398,19 +476,122 @@ export async function streamChatTurn(options: {
           }
 
           const pending = roundCalls.filter((call) => call.name && call.result == null);
-          const shouldRun =
-            pending.length > 0 && (finishReason === "tool_calls" || roundText.length === 0);
-          if (!shouldRun) break;
+          const planCall = pending.find((call) => call.name === PROPOSE_PLAN_TOOL);
+          if (!activePlan && (planCall || options.plan)) {
+            const resolved = resolvePlanSteps(planCall, message, Boolean(options.plan));
+            if (resolved) {
+              const call: PendingCall = planCall ?? {
+                index: roundCalls.length,
+                id: `call_plan_${crypto.randomUUID()}`,
+                name: PROPOSE_PLAN_TOOL,
+                arguments: "",
+                result: null,
+                status: "plan",
+                output: null,
+              };
+              if (!call.id) call.id = `call_plan_${crypto.randomUUID()}`;
+              const steps = resolved.map((step) => ({ ...step, state: "pending" as const }));
+              call.name = PROPOSE_PLAN_TOOL;
+              call.arguments = JSON.stringify({ steps });
+              call.status = "plan";
+              call.output = null;
+              call.result = null;
+              liveCalls.push(call);
+              await saveCall(call);
+              followRequest = false;
+              enqueue("plan_required", {
+                id: call.id,
+                name: call.name,
+                steps,
+                arguments: call.arguments,
+                assistantMessageId: assistantId,
+              });
+              const outcome = await plans.wait(
+                call.id,
+                steps,
+                conversationSnapshot.id,
+                assistantId ?? "",
+              );
+              if (!signal?.aborted) followRequest = true;
+              if (outcome.reason !== "approved") {
+                const cancelled = outcome.reason === "cancelled";
+                const output = cancelled
+                  ? "Plan cancelled. Nothing ran."
+                  : "The plan timed out before it was approved. Nothing ran.";
+                const note = cancelled
+                  ? "Cancelled the plan. Nothing ran."
+                  : "The plan timed out. Nothing ran.";
+                call.status = cancelled ? "denied" : "error";
+                call.output = output;
+                call.result = output;
+                await saveCall(call);
+                enqueue("tool_result", {
+                  id: call.id,
+                  name: call.name,
+                  status: call.status,
+                  output,
+                  assistantMessageId: assistantId,
+                });
+                await publish(applyStreamEvent(trace, { type: "text", text: note }), {
+                  type: "text",
+                  text: note,
+                });
+                break;
+              }
+              const approved = outcome.steps.map((step, index) => ({
+                ...step,
+                state: index === 0 ? ("active" as const) : ("pending" as const),
+              }));
+              call.arguments = JSON.stringify({ steps: approved });
+              call.status = "running";
+              call.result = "approved";
+              activePlan = { call, steps: approved, index: 0 };
+              await saveCall(call);
+              enqueue("plan_progress", {
+                id: call.id,
+                name: call.name,
+                steps: approved,
+                status: "running",
+                arguments: call.arguments,
+                assistantMessageId: assistantId,
+              });
+              history.push({
+                role: "assistant",
+                content: roundText,
+                tool_calls: [toLlmToolCall(call)],
+              });
+              history.push({
+                role: "tool",
+                tool_call_id: call.id,
+                content: approvedPlanMessage(approved),
+              });
+              const first = approved[0];
+              if (first) history.push({ role: "user", content: stepCommand(first, 0) });
+              continue;
+            }
+            if (planCall) {
+              if (!planCall.id) planCall.id = `call_${planCall.index}_${crypto.randomUUID()}`;
+              await finish(planCall, "error", "The plan was not valid, so nothing ran.");
+            }
+          }
 
-          for (const call of pending) {
+          const runnable = roundCalls.filter((call) => call.name && call.result == null);
+          const shouldRun =
+            runnable.length > 0 && (finishReason === "tool_calls" || roundText.length === 0);
+          if (!shouldRun) {
+            if (await advancePlan(false, roundText)) continue;
+            break;
+          }
+
+          for (const call of runnable) {
             if (!call.id) call.id = `call_${call.index}_${crypto.randomUUID()}`;
           }
           history.push({
             role: "assistant",
             content: roundText,
-            tool_calls: pending.map(toLlmToolCall),
+            tool_calls: runnable.map(toLlmToolCall),
           });
-          for (const call of pending) {
+          for (const call of runnable) {
             if (clientCancelled() || userStopped) break;
             liveCalls.push(call);
             const output = await executeCall(call);
@@ -418,6 +599,10 @@ export async function streamChatTurn(options: {
             history.push({ role: "tool", tool_call_id: call.id, content: output });
           }
           if (clientCancelled() || userStopped) break;
+          if (activePlan) {
+            if (await advancePlan(true, roundText)) continue;
+            break;
+          }
         }
 
         if (!clientCancelled() && !userStopped && sawStart && !roundEnded) {
@@ -524,6 +709,9 @@ export async function streamChatTurn(options: {
         }
         const prepared = tool.prepare ? tool.prepare(parsed.args) : { args: parsed.args };
         if ("error" in prepared) return finish(call, "error", prepared.error);
+        if (call.name === PROPOSE_PLAN_TOOL) {
+          return finish(call, "done", "The plan is already in progress.");
+        }
         if (call.name === ASK_USER_TOOL) {
           return askPerson(call, prepared.args);
         }
@@ -637,6 +825,19 @@ export async function streamChatTurn(options: {
   });
 
   return new Response(stream, { headers: SSE_HEADERS });
+}
+
+function resolvePlanSteps(
+  call: PendingCall | undefined,
+  userText: string,
+  forced: boolean,
+): PlanStep[] | null {
+  if (call?.arguments) {
+    const parsed = parsePlan(call.arguments);
+    if (parsed.ok) return parsed.steps.map((step) => ({ ...step, state: "pending" as const }));
+  }
+  if (forced) return fallbackPlan(userText);
+  return null;
 }
 
 function parseArguments(

@@ -429,10 +429,10 @@ export function Workspace({
     window.history.replaceState(null, "", url);
   }
 
-  async function send(text: string) {
+  async function send(text: string, options?: { plan?: boolean }) {
     const trimmed = text.trim();
     const approvalPending = activitiesRef.current.some(
-      (item) => item.state === "approval" || item.state === "ask",
+      (item) => item.state === "approval" || item.state === "ask" || item.state === "plan",
     );
     if (!trimmed || streaming || approvalPending) return;
     setAlert(null);
@@ -532,6 +532,7 @@ export function Workspace({
           message: trimmed,
           conversationId: conversationId ?? undefined,
           agentId: conversationId ? undefined : activeAgentId,
+          ...(options?.plan ? { plan: true } : {}),
         }),
         signal: controller.signal,
       });
@@ -612,6 +613,37 @@ export function Workspace({
                 return { ...item, arguments: raw, ...describeTool(item.name, raw) };
               }),
             );
+          } else if (event.event === "plan_required" || event.event === "plan_progress") {
+            const id = String(payload.id ?? "");
+            const messageId = String(payload.assistantMessageId ?? "");
+            if (messageId) bindAssistant(messageId);
+            const steps = Array.isArray(payload.steps) ? payload.steps : [];
+            const raw =
+              typeof payload.arguments === "string" ? payload.arguments : JSON.stringify({ steps });
+            const described = describeTool("propose_plan", raw);
+            const status = (
+              event.event === "plan_required" ? "plan" : String(payload.status ?? "running")
+            ) as ToolCallStatus;
+            if (!id) continue;
+            setActivities((prev) => {
+              const existing = prev.find((item) => item.id === id);
+              const next = {
+                id,
+                messageId: messageId || existing?.messageId || "",
+                name: "propose_plan",
+                arguments: raw,
+                output: existing?.output ?? "",
+                preview: existing?.preview ?? "",
+                state: status,
+                ...described,
+              };
+              return [...prev.filter((item) => item.id !== id), next];
+            });
+            setSelectedToolId(id);
+            if (status !== "plan") {
+              releaseDecision(decidingRef, id);
+              setDecidingId((current) => (current === id ? null : current));
+            }
           } else if (event.event === "ask_user") {
             const id = String(payload.id ?? "");
             const raw = String(payload.arguments ?? "");
@@ -755,6 +787,101 @@ export function Workspace({
     }
   }
 
+  async function decidePlan(
+    id: string,
+    action:
+      { type: "approve"; steps?: unknown } | { type: "edit"; steps: unknown } | { type: "cancel" },
+  ) {
+    const live = abortRef.current !== null;
+    let saved = false;
+    try {
+      const outcome = await settleDecision(decidingRef, id, async () => {
+        setDecidingId(id);
+        const response = await fetch("/api/tools/plans", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id,
+            decision: action.type === "cancel" ? "cancel" : action.type,
+            ...("steps" in action && action.steps ? { steps: action.steps } : {}),
+          }),
+        });
+        if (response.ok) {
+          saved = action.type !== "edit";
+          const body = (await response.json().catch(() => null)) as { steps?: unknown } | null;
+          if (action.type === "edit" || (action.type === "approve" && body?.steps)) {
+            const raw = JSON.stringify({
+              steps: body?.steps ?? ("steps" in action ? action.steps : []),
+            });
+            const described = describeTool("propose_plan", raw);
+            setActivities((prev) =>
+              prev.map((item) =>
+                item.id === id
+                  ? {
+                      ...item,
+                      ...described,
+                      arguments: raw,
+                      state: action.type === "approve" ? "running" : "plan",
+                    }
+                  : item,
+              ),
+            );
+          } else if (action.type === "approve") {
+            setActivities((prev) =>
+              prev.map((item) => (item.id === id ? { ...item, state: "running" } : item)),
+            );
+          } else {
+            setActivities((prev) =>
+              prev.map((item) =>
+                item.id === id
+                  ? { ...item, state: "denied", output: "Plan cancelled. Nothing ran." }
+                  : item,
+              ),
+            );
+          }
+          return true;
+        }
+        const activity = activitiesRef.current.find((item) => item.id === id);
+        if (!activity || activity.state === "plan") {
+          const body = (await response.json().catch(() => null)) as { error?: string } | null;
+          setAlert({
+            message:
+              body?.error ??
+              (response.status === 404
+                ? "That plan expired. Send the request again."
+                : "Could not save the plan"),
+            kind: "workspace",
+            ownerId: activeIdRef.current,
+          });
+        }
+        return false;
+      });
+      if (outcome === "released") {
+        setDecidingId((current) => (current === id ? null : current));
+      }
+      const conversationId = activeIdRef.current;
+      if (saved && !live && conversationId) await watchPlan(conversationId, id);
+    } catch {
+      setDecidingId((current) => (current === id ? null : current));
+    }
+  }
+
+  async function watchPlan(conversationId: string, toolId: string) {
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      await wait(200);
+      if (activeIdRef.current !== conversationId) return;
+      const response = await fetch(`/api/conversations/${conversationId}`);
+      if (!response.ok) continue;
+      const data = (await response.json()) as { conversation: Conversation; messages: Message[] };
+      if (activeIdRef.current !== conversationId) return;
+      setMessages(data.messages);
+      const next = activitiesFromMessages(data.messages);
+      setActivities(next);
+      const tool = next.find((item) => item.id === toolId);
+      if (!tool || (tool.state !== "plan" && tool.state !== "running")) return;
+    }
+  }
+
   async function answer(id: string, text: string) {
     const live = abortRef.current !== null;
     let saved = false;
@@ -818,18 +945,27 @@ export function Workspace({
 
   function stopTurn() {
     const pending = activitiesRef.current.filter(
-      (activity) => activity.state === "approval" || activity.state === "ask",
+      (activity) =>
+        activity.state === "approval" || activity.state === "ask" || activity.state === "plan",
     );
     if (pending.length > 0) setActivities((current) => activitiesAfterStop(current));
     abortRef.current?.abort();
     stopDecision(decidingRef);
     setDecidingId(null);
     for (const activity of pending) {
-      const path = activity.state === "ask" ? "/api/tools/asks" : "/api/tools/approvals";
+      const path =
+        activity.state === "ask"
+          ? "/api/tools/asks"
+          : activity.state === "plan"
+            ? "/api/tools/plans"
+            : "/api/tools/approvals";
       void fetch(path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: activity.id, decision: "stop" }),
+        body: JSON.stringify({
+          id: activity.id,
+          decision: activity.state === "plan" ? "cancel" : "stop",
+        }),
       });
     }
   }
@@ -841,6 +977,7 @@ export function Workspace({
   const spriteColor = spriteColorForAgent(speaking);
   const spriteName = speaking?.name ?? "Mockbot";
   const awaitingAsk = activities.some((activity) => activity.state === "ask");
+  const awaitingPlan = activities.some((activity) => activity.state === "plan");
   const awaitingApproval = activities.some((activity) => activity.state === "approval");
   const error = alertMessageForView(alert, activeId);
   const sprite = useRunSprite({
@@ -1022,6 +1159,7 @@ export function Workspace({
             decidingId={decidingId}
             onDecide={(id, decision) => void decide(id, decision)}
             onAnswer={(id, text) => void answer(id, text)}
+            onPlan={(id, action) => void decidePlan(id, action)}
             onSelectTool={setSelectedToolId}
             onOpenTrace={showTrace}
             reconnectFor={(activity) => {
@@ -1045,13 +1183,15 @@ export function Workspace({
           ) : null}
           <Composer
             streaming={streaming}
-            awaitingApproval={awaitingApproval || awaitingAsk}
-            busyHint={awaitingAsk ? "Waiting for an answer" : undefined}
+            awaitingApproval={awaitingApproval || awaitingAsk || awaitingPlan}
+            busyHint={
+              awaitingPlan ? "Review the plan" : awaitingAsk ? "Waiting for an answer" : undefined
+            }
             placeholder={speaking ? `Message ${speaking.name}` : "Message Mockbot"}
             value={composerDraft}
             onValueChange={setComposerDraft}
             onAddConnector={() => openConnectors("add")}
-            onSend={(text) => void send(text)}
+            onSend={(text, options) => void send(text, options)}
             onStop={stopTurn}
           />
         </div>

@@ -209,4 +209,12 @@ ALTER TABLE tool_calls ADD CONSTRAINT tool_calls_status_check
   CHECK (status IN ('running', 'approval', 'ask', 'done', 'denied', 'error'));
 `,
   },
+  {
+    id: "008_plan_mode",
+    sql: `
+ALTER TABLE tool_calls DROP CONSTRAINT IF EXISTS tool_calls_status_check;
+ALTER TABLE tool_calls ADD CONSTRAINT tool_calls_status_check
+  CHECK (status IN ('running', 'approval', 'ask', 'plan', 'done', 'denied', 'error'));
+`,
+  },
 ];

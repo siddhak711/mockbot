@@ -6,6 +6,13 @@ import {
 } from "../src/tools/activity-open";
 import { readAskUser } from "../src/tools/ask-user";
 import { isMockToolResult, type ToolActivity } from "../src/tools/display";
+import {
+  formatPlanText,
+  parsePlanText,
+  PROPOSE_PLAN_TOOL,
+  readPlan,
+  type PlanStep,
+} from "../src/tools/plan";
 import type { ToolTrace } from "../src/types";
 
 function useActivityDisclosure(running: boolean) {
@@ -62,6 +69,7 @@ export function ToolActivityCards({
   decidingId,
   onDecide,
   onAnswer,
+  onPlan,
   onSelect,
   reconnectFor,
   onReconnect,
@@ -70,6 +78,13 @@ export function ToolActivityCards({
   decidingId?: string | null;
   onDecide?: (id: string, decision: "approve" | "deny") => void;
   onAnswer?: (id: string, answer: string) => void;
+  onPlan?: (
+    id: string,
+    action:
+      | { type: "approve"; steps?: PlanStep[] }
+      | { type: "edit"; steps: PlanStep[] }
+      | { type: "cancel" },
+  ) => void;
   onSelect?: (id: string) => void;
   reconnectFor?: (activity: ToolActivity) => string | null;
   onReconnect?: (activity: ToolActivity) => void;
@@ -85,6 +100,7 @@ export function ToolActivityCards({
           decidingId={decidingId}
           onDecide={onDecide}
           onAnswer={onAnswer}
+          onPlan={onPlan}
           onSelect={onSelect}
           reconnectLabel={reconnectFor?.(activity) ?? null}
           onReconnect={onReconnect ? () => onReconnect(activity) : undefined}
@@ -99,6 +115,7 @@ function ActivityRow({
   decidingId,
   onDecide,
   onAnswer,
+  onPlan,
   onSelect,
   reconnectLabel,
   onReconnect,
@@ -107,6 +124,13 @@ function ActivityRow({
   decidingId?: string | null;
   onDecide?: (id: string, decision: "approve" | "deny") => void;
   onAnswer?: (id: string, answer: string) => void;
+  onPlan?: (
+    id: string,
+    action:
+      | { type: "approve"; steps?: PlanStep[] }
+      | { type: "edit"; steps: PlanStep[] }
+      | { type: "cancel" },
+  ) => void;
   onSelect?: (id: string) => void;
   reconnectLabel?: string | null;
   onReconnect?: () => void;
@@ -118,6 +142,17 @@ function ActivityRow({
       : activity.state === "running"
         ? activity.detail
         : activity.preview || activity.detail;
+
+  if (activity.name === PROPOSE_PLAN_TOOL) {
+    return (
+      <PlanCard
+        activity={activity}
+        disabled={decidingId === activity.id}
+        onPlan={onPlan}
+        onSelect={onSelect}
+      />
+    );
+  }
 
   if (activity.state === "ask" && onAnswer) {
     return (
@@ -280,10 +315,154 @@ function AskUserCard({
   );
 }
 
+function PlanCard({
+  activity,
+  disabled,
+  onPlan,
+  onSelect,
+}: {
+  activity: ToolActivity;
+  disabled: boolean;
+  onPlan?: (
+    id: string,
+    action:
+      | { type: "approve"; steps?: PlanStep[] }
+      | { type: "edit"; steps: PlanStep[] }
+      | { type: "cancel" },
+  ) => void;
+  onSelect?: (id: string) => void;
+}) {
+  const plan = readPlan(activity.arguments);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [error, setError] = useState("");
+  const waiting = activity.state === "plan" && Boolean(onPlan);
+  const [wasWaiting, setWasWaiting] = useState(waiting);
+  if (waiting !== wasWaiting) {
+    setWasWaiting(waiting);
+    if (!waiting) setEditing(false);
+  }
+  if (!plan) return null;
+  return (
+    <article
+      className="ask-card plan-card"
+      data-tool={activity.name}
+      data-state={activity.state}
+      onClick={() => onSelect?.(activity.id)}
+    >
+      <div className="approval-title">Plan</div>
+      {editing ? (
+        <textarea
+          className="plan-editor"
+          aria-label="Plan steps"
+          value={draft}
+          disabled={disabled}
+          onClick={(event) => event.stopPropagation()}
+          onChange={(event) => setDraft(event.target.value)}
+        />
+      ) : (
+        <ol className="plan-steps">
+          {plan.steps.map((step, index) => (
+            <li key={`${index}:${step.title}`} className="plan-step" data-step-state={step.state}>
+              <span className="plan-check" aria-hidden="true">
+                {step.state === "done" ? "✓" : step.state === "active" ? "●" : "○"}
+              </span>
+              <span>
+                <span className="plan-step-title">{step.title}</span>
+                {step.detail && step.detail !== step.title ? (
+                  <span className="plan-step-detail">{step.detail}</span>
+                ) : null}
+              </span>
+              <span className="sr-only">
+                {step.state === "done"
+                  ? "Done"
+                  : step.state === "active"
+                    ? "In progress"
+                    : "Pending"}
+              </span>
+            </li>
+          ))}
+        </ol>
+      )}
+      {error ? <div className="plan-error">{error}</div> : null}
+      {activity.output && activity.state !== "plan" && activity.state !== "running" ? (
+        <div className="approval-meta">{activity.output}</div>
+      ) : null}
+      {waiting ? (
+        <div className="card-actions" onClick={(event) => event.stopPropagation()}>
+          <button
+            type="button"
+            className="btn ghost deny"
+            disabled={disabled}
+            onClick={() => onPlan?.(activity.id, { type: "cancel" })}
+          >
+            Cancel
+          </button>
+          {editing ? (
+            <button
+              type="button"
+              className="btn secondary"
+              disabled={disabled}
+              onClick={() => {
+                const parsed = parsePlanText(draft);
+                if (!parsed.ok) {
+                  setError(parsed.error);
+                  return;
+                }
+                setError("");
+                setEditing(false);
+                onPlan?.(activity.id, { type: "edit", steps: parsed.steps });
+              }}
+            >
+              Save
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn secondary"
+              disabled={disabled}
+              onClick={() => {
+                setDraft(formatPlanText(plan.steps));
+                setError("");
+                setEditing(true);
+              }}
+            >
+              Edit
+            </button>
+          )}
+          <button
+            type="button"
+            className="btn primary approve"
+            disabled={disabled}
+            onClick={() => {
+              if (!editing) {
+                onPlan?.(activity.id, { type: "approve" });
+                return;
+              }
+              const parsed = parsePlanText(draft);
+              if (!parsed.ok) {
+                setError(parsed.error);
+                return;
+              }
+              setError("");
+              setEditing(false);
+              onPlan?.(activity.id, { type: "approve", steps: parsed.steps });
+            }}
+          >
+            Approve
+          </button>
+        </div>
+      ) : null}
+      <span className="sr-only">{statusLabel(activity.state)}</span>
+    </article>
+  );
+}
+
 function statusLabel(state: ToolActivity["state"]): string {
   if (state === "running") return "Running";
   if (state === "approval") return "Needs approval";
   if (state === "ask") return "Waiting for an answer";
+  if (state === "plan") return "Needs plan approval";
   if (state === "denied") return "Denied";
   if (state === "error") return "Failed";
   return "Done";

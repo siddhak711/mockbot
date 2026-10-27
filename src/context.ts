@@ -11,6 +11,7 @@ import { SandboxTurnProvider } from "./sandbox/turn";
 import { ConversationStore } from "./store";
 import { AskGate } from "./tools/ask-user";
 import { ApprovalGate } from "./tools/approval";
+import { PlanGate } from "./tools/plan";
 import { createDefaultTools } from "./tools/builtins";
 import { registerMemoryTools, type ToolRegistry } from "./tools/registry";
 
@@ -20,6 +21,7 @@ export type AppContext = {
   tools: ToolRegistry;
   approvals: ApprovalGate;
   asks: AskGate;
+  plans: PlanGate;
   sandbox?: ComputerSupervisor;
   routines?: RoutineStore;
   agents?: AgentDirectory;
@@ -60,6 +62,7 @@ export function setAppContext(context: {
   tools?: ToolRegistry;
   approvals?: ApprovalGate;
   asks?: AskGate;
+  plans?: PlanGate;
   sandbox?: ComputerSupervisor;
   routines?: RoutineStore;
   agents?: AgentDirectory;
@@ -76,6 +79,7 @@ export function setAppContext(context: {
     tools,
     approvals: context.approvals ?? new ApprovalGate(),
     asks: context.asks ?? new AskGate(),
+    plans: context.plans ?? new PlanGate(),
     sandbox: context.sandbox,
     routines: context.routines,
     agents: context.agents,
@@ -144,6 +148,7 @@ async function openApp(): Promise<AppContext> {
       tools,
       approvals: new ApprovalGate(),
       asks: new AskGate(),
+      plans: new PlanGate(),
       agents,
       memory: new NoteMemory(agents),
       computer: defaultComputer,

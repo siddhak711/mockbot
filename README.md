@@ -258,7 +258,7 @@ The same form is on the Routines page.
 
 ## API
 
-- `POST /api/chat` with `{ "message": "...", "conversationId": "optional" }` streams server-sent events:
+- `POST /api/chat` with `{ "message": "...", "conversationId": "optional", "plan": true }` streams server-sent events. `"plan": true` is the composer Plan switch. A task the model estimates at three or more steps also plans first, with or without the switch:
   - `meta` — `{ "conversationId", "title", "userMessageId" }`
   - `start` — `{ "role": "assistant" }` when the model turn starts
   - `reasoning` — `{ "text" }` reasoning or thinking delta
@@ -270,6 +270,8 @@ The same form is on the Routines page.
   - `tool_args` — `{ "id", "arguments" }` as a registry tool's arguments arrive
   - `approval_required` — `{ "id", "name", "arguments", "summary", "assistantMessageId" }` when a write needs approval
   - `ask_user` — `{ "id", "name", "question", "options", "allowCustom", "arguments", "assistantMessageId" }` when the agent asks the person a question and the turn pauses
+  - `plan_required` — `{ "id", "name", "steps", "arguments", "assistantMessageId" }` when a plan is waiting for approval. Nothing else runs until it is approved.
+  - `plan_progress` — `{ "id", "steps", "status", "arguments", "assistantMessageId" }` as steps are marked active or done
   - `tool_status` — `{ "id", "name", "status" }` when an approved tool starts running
   - `tool_result` — `{ "id", "name", "status", "output", "assistantMessageId" }` when a registry tool finishes
   - `done` — `{ "conversationId", "assistantMessageId" }` after the turn is saved
@@ -279,6 +281,7 @@ The same form is on the Routines page.
 
 - `POST /api/tools/approvals` with `{ "id": "...", "decision": "approve" | "deny" | "stop" }` approves, denies, or stops a pending write.
 - `POST /api/tools/asks` with `{ "id": "...", "answer": "..." }` resumes a paused `ask_user` call. The tool result is that answer. `{ "id", "decision": "stop" }` ends the question. The pending question is stored on the assistant message, so a reload shows the same card while the server process is still waiting.
+- `POST /api/tools/plans` with `{ "id", "decision": "approve" | "edit" | "cancel" }` resumes a pending plan. `edit` includes `{ "steps": [{ "title", "detail" }] }` and leaves the plan waiting. `approve` may include `steps` to save an edit and start execution. `cancel` aborts the run before any step. The pending plan is stored on the assistant message, so a reload shows the same card while the server process is still waiting. Approving after that reload continues the run.
 - `GET /api/connectors` lists connectors. Each row has `id`, `name`, `transport`, `target`, `secretRef`, `enabled`, `createdAt`, and `updatedAt`. `secretRef` is an environment variable name that starts with `MCP_`. The secret value is not included.
 - `POST /api/connectors` with `{ "name", "transport": "http" | "stdio", "target", "secretRef": "optional" }` checks that the server lists tools, then stores the connector.
 - `PATCH /api/connectors/:id` with `{ "enabled": true | false }` enables or disables it.

@@ -407,6 +407,7 @@ function statusLabel(state: ToolActivity["state"]): string {
   if (state === "running") return "Running";
   if (state === "approval") return "Needs approval";
   if (state === "ask") return "Waiting for an answer";
+  if (state === "plan") return "Needs plan approval";
   if (state === "denied") return "Denied";
   if (state === "error") return "Failed";
   return "Done";

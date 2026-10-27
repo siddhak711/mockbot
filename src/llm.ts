@@ -1,5 +1,6 @@
 import { planMockTurn } from "./memory/mock-turn";
 import { SYSTEM_PROMPT } from "./memory/prompt";
+import { mockPlanCall, parseStepCommand, PROPOSE_PLAN_TOOL } from "./tools/plan";
 import type { LlmMessage, LlmStreamEvent, ProviderId } from "./types";
 
 export { SYSTEM_PROMPT };
@@ -18,6 +19,8 @@ export const MOCK_TOOL_RESULT =
 export type StreamOptions = {
   tools?: readonly ToolDefinition[];
   signal?: AbortSignal;
+  /** Composer Plan switch. The mock proposes a plan before any other tool. */
+  plan?: boolean;
 };
 
 export interface LlmProvider {
@@ -32,8 +35,12 @@ export interface LlmProvider {
 export function streamOptions(input?: StreamOptions | AbortSignal): StreamOptions {
   if (!input) return {};
   if (input instanceof AbortSignal) {
-    const tools = (input as AbortSignal & { tools?: readonly ToolDefinition[] }).tools;
-    return tools ? { signal: input, tools } : { signal: input };
+    const extra = input as AbortSignal & { tools?: readonly ToolDefinition[]; plan?: boolean };
+    return {
+      signal: input,
+      ...(extra.tools ? { tools: extra.tools } : {}),
+      ...(extra.plan ? { plan: true } : {}),
+    };
   }
   return input;
 }
@@ -249,8 +256,49 @@ export class MockProvider implements LlmProvider {
     input?: StreamOptions | AbortSignal,
   ): AsyncIterable<LlmStreamEvent> {
     this.options.onMessages?.(messages);
-    const { signal, tools = [] } = streamOptions(input);
+    const { signal, tools = [], plan = false } = streamOptions(input);
     const userText = lastUserText(messages);
+    const step = parseStepCommand(userText);
+    if (step && !this.options.reply && !this.options.tools) {
+      const requested = namedToolRequest(step.detail, tools);
+      if (signal?.aborted) return;
+      yield { type: "start", role: "assistant" };
+      yield { type: "text", text: `Finished: ${step.title}\n` };
+      if (requested?.found && step.detail.trim().startsWith("Call ")) {
+        const id = `call_${crypto.randomUUID()}`;
+        yield {
+          type: "tool_call",
+          index: 0,
+          id,
+          name: requested.name,
+          arguments: JSON.stringify(requested.args),
+        };
+        yield { type: "end", finishReason: "tool_calls" };
+        return;
+      }
+      yield { type: "end", finishReason: "stop" };
+      return;
+    }
+    const planned =
+      !this.options.reply && !this.options.tools && !this.options.scriptToolCall
+        ? mockPlanCall(userText, plan)
+        : null;
+    if (
+      planned &&
+      tools.some((tool) => tool.name === PROPOSE_PLAN_TOOL) &&
+      toolResultsThisTurn(messages) === 0
+    ) {
+      yield* this.#emitCall(
+        {
+          name: PROPOSE_PLAN_TOOL,
+          args: {
+            steps: planned.steps.map((item) => ({ title: item.title, detail: item.detail })),
+          },
+        },
+        signal,
+      );
+      return;
+    }
     if (this.options.demoTools && !this.options.reply && !this.options.tools) {
       const next = demoPlan(userText)[toolResultsThisTurn(messages)];
       if (next) {
