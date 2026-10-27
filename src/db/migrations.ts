@@ -545,6 +545,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS connectors_user_catalog_idx
   WHERE catalog_id IS NOT NULL;
 `,
   },
+  // Providers reuse tool-call ids (call_delegate, call_write_0) across turns and
+  // conversations. A call is unique within its assistant message, which belongs
+  // to one conversation.
+  {
+    id: "013_tool_call_scope",
+    sql: `
+ALTER TABLE tool_calls DROP CONSTRAINT IF EXISTS tool_calls_id_key;
+
+DROP INDEX IF EXISTS tool_calls_id_key;
+
+CREATE UNIQUE INDEX IF NOT EXISTS tool_calls_message_call_idx
+  ON tool_calls (conversation_id, message_id, id);
 `,
   },
 ];

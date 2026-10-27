@@ -24,17 +24,23 @@ export function requiresApproval(tool: ToolDefinition, args: Record<string, unkn
 }
 
 type Waiter = {
+  id: string;
   resolve: (outcome: ApprovalOutcome) => void;
   conversationId: string | null;
 };
 
+/**
+ * Pending approvals keyed by (conversation, tool-call id). Providers reuse call
+ * ids such as `call_delegate`, so the id alone does not name one call.
+ */
 export class ApprovalGate {
   #waiters = new Map<string, Waiter>();
 
   constructor(private readonly timeoutMs = 5 * 60 * 1000) {}
 
   wait(id: string, signal?: AbortSignal, conversationId?: string): Promise<ApprovalOutcome> {
-    if (this.#waiters.has(id)) {
+    const key = waiterKey(conversationId ?? null, id);
+    if (this.#waiters.has(key)) {
       return Promise.reject(new Error(`Approval ${id} is already pending`));
     }
     return new Promise((resolve) => {
@@ -44,7 +50,7 @@ export class ApprovalGate {
         settled = true;
         clearTimeout(timer);
         signal?.removeEventListener("abort", onAbort);
-        this.#waiters.delete(id);
+        this.#waiters.delete(key);
         resolve(outcome);
       };
       const onAbort = () => finish({ decision: "deny", reason: "stopped" });
@@ -57,13 +63,17 @@ export class ApprovalGate {
         return;
       }
       signal?.addEventListener("abort", onAbort, { once: true });
-      this.#waiters.set(id, { resolve: finish, conversationId: conversationId ?? null });
+      this.#waiters.set(key, { id, resolve: finish, conversationId: conversationId ?? null });
     });
   }
 
-  /** Conversation the pending call belongs to, or null when the id is not waiting. */
-  pendingConversation(id: string): string | null {
-    return this.#waiters.get(id)?.conversationId ?? null;
+  /** Conversations with a pending call under this id. */
+  pendingConversations(id: string): (string | null)[] {
+    const found: (string | null)[] = [];
+    for (const waiter of this.#waiters.values()) {
+      if (waiter.id === id) found.push(waiter.conversationId);
+    }
+    return found;
   }
 
   hasPending(conversationId: string): boolean {
@@ -73,17 +83,31 @@ export class ApprovalGate {
     return false;
   }
 
-  decide(id: string, decision: ApprovalDecision): boolean {
-    const waiter = this.#waiters.get(id);
+  /**
+   * Settles the call `id` in `conversationId`. Leaving the conversation out
+   * works only while exactly one conversation waits on that id.
+   */
+  decide(id: string, decision: ApprovalDecision, conversationId?: string | null): boolean {
+    const waiter = this.#find(id, conversationId);
     if (!waiter) return false;
     waiter.resolve({ decision, reason: "user" });
     return true;
   }
 
-  stop(id: string): boolean {
-    const waiter = this.#waiters.get(id);
+  stop(id: string, conversationId?: string | null): boolean {
+    const waiter = this.#find(id, conversationId);
     if (!waiter) return false;
     waiter.resolve({ decision: "deny", reason: "stopped" });
     return true;
   }
+
+  #find(id: string, conversationId: string | null | undefined): Waiter | undefined {
+    if (conversationId !== undefined) return this.#waiters.get(waiterKey(conversationId, id));
+    const matches = [...this.#waiters.values()].filter((waiter) => waiter.id === id);
+    return matches.length === 1 ? matches[0] : undefined;
+  }
+}
+
+function waiterKey(conversationId: string | null, id: string): string {
+  return JSON.stringify([conversationId, id]);
 }

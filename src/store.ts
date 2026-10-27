@@ -436,7 +436,7 @@ export class ConversationStore {
     await this.db.query(
       `INSERT INTO tool_calls (id, conversation_id, message_id, name, arguments, status, output)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
-       ON CONFLICT (id) DO UPDATE SET
+       ON CONFLICT (conversation_id, message_id, id) DO UPDATE SET
          arguments = EXCLUDED.arguments,
          status = EXCLUDED.status,
          output = EXCLUDED.output,

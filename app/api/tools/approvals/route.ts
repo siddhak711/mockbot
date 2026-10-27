@@ -16,7 +16,7 @@ export async function POST(request: Request): Promise<Response> {
   if (!body || typeof body !== "object") {
     return Response.json({ error: "Expected JSON body" }, { status: 400 });
   }
-  const record = body as { id?: unknown; decision?: unknown };
+  const record = body as { id?: unknown; decision?: unknown; conversationId?: unknown };
   const id = typeof record.id === "string" ? record.id.trim() : "";
   const decision = record.decision;
   if (!id) return Response.json({ error: "Approval id is required" }, { status: 400 });
@@ -26,17 +26,38 @@ export async function POST(request: Request): Promise<Response> {
       { status: 400 },
     );
   }
+  const requested =
+    typeof record.conversationId === "string" && record.conversationId.trim()
+      ? record.conversationId.trim()
+      : undefined;
   const { approvals, store } = await getAppContext();
+  // Call ids repeat across conversations. Settle only a call in a conversation
+  // this account owns, and only when that names exactly one pending call.
+  let candidates = approvals
+    .pendingConversations(id)
+    .filter((conversationId) => requested === undefined || conversationId === requested);
   if (actor.scoped) {
-    const conversationId = approvals.pendingConversation(id);
-    const owned = conversationId
-      ? await store.getConversation(conversationId, undefined, actor.user.id)
-      : null;
-    if (!owned) {
-      return Response.json({ error: "That approval is no longer pending" }, { status: 404 });
+    const owned: (string | null)[] = [];
+    for (const conversationId of candidates) {
+      if (!conversationId) continue;
+      if (await store.getConversation(conversationId, undefined, actor.user.id)) {
+        owned.push(conversationId);
+      }
     }
+    candidates = owned;
   }
-  const accepted = decision === "stop" ? approvals.stop(id) : approvals.decide(id, decision);
+  if (candidates.length > 1) {
+    return Response.json(
+      { error: "Several conversations wait on that id. Send conversationId." },
+      { status: 409 },
+    );
+  }
+  if (candidates.length === 0) {
+    return Response.json({ error: "That approval is no longer pending" }, { status: 404 });
+  }
+  const target = candidates[0] ?? null;
+  const accepted =
+    decision === "stop" ? approvals.stop(id, target) : approvals.decide(id, decision, target);
   if (!accepted)
     return Response.json({ error: "That approval is no longer pending" }, { status: 404 });
   return Response.json({ id, decision });
