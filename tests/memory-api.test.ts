@@ -7,6 +7,7 @@ import { resetAppContext, setAppContext } from "../src/context";
 import { MockProvider } from "../src/llm";
 import { ConversationStore } from "../src/store";
 import type { Memory } from "../src/types";
+import { seedConversation } from "./helpers";
 
 const params = (id: string) => ({ params: Promise.resolve({ id }) });
 
@@ -17,7 +18,7 @@ afterEach(async () => {
 it("lists, edits, and deletes memories for this agent only", async () => {
   const store = await ConversationStore.open();
   setAppContext({ store, provider: new MockProvider({ delayMs: 0 }) });
-  const conversation = await store.createConversation("Source");
+  const conversation = await seedConversation(store, "Source");
   const message = await store.addMessage(
     conversation.id,
     "user",

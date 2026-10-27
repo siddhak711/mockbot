@@ -4,6 +4,7 @@ import { sectionText } from "../src/memory/prompt";
 import { estimateTokens, SUMMARY_TOKEN_BUDGET, trimToTokens } from "../src/memory/tokens";
 import { ConversationStore } from "../src/store";
 import { buildModelInput } from "../src/turn";
+import { seedConversation } from "./helpers";
 
 const openStores: ConversationStore[] = [];
 
@@ -14,7 +15,7 @@ afterEach(async () => {
 it("summarizes older messages and keeps the recent tail verbatim", async () => {
   const store = await ConversationStore.open();
   openStores.push(store);
-  const conversation = await store.createConversation("Long");
+  const conversation = await seedConversation(store, "Long");
   for (let index = 0; index < 30; index += 1) {
     await store.addMessage(
       conversation.id,
@@ -46,7 +47,7 @@ it("summarizes older messages and keeps the recent tail verbatim", async () => {
 it("compacts a chat whose weight is tool output rather than message text", async () => {
   const store = await ConversationStore.open();
   openStores.push(store);
-  const conversation = await store.createConversation("Tools");
+  const conversation = await seedConversation(store, "Tools");
   await store.addMessage(conversation.id, "user", "EARLY_FACT please remember this");
   const heavy = await store.addMessage(conversation.id, "assistant", "Noted.");
   for (let index = 0; index < 8; index += 1) {
@@ -92,7 +93,7 @@ it("compacts a chat whose weight is tool output rather than message text", async
 it("moves the summary past a tool-only turn when that turn is the oldest in range", async () => {
   const store = await ConversationStore.open();
   openStores.push(store);
-  const conversation = await store.createConversation("Tool only");
+  const conversation = await seedConversation(store, "Tool only");
   const toolOnly = await store.addMessage(conversation.id, "assistant", "   ");
   for (let index = 0; index < 8; index += 1) {
     await store.saveToolCall({
@@ -133,7 +134,7 @@ it("moves the summary past a tool-only turn when that turn is the oldest in rang
 it("does not advance the summary past turns whose bullets would be empty", async () => {
   const store = await ConversationStore.open();
   openStores.push(store);
-  const conversation = await store.createConversation("Dense");
+  const conversation = await seedConversation(store, "Dense");
   const total = 266;
   for (let index = 0; index < total; index += 1) {
     const marker = `Keep${String(index).padStart(4, "0")}`;

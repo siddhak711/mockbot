@@ -24,6 +24,8 @@ suite("neon durable memory", () => {
         "008_connector_catalog",
         "009_one_thread_per_agent",
         "011_run_events",
+        "012_connectors_user",
+        "013_tool_call_scope",
       ]);
       const written = await store.memories.write({
         agentId,
@@ -45,7 +47,7 @@ suite("neon durable memory", () => {
       expect(await store.memories.search({ agentId, query: "Porto" })).toEqual([]);
       expect(await store.memories.listLive("someone-else")).toEqual([]);
     } finally {
-      await store.memories.purgeAgent(agentId);
+      await store.connection.query("DELETE FROM memories WHERE agent_id = $1", [agentId]);
       await store.close();
     }
   });

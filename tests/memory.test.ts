@@ -10,6 +10,7 @@ import { estimateTokens, PROFILE_TOKEN_BUDGET } from "../src/memory/tokens";
 import { ConversationStore } from "../src/store";
 import { createMemoryTools } from "../src/tools/memory";
 import { buildModelInput } from "../src/turn";
+import { seedConversation } from "./helpers";
 
 const openStores: ConversationStore[] = [];
 
@@ -239,7 +240,7 @@ it("keeps profile memories inside the token budget in the system prompt", async 
       createdBy: "user",
     });
   }
-  const conversation = await store.createConversation("Budget");
+  const conversation = await seedConversation(store, "Budget");
   await store.addMessage(conversation.id, "user", "What should you know?");
   const input = await buildModelInput({ store, conversationId: conversation.id });
   const system = input?.messages.find((message) => message.role === "system")?.content ?? "";
@@ -273,7 +274,7 @@ it("retrieves a fact into the system prompt and not another agent's fact", async
     kind: "fact",
     createdBy: "user",
   });
-  const conversation = await store.createConversation("Recall");
+  const conversation = await seedConversation(store, "Recall");
   await store.addMessage(conversation.id, "user", "What is the project codename?");
   const input = await buildModelInput({ store, conversationId: conversation.id });
   const system = input?.messages.find((message) => message.role === "system")?.content ?? "";
@@ -310,6 +311,8 @@ it("applies migrations once and refuses embedded postgres in production", async 
       "008_connector_catalog",
       "009_one_thread_per_agent",
       "011_run_events",
+      "012_connectors_user",
+      "013_tool_call_scope",
     ]);
     expect(first.driver).toBe("pglite");
     await first.close();
@@ -326,6 +329,8 @@ it("applies migrations once and refuses embedded postgres in production", async 
       "008_connector_catalog",
       "009_one_thread_per_agent",
       "011_run_events",
+      "012_connectors_user",
+      "013_tool_call_scope",
     ]);
   } finally {
     await rm(dir, { recursive: true, force: true });

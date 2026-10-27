@@ -266,7 +266,7 @@ export class ConversationStore {
     return result.rows.map((row) => row.id);
   }
 
-  async createConversation(
+  private async createConversation(
     title: string,
     agentId = LEAD_AGENT_ID,
     userId?: string | null,
@@ -338,17 +338,6 @@ export class ConversationStore {
     );
     const row = result.rows[0];
     return row ? mapConversation(row) : null;
-  }
-
-  async listConversations(userId?: string): Promise<Conversation[]> {
-    const result = await this.db.query<ConversationRow>(
-      `SELECT id, title, agent_id, created_at, updated_at
-       FROM conversations
-       WHERE ($1::text IS NULL OR user_id = $1)
-       ORDER BY updated_at DESC, id DESC`,
-      [userId ?? null],
-    );
-    return result.rows.map(mapConversation);
   }
 
   async getConversation(

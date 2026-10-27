@@ -13,7 +13,8 @@ import { RoutineStore } from "../src/routines/store";
 import { modelMessages, runRoutineTurn } from "../src/routines/turn";
 import { runWorker, tick } from "../src/routines/worker";
 import { ConversationStore } from "../src/store";
-import type { LlmMessage, LlmStreamEvent } from "../src/types";
+import type { Conversation, LlmMessage, LlmStreamEvent } from "../src/types";
+import { seedConversation } from "./helpers";
 
 const openStores: ConversationStore[] = [];
 
@@ -347,9 +348,17 @@ it("keeps one conversation when two runs create one together", async () => {
   await routines.recordEvent({ name: "shipped", payload: "one", now });
   await routines.recordEvent({ name: "shipped", payload: "two", now });
 
-  const original = store.createConversation.bind(store);
+  // createConversation is private. The test slows it down to force the race.
+  const internals = store as unknown as {
+    createConversation: (
+      title: string,
+      agentId?: string,
+      userId?: string | null,
+    ) => Promise<Conversation>;
+  };
+  const original = internals.createConversation.bind(store);
   let creates = 0;
-  store.createConversation = async (title: string) => {
+  internals.createConversation = async (title: string) => {
     const created = await original(title);
     creates += 1;
     if (creates === 1) {
@@ -378,8 +387,8 @@ it("keeps one conversation when two runs create one together", async () => {
       .map((message) => message.content)
       .sort(),
   ).toEqual(["Note it\n\nEvent shipped:\none", "Note it\n\nEvent shipped:\ntwo"]);
-  store.createConversation = original;
-  const later = await store.createConversation("later", "agent_other");
+  internals.createConversation = original;
+  const later = await seedConversation(store, "later", "agent_other");
   expect(await routines.setConversation(routine.id, later.id, now)).toBe(saved?.conversationId);
 });
 

@@ -5,6 +5,7 @@ import type { LlmProvider } from "../src/llm";
 import type { LlmMessage, LlmStreamEvent } from "../src/types";
 import { SseParser } from "../src/sse";
 import { ConversationStore } from "../src/store";
+import { listConversations } from "./helpers";
 
 class PausingProvider implements LlmProvider {
   readonly id = "mock" as const;
@@ -62,7 +63,7 @@ it("keeps the user message and partial assistant text when the stream is stopped
     if (!(error instanceof Error) || error.name !== "AbortError") throw error;
   }
 
-  const listed = await store.listConversations();
+  const listed = await listConversations(store);
   expect(listed).toHaveLength(1);
   const loaded = await store.getConversation(listed[0]!.id);
   expect(loaded?.messages.map((message) => [message.role, message.content])).toEqual([
