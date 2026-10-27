@@ -1,4 +1,5 @@
 import { afterEach, expect, it } from "vitest";
+import { POST as createAgent } from "../app/api/agents/route";
 import { POST } from "../app/api/chat/route";
 import { POST as postApproval } from "../app/api/tools/approvals/route";
 import { buildMockReply, MockProvider, selectProvider, type LlmProvider } from "../src/llm";
@@ -173,11 +174,28 @@ it("finishes a second conversation while the first waits on approval", async () 
   const pending = await readUntil(waiting, "approval_required");
   expect(pending.events.some((event) => event.data.name === "send_note")).toBe(true);
 
-  const other = await POST(
+  const blocked = await POST(
     new Request("http://localhost/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: "Say hello" }),
+    }),
+  );
+  expect(blocked.status).toBe(409);
+
+  const created = await createAgent(
+    new Request("http://localhost/api/agents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Researcher", instructions: "Look things up." }),
+    }),
+  );
+  const agentId = ((await created.json()) as { agent: { id: string } }).agent.id;
+  const other = await POST(
+    new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Say hello", agentId }),
     }),
   );
   const finished = await readSse(other);

@@ -5,8 +5,8 @@ import type { ConnectorRecord } from "../src/connectors";
 import { CommandPalette } from "./command-palette";
 import { Composer } from "./composer";
 import { connectorForActivity, ConnectorsPanel } from "./connectors-panel";
-import { ConversationList } from "./conversation-list";
-import { MenuIcon, PlusIcon } from "./icons";
+import { MenuIcon } from "./icons";
+import { Sidebar } from "./sidebar";
 import { ThreadActions } from "./thread-actions";
 import { BotSprite, botSpriteLabel } from "./bot-sprite";
 import { SidePane, type SideTab } from "./side-pane";
@@ -66,7 +66,7 @@ export function Workspace({
   user: SignedInUser;
   connectorLaunch?: { query?: string; preview?: string; intent?: "list" | "add" };
 }) {
-  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [active, setActive] = useState<Conversation | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [agentsLoaded, setAgentsLoaded] = useState(false);
   const [activeAgentId, setActiveAgentId] = useState(LEAD_AGENT_ID);
@@ -80,8 +80,6 @@ export function Workspace({
     model: null,
     database: "local",
   });
-  const [editing, setEditing] = useState(false);
-  const [draftTitle, setDraftTitle] = useState("");
   const [computerOpen, setComputerOpen] = useState(true);
   const [sideTab, setSideTab] = useState<SideTab>("computer");
   const [memories, setMemories] = useState<Memory[] | null>(null);
@@ -89,6 +87,7 @@ export function Workspace({
   const [computer, setComputer] = useState<ComputerSnapshot | null>(null);
   const [computerReady, setComputerReady] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobilePane, setMobilePane] = useState<"chat" | SideTab>("chat");
   const [activities, setActivities] = useState<ToolActivity[]>([]);
   const [connectors, setConnectors] = useState<ConnectorRecord[]>([]);
@@ -106,6 +105,7 @@ export function Workspace({
   const [decidingId, setDecidingId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const computerRequest = useRef(0);
+  const agentLoadRequest = useRef(0);
   const activeIdRef = useRef<string | null>(null);
   const memoryAgentRef = useRef(LEAD_AGENT_ID);
   const memoriesRef = useRef<Memory[] | null>(null);
@@ -139,11 +139,52 @@ export function Workspace({
     activeIdRef.current = activeId;
   }, [activeId]);
 
+  const applyThread = useCallback(
+    (conversation: Conversation, thread: Message[], query: "agent" | "c") => {
+      adoptMemoryAgent(conversation.agentId);
+      setActive(conversation);
+      setActiveId(conversation.id);
+      setActiveAgentId(conversation.agentId);
+      setMessages(thread);
+      releaseApprovalLock();
+      const nextActivities = activitiesFromMessages(thread);
+      setActivities(nextActivities);
+      setSelectedToolId((current) =>
+        current && nextActivities.some((item) => item.id === current)
+          ? current
+          : (nextActivities[nextActivities.length - 1]?.id ?? null),
+      );
+      const url = new URL(window.location.href);
+      if (query === "agent") {
+        url.searchParams.set("agent", conversation.agentId);
+        url.searchParams.delete("c");
+      } else {
+        url.searchParams.set("c", conversation.id);
+      }
+      window.history.replaceState(null, "", url);
+    },
+    [adoptMemoryAgent, releaseApprovalLock],
+  );
+
   const selectConversation = useCallback(
-    async (id: string) => {
+    async (id: string): Promise<boolean> => {
       const response = await fetch(`/api/conversations/${id}`);
+      if (!response.ok) return false;
+      const data = (await response.json()) as { conversation: Conversation; messages: Message[] };
+      applyThread(data.conversation, data.messages, "c");
+      return true;
+    },
+    [applyThread],
+  );
+
+  const loadAgentConversation = useCallback(
+    async (agentId: string) => {
+      const request = ++agentLoadRequest.current;
+      const response = await fetch(`/api/agents/${encodeURIComponent(agentId)}/conversation`);
+      if (request !== agentLoadRequest.current) return;
       if (!response.ok) {
         releaseApprovalLock();
+        setActive(null);
         setActiveId(null);
         setMessages([]);
         setActivities([]);
@@ -151,35 +192,11 @@ export function Workspace({
         return;
       }
       const data = (await response.json()) as { conversation: Conversation; messages: Message[] };
-      adoptMemoryAgent(data.conversation.agentId);
-      setActiveId(data.conversation.id);
-      setActiveAgentId(data.conversation.agentId);
-      setMessages(data.messages);
-      releaseApprovalLock();
-      const nextActivities = activitiesFromMessages(data.messages);
-      setActivities(nextActivities);
-      setSelectedToolId((current) =>
-        current && nextActivities.some((item) => item.id === current)
-          ? current
-          : (nextActivities[nextActivities.length - 1]?.id ?? null),
-      );
-      setEditing(false);
-      setConversations((prev) =>
-        prev.map((item) => (item.id === data.conversation.id ? data.conversation : item)),
-      );
-      const url = new URL(window.location.href);
-      url.searchParams.set("c", data.conversation.id);
-      window.history.replaceState(null, "", url);
+      if (request !== agentLoadRequest.current) return;
+      applyThread(data.conversation, data.messages, "agent");
     },
-    [adoptMemoryAgent, releaseApprovalLock],
+    [applyThread, releaseApprovalLock],
   );
-
-  const refreshList = useCallback(async () => {
-    const response = await fetch("/api/conversations");
-    if (!response.ok) return;
-    const data = (await response.json()) as { conversations: Conversation[] };
-    setConversations(data.conversations);
-  }, []);
 
   const refreshMemories = useCallback(async () => {
     const agentId = memoryAgentRef.current;
@@ -242,8 +259,7 @@ export function Workspace({
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const [listResponse, statusResponse, agentResponse] = await Promise.all([
-        fetch("/api/conversations"),
+      const [statusResponse, agentResponse] = await Promise.all([
         fetch("/api/status"),
         fetch("/api/agents"),
         refreshConnectors(),
@@ -261,28 +277,26 @@ export function Workspace({
           database: status.database === "neon" ? "neon" : "local",
         });
       }
-      if (agentResponse.ok) {
-        const agentData = (await agentResponse.json()) as { agents: Agent[] };
-        if (!cancelled) {
-          setAgents(agentData.agents);
-          setActiveAgentId((current) => preferredAgentId(agentData.agents, current));
-          setAgentsLoaded(true);
-        }
-      }
-      if (!listResponse.ok) return;
-      const data = (await listResponse.json()) as { conversations: Conversation[] };
+      if (!agentResponse.ok) return;
+      const agentData = (await agentResponse.json()) as { agents: Agent[] };
       if (cancelled) return;
-      setConversations(data.conversations);
-      const requested = new URLSearchParams(window.location.search).get("c");
-      const initial =
-        (requested && data.conversations.some((item) => item.id === requested) && requested) ||
-        data.conversations[0]?.id;
-      if (initial) await selectConversation(initial);
+      setAgents(agentData.agents);
+      setAgentsLoaded(true);
+      const params = new URLSearchParams(window.location.search);
+      const requestedConversation = params.get("c");
+      if (requestedConversation) {
+        const found = await selectConversation(requestedConversation);
+        if (cancelled || found) return;
+      }
+      const requestedAgent = params.get("agent");
+      const agentId = preferredAgentId(agentData.agents, requestedAgent ?? LEAD_AGENT_ID);
+      setActiveAgentId(agentId);
+      await loadAgentConversation(agentId);
     })();
     return () => {
       cancelled = true;
     };
-  }, [refreshConnectors, selectConversation]);
+  }, [loadAgentConversation, refreshConnectors, selectConversation]);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -331,26 +345,16 @@ export function Workspace({
     void refreshComputer();
   }, [refreshComputer]);
 
-  function newChat() {
+  function selectAgent(id: string) {
     if (streaming) return;
     setNavOpen(false);
     setMobilePane("chat");
-    setActiveId(null);
-    setMessages([]);
-    setActivities([]);
-    setSelectedToolId(null);
-    setAlert(null);
-    setEditing(false);
-    const url = new URL(window.location.href);
-    url.searchParams.delete("c");
-    window.history.replaceState(null, "", url);
-  }
-
-  function selectAgent(id: string) {
-    if (streaming) return;
+    setAlert((current) => alertAfterConversationSwitch(current));
     adoptMemoryAgent(id);
     setActiveAgentId(id);
-    newChat();
+    activeIdRef.current = null;
+    setActiveId(null);
+    void loadAgentConversation(id);
   }
 
   async function createAgent(draft: AgentDraft): Promise<string | null> {
@@ -367,62 +371,17 @@ export function Workspace({
     return null;
   }
 
-  async function rename(id: string, title: string) {
-    const response = await fetch(`/api/conversations/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title }),
-    });
-    if (!response.ok) {
-      const body = (await response.json().catch(() => null)) as { error?: string } | null;
-      setAlert({
-        message: body?.error ?? "Could not rename conversation",
-        kind: "workspace",
-        ownerId: activeIdRef.current,
-      });
-      return;
-    }
-    const data = (await response.json()) as { conversation: Conversation };
-    setConversations((prev) => prev.map((item) => (item.id === id ? data.conversation : item)));
-    setEditing(false);
-  }
-
-  async function remove(id: string) {
-    const response = await fetch(`/api/conversations/${id}`, { method: "DELETE" });
-    if (!response.ok) {
-      setAlert({
-        message: "Could not delete conversation",
-        kind: "workspace",
-        ownerId: activeIdRef.current,
-      });
-      return;
-    }
-    setConversations((prev) => prev.filter((item) => item.id !== id));
-    if (activeIdRef.current === id) {
-      setActiveId(null);
-      setMessages([]);
-      setActivities([]);
-      setSelectedToolId(null);
-      setEditing(false);
-      const url = new URL(window.location.href);
-      url.searchParams.delete("c");
-      window.history.replaceState(null, "", url);
-    }
-  }
-
   async function reloadKeepingLonger(id: string) {
     releaseApprovalLock();
     const response = await fetch(`/api/conversations/${id}`);
     if (!response.ok) return;
     const data = (await response.json()) as { conversation: Conversation; messages: Message[] };
+    setActive(data.conversation);
     setActiveId(data.conversation.id);
     setActiveAgentId(data.conversation.agentId);
     setMessages((local) => preferRicherAssistant(local, data.messages));
     setActivities((local) =>
       activitiesAfterReconnect(local, activitiesFromMessages(data.messages)),
-    );
-    setConversations((prev) =>
-      prev.map((item) => (item.id === data.conversation.id ? data.conversation : item)),
     );
     const url = new URL(window.location.href);
     url.searchParams.set("c", data.conversation.id);
@@ -433,8 +392,8 @@ export function Workspace({
     const trimmed = text.trim();
     const approvalPending = activitiesRef.current.some((item) => item.state === "approval");
     if (!trimmed || streaming || approvalPending) return;
+    agentLoadRequest.current += 1;
     setAlert(null);
-    setEditing(false);
     const controller = new AbortController();
     abortRef.current = controller;
     setStreaming(true);
@@ -529,7 +488,7 @@ export function Workspace({
         body: JSON.stringify({
           message: trimmed,
           conversationId: conversationId ?? undefined,
-          agentId: conversationId ? undefined : activeAgentId,
+          agentId: activeAgentId,
         }),
         signal: controller.signal,
       });
@@ -552,16 +511,17 @@ export function Workspace({
             const title = String(payload.title);
             setActiveId(conversationId);
             const url = new URL(window.location.href);
-            url.searchParams.set("c", conversationId);
+            url.searchParams.set("agent", activeAgentId);
+            url.searchParams.delete("c");
             window.history.replaceState(null, "", url);
             const id = conversationId;
-            setConversations((prev) => {
-              const others = prev.filter((item) => item.id !== id);
-              const now = new Date().toISOString();
-              return [
-                { id, title, agentId: activeAgentId, createdAt: now, updatedAt: now },
-                ...others,
-              ];
+            const now = new Date().toISOString();
+            setActive({
+              id,
+              title,
+              agentId: activeAgentId,
+              createdAt: now,
+              updatedAt: now,
             });
             setMessages((prev) =>
               prev.map((item) =>
@@ -663,7 +623,6 @@ export function Workspace({
 
       if (conversationId) {
         await selectConversation(conversationId);
-        await refreshList();
         await refreshMemories();
       }
     } catch (sendError) {
@@ -671,7 +630,6 @@ export function Workspace({
         if (conversationId && sawMeta) {
           await wait(200);
           await reloadKeepingLonger(conversationId);
-          await refreshList();
         }
       } else {
         if (!sawMeta) {
@@ -749,7 +707,6 @@ export function Workspace({
     }
   }
 
-  const active = conversations.find((item) => item.id === activeId) ?? null;
   const computerStatus = computerReady ? (computer ? "ready" : "error") : "loading";
   const speakingId = active?.agentId ?? activeAgentId;
   const speaking = agents.find((agent) => agent.id === speakingId) ?? null;
@@ -776,34 +733,38 @@ export function Workspace({
   }, [agentsLoaded, speakingId, refreshMemories, clearMemoriesForSwitch]);
 
   return (
-    <div className={computerOpen ? "app with-computer" : "app"}>
-      <ConversationList
-        conversations={conversations}
-        activeId={activeId}
+    <div
+      className={
+        computerOpen
+          ? sidebarCollapsed
+            ? "app with-computer sidebar-collapsed"
+            : "app with-computer"
+          : sidebarCollapsed
+            ? "app sidebar-collapsed"
+            : "app"
+      }
+    >
+      <Sidebar
         agents={agents}
         activeAgentId={speakingId}
         spriteState={sprite}
         runtimeStatus={runtimeStatus}
         busy={streaming}
         open={navOpen}
-        onNew={newChat}
-        onSelect={(id) => {
+        collapsed={sidebarCollapsed}
+        onToggleCollapsed={() => {
+          setSidebarCollapsed((value) => !value);
           setNavOpen(false);
-          setMobilePane("chat");
-          if (!streaming) {
-            if (id !== activeId) setAlert((current) => alertAfterConversationSwitch(current));
-            void selectConversation(id);
-          }
         }}
         onSelectAgent={selectAgent}
         onCreateAgent={createAgent}
         onOpenConnectors={() => openConnectors("list")}
         user={user}
-      ></ConversationList>
+      />
       <button
         type="button"
         className={navOpen ? "scrim on" : "scrim"}
-        aria-label="Close conversations"
+        aria-label="Close sidebar"
         tabIndex={navOpen ? 0 : -1}
         onClick={() => setNavOpen(false)}
       />
@@ -812,22 +773,13 @@ export function Workspace({
           <button
             type="button"
             className="icon-btn"
-            aria-label="Open conversations"
+            aria-label="Open sidebar"
             aria-expanded={navOpen}
             onClick={() => setNavOpen(true)}
           >
             <MenuIcon />
           </button>
-          <h1>{active?.title ?? "New chat"}</h1>
-          <button
-            type="button"
-            className="icon-btn"
-            aria-label="New chat"
-            onClick={newChat}
-            disabled={streaming}
-          >
-            <PlusIcon />
-          </button>
+          <h1>{speaking?.name ?? "Mockbot"}</h1>
         </header>
         <div className="segments" role="tablist" aria-label="Workspace">
           <button
@@ -871,58 +823,20 @@ export function Workspace({
           </button>
         </div>
         <header className="thread-header">
-          {editing && active ? (
-            <form
-              className="rename-form"
-              onSubmit={(event) => {
-                event.preventDefault();
-                const title = draftTitle.trim();
-                if (title) void rename(active.id, title);
-              }}
-            >
-              <input
-                aria-label="Conversation title"
-                value={draftTitle}
-                onChange={(event) => setDraftTitle(event.target.value)}
-                autoFocus
-              />
-              <button type="submit" className="ghost-text">
-                Save
-              </button>
-              <button type="button" className="ghost-text" onClick={() => setEditing(false)}>
-                Cancel
-              </button>
-            </form>
-          ) : (
-            <>
-              <h1>
-                <BotSprite
-                  state={sprite}
-                  color={spriteColor}
-                  size={32}
-                  label={botSpriteLabel(spriteName, sprite)}
-                />
-                <span className="thread-title">{active?.title ?? "New chat"}</span>
-              </h1>
-              {speaking ? <span className="agent-chip">{speaking.name}</span> : null}
-              <ThreadActions
-                active={active}
-                streaming={streaming}
-                computerOpen={computerOpen}
-                onRename={() => {
-                  if (!active) return;
-                  setDraftTitle(active.title);
-                  setEditing(true);
-                }}
-                onDelete={() => {
-                  if (!active) return;
-                  void remove(active.id);
-                }}
-                onMemory={showMemory}
-                onShowComputer={() => setComputerOpen(true)}
-              />
-            </>
-          )}
+          <h1>
+            <BotSprite
+              state={sprite}
+              color={spriteColor}
+              size={32}
+              label={botSpriteLabel(spriteName, sprite)}
+            />
+            <span className="thread-title">{speaking?.name ?? "Mockbot"}</span>
+          </h1>
+          <ThreadActions
+            computerOpen={computerOpen}
+            onMemory={showMemory}
+            onShowComputer={() => setComputerOpen(true)}
+          />
         </header>
         <div className="chat-body">
           <Transcript
@@ -931,12 +845,12 @@ export function Workspace({
             livePhase={livePhase}
             spriteState={sprite}
             spriteColor={spriteColor}
-            spriteName={spriteName}
             activities={activities}
             decidingId={decidingId}
             onDecide={(id, decision) => void decide(id, decision)}
             onSelectTool={setSelectedToolId}
             onOpenTrace={showTrace}
+            agentName={speaking?.name ?? "Mockbot"}
             reconnectFor={(activity) => {
               if (activity.state !== "error") return null;
               const connector = connectorForActivity(connectors, activity.name);
@@ -1024,14 +938,6 @@ export function Workspace({
         commands={[
           { id: "connectors", label: "Connectors", run: () => openConnectors("list") },
           { id: "add-connector", label: "Add connector", run: () => openConnectors("add") },
-          {
-            id: "new-chat",
-            label: "New chat",
-            run: () => {
-              setPaletteOpen(false);
-              newChat();
-            },
-          },
           {
             id: "routines",
             label: "Routines",

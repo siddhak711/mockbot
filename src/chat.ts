@@ -138,6 +138,7 @@ export async function streamChatTurn(options: {
   const computer = options.computer ?? defaultComputer;
   const connector = options.connector ?? defaultConnector;
   const conversationId = options.conversationId?.trim() || undefined;
+  const userId = options.userId ?? null;
   let conversation = conversationId
     ? (await options.store.getConversation(conversationId, undefined, options.userId))?.conversation
     : undefined;
@@ -148,12 +149,10 @@ export async function streamChatTurn(options: {
     const requested = options.agentId?.trim();
     const owner = (requested ? await agents.get(requested) : null) ?? (await agents.lead());
     if (!owner) return Response.json({ error: "Agent not found" }, { status: 404 });
-    conversation = await options.store.createConversation(
-      titleFromMessage(message),
-      owner.id,
-      options.userId,
-    );
+    conversation = await options.store.getOrCreateAgentConversation(owner.id, userId);
   }
+  const named = await options.store.nameIfEmpty(conversation.id, titleFromMessage(message), userId);
+  if (named) conversation = named;
   if (options.approvals.hasPending(conversation.id)) {
     return Response.json(
       { error: "An approval is still pending for this conversation." },

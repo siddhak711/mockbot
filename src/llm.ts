@@ -65,7 +65,7 @@ export function buildMockReply(userText: string): string {
     "",
     "### Still here after a refresh",
     "",
-    "- The conversation list and this transcript are stored locally.",
+    "- This agent's thread is stored locally.",
     "- Use the Stop generating button to keep a partial answer.",
     "- Set `LLM_PROVIDER=openai` when you want a live model.",
     "",

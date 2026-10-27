@@ -2,12 +2,15 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
+import { AgentDirectory } from "../src/agents/directory";
+import { LEAD_AGENT_ID } from "../src/agents/ids";
 import type { LlmProvider } from "../src/llm";
 import { MockProvider, SYSTEM_PROMPT } from "../src/llm";
+import { BASE_SYSTEM_PROMPT } from "../src/memory/prompt";
 import { pollIntervalMs, shouldStartInlineWorker } from "../src/routines/clock";
 import { CronError, nextCron } from "../src/routines/cron";
 import { RoutineStore } from "../src/routines/store";
-import { modelMessages } from "../src/routines/turn";
+import { modelMessages, runRoutineTurn } from "../src/routines/turn";
 import { runWorker, tick } from "../src/routines/worker";
 import { ConversationStore } from "../src/store";
 import type { LlmMessage, LlmStreamEvent } from "../src/types";
@@ -267,7 +270,7 @@ it("does not send an unanswered failed prompt as the next run's history", async 
   expect(recovered).toEqual({ claimed: 1, succeeded: 1, failed: 0 });
   expect(seen).toEqual([
     [
-      { role: "system", content: SYSTEM_PROMPT },
+      { role: "system", content: BASE_SYSTEM_PROMPT },
       { role: "user", content: "Fail please" },
       { role: "assistant", content: "Routine failed: upstream unavailable" },
       { role: "user", content: "Fail please" },
@@ -281,6 +284,54 @@ it("does not send an unanswered failed prompt as the next run's history", async 
   ).toEqual([
     { role: "system", content: SYSTEM_PROMPT },
     { role: "user", content: "current" },
+  ]);
+});
+
+it("sends a routine turn through the saved summary", async () => {
+  const { store } = await open();
+  const conversation = await store.getOrCreateAgentConversation(LEAD_AGENT_ID, null);
+  await store.addMessage(conversation.id, "user", "secret older note");
+  const covered = await store.addMessage(conversation.id, "assistant", "noted the secret");
+  await store.saveSummary(
+    conversation.id,
+    conversation.agentId,
+    "The grove was already summarized.",
+    covered.id,
+  );
+  const seen: LlmMessage[][] = [];
+  const provider: LlmProvider = {
+    id: "mock",
+    model: null,
+    async *stream(messages: LlmMessage[]): AsyncIterable<LlmStreamEvent> {
+      seen.push(messages.map((message) => ({ ...message })));
+      yield { type: "text", text: "Next step is the ridge." };
+      yield { type: "end", finishReason: "stop" };
+    },
+  };
+
+  const outcome = await runRoutineTurn({
+    store,
+    provider,
+    conversationId: conversation.id,
+    prompt: "What next?",
+  });
+
+  expect(outcome.text).toBe("Next step is the ridge.");
+  const prompt = seen[0] ?? [];
+  const system = prompt.find((message) => message.role === "system")?.content ?? "";
+  expect(system).toContain("<conversation-summary");
+  expect(system).toContain("The grove was already summarized.");
+  expect(
+    prompt.filter((message) => message.role === "user").map((message) => message.content),
+  ).toEqual(["What next?"]);
+  expect(prompt.map((message) => message.content).join("\n")).not.toContain("secret older note");
+  expect(prompt.map((message) => message.content).join("\n")).not.toContain("noted the secret");
+  const stored = await store.getConversation(conversation.id);
+  expect(stored?.messages.map((message) => message.content)).toEqual([
+    "secret older note",
+    "noted the secret",
+    "What next?",
+    "Next step is the ridge.",
   ]);
 });
 
@@ -314,7 +365,7 @@ it("keeps one conversation when two runs create one together", async () => {
     tick({ routines, store, provider: reply("noted"), clock, workerId: "worker-a" }),
     tick({ routines, store, provider: reply("noted"), clock, workerId: "worker-b" }),
   ]);
-  expect(creates).toBe(2);
+  expect(creates).toBe(1);
   expect(first.succeeded + second.succeeded).toBe(2);
   const saved = await routines.get(routine.id);
   const runs = await routines.listRuns(routine.id);
@@ -327,7 +378,8 @@ it("keeps one conversation when two runs create one together", async () => {
       .map((message) => message.content)
       .sort(),
   ).toEqual(["Note it\n\nEvent shipped:\none", "Note it\n\nEvent shipped:\ntwo"]);
-  const later = await store.createConversation("later");
+  store.createConversation = original;
+  const later = await store.createConversation("later", "agent_other");
   expect(await routines.setConversation(routine.id, later.id, now)).toBe(saved?.conversationId);
 });
 
@@ -585,6 +637,90 @@ it("reopens routines from the same embedded database", async () => {
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+it("adopts an ownerless routine for the earliest account's lead thread", async () => {
+  const store = await ConversationStore.open();
+  openStores.push(store);
+  await AgentDirectory.attach(store);
+  let routines = await RoutineStore.attach(store);
+  await store.connection.exec(`
+    INSERT INTO users (id, email, created_at) VALUES
+      ('user_first', 'first@example.com', '2020-01-01T00:00:00Z'),
+      ('user_second', 'second@example.com', '2024-01-01T00:00:00Z');
+    INSERT INTO routines (
+      id, name, prompt, trigger_kind, event_name, status, user_id, agent_id
+    ) VALUES
+      ('legacy', 'Legacy', 'Check the old inbox', 'event', 'shipped', 'active', NULL, NULL),
+      ('kept', 'Kept', 'Leave this one', 'event', 'other.event', 'active', 'user_second', 'lead_second');
+  `);
+
+  expect((await routines.list("user_first")).map((routine) => routine.id)).toEqual([]);
+  routines = await RoutineStore.attach(store);
+  expect((await routines.get("legacy"))?.userId).toBeNull();
+  expect((await routines.get("legacy"))?.agentId).toBeNull();
+
+  await store.connection.exec(`
+    INSERT INTO agents (id, name, instructions, memory_note, user_id, is_lead, created_at)
+    VALUES (
+      'lead_user_first', 'Mockbot', 'Lead', '', 'user_first', TRUE, '2020-01-02T00:00:00Z'
+    );
+  `);
+  routines = await RoutineStore.attach(store);
+
+  const adopted = await routines.get("legacy");
+  expect(adopted?.userId).toBe("user_first");
+  expect(adopted?.agentId).toBe("lead_user_first");
+  expect((await routines.get("kept"))?.userId).toBe("user_second");
+  expect((await routines.get("kept"))?.agentId).toBe("lead_second");
+  expect((await routines.list("user_first")).map((routine) => routine.id)).toEqual(["legacy"]);
+  expect((await routines.list("user_second")).map((routine) => routine.id)).toEqual(["kept"]);
+
+  expect(await routines.setStatus("legacy", "paused", new Date(), "user_second")).toBeNull();
+  expect((await routines.get("legacy"))?.status).toBe("active");
+  expect((await routines.setStatus("legacy", "paused", new Date(), "user_first"))?.status).toBe(
+    "paused",
+  );
+  expect((await routines.setStatus("legacy", "active", new Date(), "user_first"))?.status).toBe(
+    "active",
+  );
+
+  const ignored = await routines.recordEvent({
+    name: "shipped",
+    now: new Date(),
+    userId: "user_second",
+  });
+  expect(ignored.runs).toEqual([]);
+  const owned = await routines.recordEvent({
+    name: "shipped",
+    now: new Date(),
+    userId: "user_first",
+  });
+  expect(owned.runs).toHaveLength(1);
+
+  const now = new Date(Date.now() + 60_000);
+  await tick({
+    routines,
+    store,
+    provider: reply("From the lead"),
+    clock: { now: () => now },
+    workerId: "backfill",
+  });
+  const runs = await routines.listRuns("legacy");
+  expect(runs.map((run) => run.status)).toEqual(["succeeded"]);
+  const owner = await store.connection.query<{ user_id: string | null; agent_id: string }>(
+    `SELECT user_id, agent_id FROM conversations WHERE id = $1`,
+    [runs[0]?.conversationId],
+  );
+  expect(owner.rows[0]).toEqual({ user_id: "user_first", agent_id: "lead_user_first" });
+  const stray = await store.connection.query<{ id: string }>(
+    `SELECT conversations.id
+     FROM conversations
+     JOIN messages ON messages.conversation_id = conversations.id
+     WHERE messages.content = 'Check the old inbox'
+       AND conversations.user_id IS NULL`,
+  );
+  expect(stray.rows).toEqual([]);
 });
 
 it("chooses the in-process worker only for local dev", () => {
