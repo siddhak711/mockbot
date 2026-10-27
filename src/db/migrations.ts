@@ -202,7 +202,109 @@ CREATE UNIQUE INDEX IF NOT EXISTS agents_name_unscoped_idx
 `,
   },
   {
-    id: "007_site_tools",
+    id: "007_composio_connections",
+    sql: `
+CREATE TABLE IF NOT EXISTS composio_connections (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  catalog_id TEXT NOT NULL,
+  toolkit TEXT NOT NULL,
+  connected_account_id TEXT NOT NULL,
+  account_label TEXT,
+  status TEXT NOT NULL DEFAULT 'connected',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (user_id, catalog_id)
+);
+
+CREATE INDEX IF NOT EXISTS composio_connections_user_idx
+  ON composio_connections (user_id);
+`,
+  },
+  {
+    id: "008_connector_catalog",
+    sql: `
+DO $dedupe_catalog_connectors$
+DECLARE
+  catalog_key TEXT;
+  keeper TEXT;
+  loser RECORD;
+BEGIN
+  FOR catalog_key IN
+    SELECT catalog_id
+    FROM connectors
+    WHERE catalog_id IS NOT NULL
+    GROUP BY catalog_id
+    HAVING COUNT(*) > 1
+  LOOP
+    SELECT id INTO keeper
+    FROM connectors
+    WHERE catalog_id = catalog_key
+    ORDER BY created_at ASC, id ASC
+    LIMIT 1;
+
+    FOR loser IN
+      SELECT id, tools, seen_tools
+      FROM connectors
+      WHERE catalog_id = catalog_key AND id <> keeper
+      ORDER BY created_at ASC, id ASC
+    LOOP
+      UPDATE connectors
+      SET tools = COALESCE(loser.tools, '{}'::jsonb) || COALESCE(tools, '{}'::jsonb),
+          seen_tools = (
+            SELECT COALESCE(jsonb_agg(DISTINCT item), '[]'::jsonb)
+            FROM (
+              SELECT jsonb_array_elements(
+                CASE
+                  WHEN jsonb_typeof(COALESCE(connectors.seen_tools, '[]'::jsonb)) = 'array'
+                  THEN COALESCE(connectors.seen_tools, '[]'::jsonb)
+                  ELSE '[]'::jsonb
+                END
+              ) AS item
+              UNION ALL
+              SELECT jsonb_array_elements(
+                CASE
+                  WHEN jsonb_typeof(COALESCE(loser.seen_tools, '[]'::jsonb)) = 'array'
+                  THEN COALESCE(loser.seen_tools, '[]'::jsonb)
+                  ELSE '[]'::jsonb
+                END
+              )
+            ) items
+          )
+      WHERE id = keeper;
+
+      IF to_regclass('public.agent_grants') IS NOT NULL THEN
+        UPDATE agent_grants AS grant_row
+        SET resource_id = keeper
+        WHERE grant_row.resource_kind = 'connector'
+          AND grant_row.resource_id = loser.id
+          AND NOT EXISTS (
+            SELECT 1
+            FROM agent_grants AS existing
+            WHERE existing.agent_id = grant_row.agent_id
+              AND existing.resource_kind = 'connector'
+              AND existing.resource_id = keeper
+          );
+        DELETE FROM agent_grants
+        WHERE resource_kind = 'connector' AND resource_id = loser.id;
+      END IF;
+    END LOOP;
+
+    -- composio_connections are keyed by catalog_id, not connector id.
+    -- Removing the extra connector rows leaves those links in place.
+    DELETE FROM connectors
+    WHERE catalog_id = catalog_key AND id <> keeper;
+  END LOOP;
+END
+$dedupe_catalog_connectors$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS connectors_catalog_id_idx
+  ON connectors (catalog_id)
+  WHERE catalog_id IS NOT NULL;
+`,
+  },
+  {
+    id: "013_site_tools",
     sql: `
 CREATE TABLE IF NOT EXISTS site_tools (
   id TEXT PRIMARY KEY,

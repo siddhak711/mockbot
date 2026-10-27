@@ -214,8 +214,31 @@ it("validates arguments and routes confirm and submit selectors to approval", ()
   expect(requiresApproval(tool, { action: "click", selector: "#reveal" })).toBe(false);
   expect(requiresApproval(tool, { action: "click", selector: "#go", confirm: true })).toBe(true);
   expect(requiresApproval(tool, { action: "click", selector: "button[type=submit]" })).toBe(true);
+  expect(browseNeedsApproval({ action: "click", selector: "label[for=go]" })).toBe(true);
+  expect(browseNeedsApproval({ action: "click", selector: "#go" })).toBe(false);
   expect(browseNeedsApproval({ action: "type", selector: "#password", text: "x" })).toBe(true);
 });
+
+it("refuses a label-wrapped submit and a label[for] submit without approval", async () => {
+  await browser.perform(step({ action: "open", url: `${baseUrl}/` }));
+  const wrapped = await browser.perform(
+    step({ action: "click", selector: "#wrap", allowSubmit: false }),
+  );
+  expect(wrapped).toMatchObject({
+    ok: false,
+    needsApproval: true,
+    error: "This click submits a form.",
+  });
+  const viaFor = await browser.perform(
+    step({ action: "click", selector: "label[for=go]", allowSubmit: false }),
+  );
+  expect(viaFor).toMatchObject({
+    ok: false,
+    needsApproval: true,
+    error: "This click submits a form.",
+  });
+  expect(posts).toEqual([]);
+}, 30_000);
 
 it("explains that browse is unavailable without a Daytona sandbox", async () => {
   const tool = browseTool({ driver: () => null, unavailable: "DAYTONA_API_KEY is not set" });

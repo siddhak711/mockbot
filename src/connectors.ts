@@ -2,7 +2,7 @@ export type ConnectorTransport = "http" | "stdio";
 
 export type ConnectorAuth = "oauth" | "apikey" | "none";
 
-export type ConnectorStatus = "connected" | "error" | "reconnect";
+export type ConnectorStatus = "connected" | "error" | "reconnect" | "not connected";
 
 export type ToolApprovalMode = "ask" | "auto";
 

@@ -15,6 +15,13 @@ const COUNTER = "browse";
 /** Selectors that name a submit or login control. These ask for approval up front. */
 const SUBMIT_SELECTOR = /submit|log-?in|sign-?in|password|passwd/i;
 
+/**
+ * A label click activates the labeled control. Gate it up front, the same as a
+ * selector that names that control. An id on the label itself is classified in
+ * the daemon, which resolves the label to its control.
+ */
+const LABEL_SELECTOR = /(?:^|[\s>+~,])label\b|\[for\s*=/i;
+
 export type BrowseToolOptions = {
   /** Null when the sandbox cannot run a browser, such as the mock computer. */
   driver: () => BrowserDriver | null;
@@ -28,7 +35,9 @@ export function browseNeedsApproval(args: Record<string, unknown>): boolean {
   if (args.confirm === true) return true;
   const action = args.action;
   if (action !== "click" && action !== "type") return false;
-  return typeof args.selector === "string" && SUBMIT_SELECTOR.test(args.selector);
+  if (typeof args.selector !== "string") return false;
+  if (SUBMIT_SELECTOR.test(args.selector)) return true;
+  return action === "click" && LABEL_SELECTOR.test(args.selector);
 }
 
 export function browseTool(options: BrowseToolOptions): ToolDefinition {
