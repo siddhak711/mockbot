@@ -26,7 +26,12 @@ export async function PATCH(request: Request, context: RouteContext): Promise<Re
   }
   const { routines } = await getAppContext();
   if (!routines) return Response.json({ error: "Routines are not available" }, { status: 500 });
-  const routine = await routines.setStatus(id, status as RoutineStatus, new Date());
+  const routine = await routines.setStatus(
+    id,
+    status as RoutineStatus,
+    new Date(),
+    actor.scoped ? actor.user.id : undefined,
+  );
   if (!routine) return Response.json({ error: "Routine not found" }, { status: 404 });
   return Response.json({ routine, runs: await routines.listRuns(routine.id) });
 }

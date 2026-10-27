@@ -5,8 +5,8 @@ import { POST as postChat } from "../app/api/chat/route";
 import { POST as postApproval } from "../app/api/tools/approvals/route";
 import { handlers } from "../src/auth";
 import { POST as signInPassword } from "../app/api/auth/password/route";
+import { GET as readAgentConversation } from "../app/api/agents/[id]/conversation/route";
 import { GET as readConversation } from "../app/api/conversations/[id]/route";
-import { GET as listConversationIndex } from "../app/api/conversations/route";
 import { googleCallbackUrl } from "../src/auth/google";
 import { resetAppContext, setAppContext } from "../src/context";
 import { MockProvider } from "../src/llm";
@@ -184,16 +184,22 @@ it("gives each account its own agents and conversations, and adopts orphan rows 
   expect(secondBody.agents.some((agent) => agent.id === "agent_default")).toBe(false);
   expect(secondBody.agents.some((agent) => agent.isLead && agent.name === "Mockbot")).toBe(true);
 
-  const firstChats = await listConversationIndex(
-    new Request("http://localhost/api/conversations", { headers: { cookie: firstCookie } }),
+  const firstChats = await readAgentConversation(
+    new Request("http://localhost/api/agents/agent_default/conversation", {
+      headers: { cookie: firstCookie },
+    }),
+    { params: Promise.resolve({ id: "agent_default" }) },
   );
-  const secondChats = await listConversationIndex(
-    new Request("http://localhost/api/conversations", { headers: { cookie: secondCookie } }),
+  const secondChats = await readAgentConversation(
+    new Request("http://localhost/api/agents/agent_default/conversation", {
+      headers: { cookie: secondCookie },
+    }),
+    { params: Promise.resolve({ id: "agent_default" }) },
   );
-  const firstList = (await firstChats.json()) as { conversations: Array<{ id: string }> };
-  const secondList = (await secondChats.json()) as { conversations: Array<{ id: string }> };
-  expect(firstList.conversations.map((item) => item.id)).toContain(orphan.id);
-  expect(secondList.conversations.map((item) => item.id)).not.toContain(orphan.id);
+  const firstList = (await firstChats.json()) as { conversation: { id: string } };
+  expect(firstChats.status).toBe(200);
+  expect(firstList.conversation.id).toBe(orphan.id);
+  expect(secondChats.status).toBe(404);
 
   const hidden = await readConversation(
     new Request(`http://localhost/api/conversations/${orphan.id}`, {
@@ -227,7 +233,10 @@ it("gives each account its own agents and conversations, and adopts orphan rows 
 it("refuses workspace APIs when a session is required and the cookie is missing", async () => {
   await openStore();
   process.env.MOCKBOT_REQUIRE_AUTH = "1";
-  const response = await listConversationIndex();
+  const response = await readAgentConversation(
+    new Request("http://localhost/api/agents/agent_default/conversation"),
+    { params: Promise.resolve({ id: "agent_default" }) },
+  );
   expect(response.status).toBe(401);
 });
 

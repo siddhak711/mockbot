@@ -25,6 +25,7 @@ export async function POST(request: Request): Promise<Response> {
       name: typeof record.name === "string" ? record.name : "",
       payload: typeof record.payload === "string" ? record.payload : null,
       now: new Date(),
+      userId: actor.scoped ? actor.user.id : undefined,
     });
     return Response.json(result, { status: 201 });
   } catch (error) {

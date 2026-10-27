@@ -1,6 +1,7 @@
 import { SYSTEM_PROMPT, type LlmProvider } from "../llm";
 import type { ConversationStore } from "../store";
 import { applyStreamEvent, emptyTrace } from "../trace";
+import { buildModelInput } from "../turn";
 import type { LlmMessage, Role } from "../types";
 
 /**
@@ -26,6 +27,19 @@ export function modelMessages(messages: Array<{ role: Role; content: string }>):
   ];
 }
 
+/** Keep the prepared system prompt, and drop an abandoned user turn from the rest. */
+function routineHistory(prepared: LlmMessage[]): LlmMessage[] {
+  const system = prepared.filter((message) => message.role === "system");
+  const turns: Array<{ role: Role; content: string }> = [];
+  for (const message of prepared) {
+    if (message.role === "user" || message.role === "assistant") {
+      turns.push({ role: message.role, content: message.content });
+    }
+  }
+  const kept = modelMessages(turns).filter((message) => message.role !== "system");
+  return [...system, ...kept];
+}
+
 /**
  * The only place a routine invokes the agent loop.
  * It stores the prompt and the finished reply on the routine's conversation.
@@ -40,7 +54,13 @@ export async function runRoutineTurn(options: {
   await options.store.addMessage(options.conversationId, "user", options.prompt);
   const stored = await options.store.getConversation(options.conversationId);
   if (!stored) throw new Error("Conversation disappeared before the routine ran");
-  const history = modelMessages(stored.messages);
+  const prepared = await buildModelInput({
+    store: options.store,
+    conversationId: options.conversationId,
+    agentId: stored.conversation.agentId,
+  });
+  if (!prepared) throw new Error("Conversation disappeared before the routine ran");
+  const history = routineHistory(prepared.messages);
   let trace = emptyTrace();
   for await (const event of options.provider.stream(history)) {
     trace = applyStreamEvent(trace, event);
