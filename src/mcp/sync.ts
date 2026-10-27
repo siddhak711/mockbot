@@ -100,6 +100,7 @@ export async function refreshMcpTools(options: RefreshOptions): Promise<void> {
   });
   registry.removeSource("mcp");
   for (const batch of batches) {
+    if (batch.error) logListFailure(batch.connector, batch.error, secrets);
     if (batch.paused || batch.error) continue;
     const assigned = names.get(batch.connector.id) ?? [];
     const merged = mergeSettings(batch.connector, batch.tools, secrets);
@@ -222,6 +223,24 @@ async function listComposioTools(
   } catch (error) {
     return { connector, tools: [], error };
   }
+}
+
+/** A connector whose tools cannot be listed drops out of the turn. The log says why. */
+function logListFailure(
+  connector: ConnectorRecord,
+  error: unknown,
+  secrets: readonly string[],
+): void {
+  if (error instanceof Error && error.name === "AbortError") return;
+  const message = error instanceof Error ? error.message : String(error);
+  console.warn(
+    JSON.stringify({
+      event: "connector_tools_unavailable",
+      connectorId: connector.id,
+      catalogId: connector.catalogId ?? null,
+      error: redactSecrets(message, secrets).slice(0, 500),
+    }),
+  );
 }
 
 function adapterFor(connector: ConnectorRecord): ProviderAdapter | null {
