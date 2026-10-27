@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
 import { RunTimeline } from "../../../components/run-timeline";
 import { requirePageUser } from "../../../src/auth/guard";
 import { getAppContext } from "../../../src/context";
@@ -17,7 +16,6 @@ export default async function RunReplayPage({ params }: { params: Promise<{ id: 
   const { id } = await params;
   const { store } = await getAppContext();
   const events = await listRunEvents(store.connection, id);
-  if (events.length === 0) notFound();
   return (
     <div className="app">
       <main className="main">

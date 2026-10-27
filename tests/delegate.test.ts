@@ -6,6 +6,7 @@ import { performDelegation } from "../src/agents/delegate";
 import { LEAD_AGENT_ID } from "../src/agents/ids";
 import { withAgentMock } from "../src/agents/mock-script";
 import { defaultComputer, defaultConnector, NoteMemory } from "../src/agents/ports";
+import { RunLog, listRunEvents } from "../src/runs/events";
 import type { AgentMemoryPort, ComputerPort, ConnectorPort } from "../src/agents/types";
 import type { LlmMessage } from "../src/types";
 import { resetAppContext, setAppContext } from "../src/context";
@@ -696,4 +697,32 @@ it("sends a delegated turn through the summary instead of the covered history", 
     "What next?",
     "Next step is the ridge.",
   ]);
+});
+
+it("records a stopped handoff as stopped", async () => {
+  const store = await ConversationStore.open();
+  const directory = await AgentDirectory.attach(store);
+  const log = new RunLog(store.connection, "run_stopped_delegate");
+  await expect(
+    performDelegation(
+      { agent: "Researcher", task: "Stop this" },
+      {
+        directory,
+        store,
+        provider: new MockProvider({ delayMs: 0 }),
+        memory: new NoteMemory(directory),
+        computer: defaultComputer,
+        connector: defaultConnector,
+        parentAgentId: LEAD_AGENT_ID,
+        signal: AbortSignal.abort(),
+        runLog: log,
+      },
+    ),
+  ).rejects.toThrow(/aborted/);
+
+  const rows = await listRunEvents(store.connection, "run_stopped_delegate");
+  const delegate = rows.find((row) => row.type === "tool");
+  expect(delegate?.output).toBe("Delegation stopped.");
+  expect(delegate?.output).not.toContain("failed");
+  expect(rows.some((row) => row.type === "error")).toBe(false);
 });

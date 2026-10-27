@@ -6,6 +6,8 @@ import { POST as postChat } from "../app/api/chat/route";
 import { GET as readRun } from "../app/api/runs/[id]/route";
 import { resetAppContext, setAppContext } from "../src/context";
 import { MockProvider, selectProvider, type LlmProvider } from "../src/llm";
+import { replayLink } from "../components/routines-workspace";
+import { RoutineStore } from "../src/routines/store";
 import { runRoutineTurn } from "../src/routines/turn";
 import { RunLog, listRunEvents, runTotals } from "../src/runs/events";
 import { redactSecrets } from "../src/runs/redact";
@@ -281,6 +283,35 @@ it("appends a model-route event with run_id and seq, and does not reject when th
   } finally {
     logged.mockRestore();
   }
+});
+
+it("does not 404 a pending routine run that has no events yet", async () => {
+  const store = await ConversationStore.open();
+  const routines = await RoutineStore.attach(store);
+  setAppContext({
+    store,
+    provider: selectProvider({ LLM_PROVIDER: "mock", MOCK_STREAM_DELAY_MS: "0" }),
+  });
+  const now = new Date("2026-10-25T21:11:40.000Z");
+  const routine = await routines.create({
+    name: "Morning note",
+    prompt: "Summarize today",
+    cron: "* * * * *",
+    now,
+  });
+  await routines.enqueueDue(new Date(routine.nextRunAt!));
+  const pending = (await routines.listRuns(routine.id)).find((run) => run.status === "pending");
+  expect(pending).toBeTruthy();
+  expect(replayLink(pending!)).toBeNull();
+
+  const response = await readRun(new Request(`http://localhost/api/runs/${pending!.id}`), {
+    params: Promise.resolve({ id: pending!.id }),
+  });
+  expect(response.status).toBe(200);
+  const body = (await response.json()) as { runId: string; events: unknown[] };
+  expect(body.runId).toBe(pending!.id);
+  expect(body.events).toEqual([]);
+  expect(await listRunEvents(store.connection, pending!.id)).toEqual([]);
 });
 
 it("records the model row when a routine stream throws", async () => {

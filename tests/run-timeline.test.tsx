@@ -79,3 +79,10 @@ it("renders collapsed rows and run totals, then expands the full input and outpu
   expect(tool.textContent).toContain("Mock results for mockbot");
   expect(tool.textContent).toContain('"query":"mockbot"');
 });
+
+it("renders an empty timeline when a run has no events", () => {
+  render(<RunTimeline runId="run_pending" events={[]} />);
+  expect(screen.getByText("No events recorded yet.")).toBeTruthy();
+  expect(document.querySelectorAll(".run-event")).toHaveLength(0);
+  expect(screen.getByTestId("run-total-tokens").textContent).toBe("0");
+});

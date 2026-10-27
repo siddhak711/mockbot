@@ -16,6 +16,12 @@ function triggerLabel(routine: Routine): string {
   return routine.trigger.eventName;
 }
 
+/** Pending runs have no events yet, so a replay link would open an empty timeline. */
+export function replayLink(run: Pick<RoutineRun, "id" | "status">): string | null {
+  if (run.status === "pending") return null;
+  return `/runs/${run.id}`;
+}
+
 function statusLabel(status: RoutineStatus | RoutineRun["status"]): string {
   if (status === "succeeded") return "Succeeded";
   if (status === "failed") return "Failed";
@@ -347,7 +353,7 @@ export function RoutinesWorkspace({ user }: { user: SignedInUser }) {
                             {run.resultExcerpt ? (
                               <span className="run-excerpt">{run.resultExcerpt}</span>
                             ) : null}
-                            <a href={`/runs/${run.id}`}>Replay</a>
+                            {replayLink(run) ? <a href={`/runs/${run.id}`}>Replay</a> : null}
                           </li>
                         ))}
                       </ul>

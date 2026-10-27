@@ -13,6 +13,5 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
   const { id } = await context.params;
   const { store } = await getAppContext();
   const events = await listRunEvents(store.connection, id);
-  if (events.length === 0) return Response.json({ error: "Run not found" }, { status: 404 });
   return Response.json({ runId: id, totals: runTotals(events), events });
 }

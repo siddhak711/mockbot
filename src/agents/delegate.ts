@@ -127,7 +127,9 @@ export async function performDelegation(
     content = outcome.content;
     return outcome;
   } catch (error) {
-    if (!isAbort(error, deps.signal)) {
+    if (isAbort(error, deps.signal)) {
+      content = "Delegation stopped.";
+    } else {
       const message = error instanceof Error ? error.message : "The child run failed.";
       content = `Delegation failed: ${message}`;
       await ignoreRunLog(deps.runLog?.fail(message, { phase: "delegate" }));

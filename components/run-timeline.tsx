@@ -33,31 +33,35 @@ export function RunTimeline({ runId, events }: { runId: string; events: RunEvent
           <strong data-testid="run-total-time">{formatDuration(totals.ms)}</strong>
         </div>
       </section>
-      <ol className="run-timeline">
-        {events.map((event) => (
-          <li key={event.seq}>
-            <details className="run-event" data-type={event.type}>
-              <summary>
-                <span className={`run-type ${event.type}`}>{event.type}</span>
-                <span className="run-summary">{eventSummary(event)}</span>
-                <span className="run-metric">{formatTokenCount(event.tokens)}</span>
-                <span className="run-metric">{formatCost(event.costUsd)}</span>
-                <span className="run-metric">{formatDuration(event.ms)}</span>
-              </summary>
-              <div className="run-body">
-                <div>
-                  <h2>Input</h2>
-                  <pre>{body(event.input)}</pre>
+      {events.length === 0 ? (
+        <p className="empty">No events recorded yet.</p>
+      ) : (
+        <ol className="run-timeline">
+          {events.map((event) => (
+            <li key={event.seq}>
+              <details className="run-event" data-type={event.type}>
+                <summary>
+                  <span className={`run-type ${event.type}`}>{event.type}</span>
+                  <span className="run-summary">{eventSummary(event)}</span>
+                  <span className="run-metric">{formatTokenCount(event.tokens)}</span>
+                  <span className="run-metric">{formatCost(event.costUsd)}</span>
+                  <span className="run-metric">{formatDuration(event.ms)}</span>
+                </summary>
+                <div className="run-body">
+                  <div>
+                    <h2>Input</h2>
+                    <pre>{body(event.input)}</pre>
+                  </div>
+                  <div>
+                    <h2>Output</h2>
+                    <pre>{body(event.output)}</pre>
+                  </div>
                 </div>
-                <div>
-                  <h2>Output</h2>
-                  <pre>{body(event.output)}</pre>
-                </div>
-              </div>
-            </details>
-          </li>
-        ))}
-      </ol>
+              </details>
+            </li>
+          ))}
+        </ol>
+      )}
     </div>
   );
 }
