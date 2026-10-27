@@ -7,7 +7,7 @@ const stop = () => controller.abort();
 process.on("SIGINT", stop);
 process.on("SIGTERM", stop);
 
-const { store, provider, routines } = await getAppContext();
+const { store, provider, routines, agents } = await getAppContext();
 if (!routines) throw new Error("Routines are not attached");
 
 const workerId = workerIdFromEnv(process.env, process.pid);
@@ -18,6 +18,7 @@ await runWorker({
   routines,
   store,
   provider,
+  agents,
   clock: systemClock(),
   workerId,
   pollMs,

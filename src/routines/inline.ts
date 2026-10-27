@@ -30,6 +30,7 @@ export async function startInlineWorker(
     routines: context.routines,
     store: context.store,
     provider: context.provider,
+    agents: context.agents,
     clock: systemClock(),
     workerId,
     pollMs,
