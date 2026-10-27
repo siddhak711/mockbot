@@ -104,7 +104,7 @@ export class SandboxBrowser implements BrowserDriver {
   #ensureInstalled(signal?: AbortSignal): Promise<void> {
     if (!this.options.install) return Promise.resolve();
     throwIfAborted(signal);
-    const run = this.#gate.then(() => this.#syncInstall());
+    const run = this.#gate.then(() => this.#syncInstall(signal));
     this.#gate = run.then(
       () => undefined,
       () => undefined,
@@ -118,9 +118,9 @@ export class SandboxBrowser implements BrowserDriver {
     return id || null;
   }
 
-  async #syncInstall(): Promise<void> {
+  async #syncInstall(signal?: AbortSignal): Promise<void> {
     // The stored id still names the dead sandbox until prepare creates the replacement.
-    if (this.host.prepare) await this.host.prepare();
+    if (this.host.prepare) await this.host.prepare(signal);
     const sandboxId = await this.#sandboxId();
     if (this.#installed && this.#installedFor === sandboxId) {
       await this.#installed;

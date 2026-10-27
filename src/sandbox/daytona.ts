@@ -1,4 +1,10 @@
-import type { Daytona, Sandbox } from "@daytonaio/sdk";
+import {
+  DaytonaGoneError,
+  DaytonaNotFoundError,
+  SandboxState,
+  type Daytona,
+  type Sandbox,
+} from "@daytonaio/sdk";
 import { isAbortError, throwIfAborted, withSignal } from "./abort";
 import { toSandboxPath } from "./limits";
 import type { ExecOutcome, SandboxEntry, SandboxRuntime } from "./runtime";
@@ -24,6 +30,11 @@ export type RemoteSandbox = {
 
 export type RemoteSandboxFleet = {
   create(agentId: string): Promise<RemoteSandbox>;
+  /**
+   * Reattach to an existing sandbox. Null means Daytona confirmed it is
+   * missing or deleted. Network errors, rate limits, and start timeouts reject
+   * so the caller does not replace a sandbox that is still there.
+   */
   reconnect(sandboxId: string): Promise<RemoteSandbox | null>;
 };
 
@@ -139,15 +150,16 @@ export class DaytonaRuntime implements SandboxRuntime {
     try {
       await handle.ensureRunning();
       return handle;
-    } catch {
+    } catch (error) {
       if (this.#handles.get(agentId) === handle) this.#handles.delete(agentId);
       const computer = await this.store.getComputer(agentId);
-      if (computer?.sandboxId) {
-        const restored = await this.fleet.reconnect(computer.sandboxId);
-        if (restored) {
-          this.#handles.set(agentId, restored);
-          return restored;
-        }
+      if (!computer?.sandboxId) throw error;
+      // Null is a confirmed miss. A transient reconnect failure rejects with
+      // that error and must not fall through to create.
+      const restored = await this.fleet.reconnect(computer.sandboxId);
+      if (restored) {
+        this.#handles.set(agentId, restored);
+        return restored;
       }
       const created = await this.fleet.create(agentId);
       await this.store.setSandboxId(agentId, created.id);
@@ -221,11 +233,12 @@ class SdkFleet implements RemoteSandboxFleet {
     try {
       const sandbox = await this.daytona.get(sandboxId);
       await sandbox.refreshData();
+      if (sandboxIsGone(sandbox.state)) return null;
       if (sandbox.state !== this.started) await sandbox.start(60);
       return await this.adapt(sandbox);
     } catch (error) {
-      redactError(error, this.secret);
-      return null;
+      if (sandboxMissingError(error)) return null;
+      throw redactError(error, this.secret);
     }
   }
 
@@ -332,4 +345,13 @@ function redactError(error: unknown, secret: string): Error {
 
 function isTimeoutError(error: unknown): boolean {
   return error instanceof Error && /Timeout/i.test(error.name);
+}
+
+/** Daytona reported that this sandbox does not exist or has been deleted. */
+function sandboxMissingError(error: unknown): boolean {
+  return error instanceof DaytonaNotFoundError || error instanceof DaytonaGoneError;
+}
+
+function sandboxIsGone(state: Sandbox["state"]): boolean {
+  return state === SandboxState.DESTROYED || state === SandboxState.DESTROYING;
 }

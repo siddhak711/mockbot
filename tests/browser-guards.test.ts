@@ -151,6 +151,25 @@ it("runs one installer for overlapping browse calls", async () => {
   expect(tracked.installs()).toBe(1);
 });
 
+it("passes the browse abort signal through to prepare", async () => {
+  const tracked = hostTrackingInstalls(async () => ({
+    stdout: "",
+    stderr: "",
+    exitCode: 0,
+    timedOut: false,
+  }));
+  const signals: Array<AbortSignal | undefined> = [];
+  tracked.host.prepare = async (signal) => {
+    signals.push(signal);
+  };
+  const browser = browserWith(tracked.host);
+  const controller = new AbortController();
+  await expect(browser.perform(openStep(), controller.signal)).resolves.toMatchObject({
+    ok: true,
+  });
+  expect(signals).toEqual([controller.signal]);
+});
+
 it("reinstalls using the sandbox id resolved after replacement", async () => {
   let stored = "sandbox-old";
   let resolved = "sandbox-old";

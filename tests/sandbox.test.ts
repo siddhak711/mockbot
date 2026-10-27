@@ -386,6 +386,30 @@ describe("sandbox", { concurrent: false }, () => {
     await supervisor.close();
   });
 
+  it("throws when reconnect fails transiently and does not create a sandbox", async () => {
+    const fleet = new FakeFleet();
+    const store = await SandboxStore.open("memory://");
+    const runtime = new DaytonaRuntime(fleet, store, "secret");
+    const assigned: string[] = [];
+    const setSandboxId = store.setSandboxId.bind(store);
+    store.setSandboxId = async (agentId, sandboxId) => {
+      assigned.push(sandboxId);
+      await setSandboxId(agentId, sandboxId);
+    };
+    await runtime.prepare("agent");
+    const id = fleet.creates[0]?.id ?? "";
+    expect(fleet.creates).toHaveLength(1);
+    expect(assigned).toEqual([id]);
+
+    fleet.stop(id);
+    fleet.failNextStart = true;
+    fleet.failNextReconnect = new Error("Daytona rate limit");
+    await expect(runtime.prepare("agent")).rejects.toThrow("Daytona rate limit");
+    expect(fleet.creates).toHaveLength(1);
+    expect(assigned).toEqual([id]);
+    expect((await store.getComputer("agent"))?.sandboxId).toBe(id);
+  });
+
   it("cancels prepare and exec when the abort signal fires", async () => {
     const store = await SandboxStore.open("memory://");
     const runtime = new GateRuntime();
@@ -846,6 +870,8 @@ describe("sandbox", { concurrent: false }, () => {
     readonly reads: string[] = [];
     bootMs = 0;
     failNextStart = false;
+    /** Set while the sandbox still exists. The next reconnect rejects instead of returning null. */
+    failNextReconnect: Error | null = null;
     readonly #sandboxes = new Map<string, Map<string, string>>();
     readonly #running = new Set<string>();
 
@@ -870,6 +896,11 @@ describe("sandbox", { concurrent: false }, () => {
 
     async reconnect(sandboxId: string): Promise<RemoteSandbox | null> {
       this.reconnects.push(sandboxId);
+      if (this.failNextReconnect) {
+        const error = this.failNextReconnect;
+        this.failNextReconnect = null;
+        throw error;
+      }
       if (!this.#sandboxes.has(sandboxId)) return null;
       if (!this.#running.has(sandboxId)) {
         this.starts.push(sandboxId);
