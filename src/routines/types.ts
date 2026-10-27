@@ -11,6 +11,8 @@ export type Routine = {
   trigger: RoutineTrigger;
   status: RoutineStatus;
   conversationId: string | null;
+  userId: string | null;
+  agentId: string | null;
   nextRunAt: string | null;
   createdAt: string;
   updatedAt: string;

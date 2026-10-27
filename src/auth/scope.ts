@@ -42,6 +42,25 @@ async function claimOrphans(db: Sql, userId: string): Promise<void> {
       );
       continue;
     }
+    if (table === "conversations") {
+      await db.query(
+        `WITH first_user AS (
+           SELECT id FROM users ORDER BY created_at ASC, id ASC LIMIT 1
+         )
+         UPDATE conversations AS row
+         SET user_id = first_user.id
+         FROM first_user
+         WHERE row.user_id IS NULL
+           AND first_user.id = $1
+           AND NOT EXISTS (
+             SELECT 1 FROM conversations existing
+             WHERE existing.user_id = first_user.id
+               AND existing.agent_id = row.agent_id
+           )`,
+        [userId],
+      );
+      continue;
+    }
     await db.query(claim.replaceAll("table_name", table), [userId]);
   }
 }

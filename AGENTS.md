@@ -18,6 +18,16 @@ Every pull request description must include all three of the following:
 2. The tests that were run, with their results and output.
 3. A screenshot or screen recording that proves the change works.
 
+## 3. Product-model invariants
+
+Reviewers check every pull request against these invariants. A change that breaks one is not ready, even when the tests pass.
+
+- Each (user, agent) has exactly one persistent conversation. It is never replaced, renamed, or deleted.
+- The sidebar lists agents. It does not list conversations, and it has no New chat action.
+- Choosing an agent opens that agent's full history.
+- Chat, routines, and delegate append to the target agent's thread. They do not open a second conversation for the same agent.
+- Screenshots and recordings in the pull request are evidence. If they show a conversation list, a New chat control, a rename control, a delete control, or an empty "Start a conversation" state, the reviewer flags the pull request.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 ## This is NOT the Next.js you know

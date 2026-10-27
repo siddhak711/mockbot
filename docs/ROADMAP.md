@@ -6,21 +6,21 @@ The order is the dependency order. Tools need a turn loop. Memory is retrieved o
 
 ## Milestone 1 — Single-agent chat
 
-One implicit agent. The person starts a conversation, watches a reply stream, leaves, and comes back to the same transcript.
+One implicit agent. That agent has one persistent thread. The person sends a message, watches a reply stream, leaves, and comes back to the same transcript. There is no second conversation to start, rename, or delete.
 
 Build:
 
-- Workspace UI with a conversation list, a transcript, and a composer.
-- `POST /api/chat` streaming SSE, plus list, read, rename, and delete.
-- Conversation store on embedded Postgres.
+- Workspace UI with the agent in the sidebar, a transcript, and a composer.
+- `POST /api/chat` streaming SSE, and reading that agent's thread.
+- Conversation store on embedded Postgres. One row per user and agent.
 - LLM port with a mock provider and an OpenAI-compatible provider.
 - Lint, typecheck, and unit tests in GitHub Actions.
 
 Acceptance criteria:
 
 - [ ] With no API key, a new message streams a mock reply in the transcript.
-- [ ] Refreshing the page restores the conversation list, the title, and every message.
-- [ ] Renaming and deleting a conversation updates the list and the open thread.
+- [ ] Refreshing the page restores that agent's thread and every message.
+- [ ] The sidebar lists the agent and does not offer a new chat. A thread cannot be renamed or deleted.
 - [ ] Stopping a stream keeps the user message and any partial assistant text.
 - [ ] Setting `LLM_PROVIDER=openai` and `LLM_API_KEY` sends the turn to `LLM_BASE_URL` without exposing the key to the browser.
 - [ ] `npm run lint`, `npm run typecheck`, and `npm test` pass locally and in CI.
@@ -48,7 +48,7 @@ Acceptance criteria:
 
 ## Milestone 3 — Durable memory
 
-The agent can remember a fact in one conversation and use it in another. Memory is something the person can see and delete.
+The agent can remember a fact and use it on a later turn of that same thread. Memory is something the person can see and delete.
 
 Build:
 
@@ -59,7 +59,7 @@ Build:
 Acceptance criteria:
 
 - [ ] Asking the agent to remember a fact creates a memory row tied to the agent.
-- [ ] A new conversation can use that fact, and the prompt trace in tests shows it in system context rather than as a fake user message.
+- [ ] A later turn of that agent's thread can use that fact, and the prompt trace in tests shows it in system context rather than as a fake user message.
 - [ ] The person can list memories and delete one. A deleted memory is not retrieved again.
 - [ ] Memories from a different agent are not retrieved.
 - [ ] Tests cover write, retrieve, and delete.
@@ -110,14 +110,14 @@ Build:
 
 - Agent records. Seed the milestone 1 prompt as the first agent.
 - Grants that attach connectors and a computer to an agent.
-- A delegate tool that opens a child conversation, runs that agent, and returns the result to the parent.
+- A delegate tool that appends a subtask to the child agent's thread, runs that agent, and returns the result to the parent.
 - UI to create an agent and to read a delegation in the parent transcript.
 
 Acceptance criteria:
 
 - [ ] A person can create a second agent with different instructions.
 - [ ] The lead agent can delegate a subtask, and the parent transcript shows the delegation and the result.
-- [ ] The child conversation is readable on its own and belongs to the child agent.
+- [ ] The child agent's one thread is readable on its own and belongs to the child agent. A later handoff appends to that same thread.
 - [ ] The child uses its own memories and computer, and it cannot call a connector or a computer it was not granted.
 - [ ] A failed child run is visible on the parent turn, and the parent conversation stays usable.
 - [ ] Tests cover a successful delegation and a grant refusal.
