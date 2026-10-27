@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import type { ConnectorRecord } from "../src/connectors";
 import { CommandPalette } from "./command-palette";
 import { Composer } from "./composer";
@@ -9,6 +9,7 @@ import { MenuIcon } from "./icons";
 import { Sidebar } from "./sidebar";
 import { ThreadActions } from "./thread-actions";
 import { BotSprite, botSpriteLabel } from "./bot-sprite";
+import { PANE_WIDTH_DEFAULT, widthForContentTab, type ComputerContentTab } from "./computer-pane";
 import { SidePane, type SideTab } from "./side-pane";
 import { Transcript } from "./transcript";
 import { useRunSprite } from "./use-run-sprite";
@@ -20,13 +21,14 @@ import { releaseDecision, settleDecision, stopDecision } from "../src/decision-l
 import { applyMemoryRefresh, memoriesAfterAgentSwitch } from "../src/memory/panel-state";
 import { SseParser } from "../src/sse";
 import { applyClientEvent, emptyTrace, phaseFromEvent, streamedWeight } from "../src/trace";
-import { fetchComputerSnapshot } from "../src/sandbox/refresh";
+import { ComputerUnavailableError, fetchComputerSnapshot } from "../src/sandbox/refresh";
 import type { ComputerSnapshot } from "../src/sandbox/types";
 import type { RuntimeStatus } from "../src/token-stream";
 import {
   activitiesAfterReconnect,
   activitiesAfterStop,
   activitiesFromMessages,
+  resumeProgress,
   describeTool,
   previewText,
   type ToolActivity,
@@ -42,6 +44,10 @@ import type { Conversation, LivePhase, Memory, Message, ToolCallStatus } from ".
 function isAbort(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
 }
+
+const RESUME_POLL_MS = 500;
+/** About ten minutes, the longest a resumed turn's tools may run. */
+const RESUME_POLL_ATTEMPTS = 1200;
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -73,6 +79,9 @@ export function Workspace({
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState(false);
+  // A paused turn running again after a decision made with no live stream.
+  const [resuming, setResuming] = useState(false);
+  const resumingRef = useRef(false);
   const [livePhase, setLivePhase] = useState<LivePhase | null>(null);
   const [alert, setAlert] = useState<SpriteAlert | null>(null);
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus>({
@@ -81,10 +90,14 @@ export function Workspace({
     database: "local",
   });
   const [computerOpen, setComputerOpen] = useState(true);
+  const [computerPopped, setComputerPopped] = useState(false);
+  const [paneWidth, setPaneWidth] = useState(PANE_WIDTH_DEFAULT);
   const [sideTab, setSideTab] = useState<SideTab>("computer");
   const [memories, setMemories] = useState<Memory[] | null>(null);
   const [memoryError, setMemoryError] = useState<string | null>(null);
   const [computer, setComputer] = useState<ComputerSnapshot | null>(null);
+  // Why the server has no sandbox, from its 503 body.
+  const [computerError, setComputerError] = useState<string | null>(null);
   const [computerReady, setComputerReady] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -101,7 +114,6 @@ export function Workspace({
   const [pendingReconnectId, setPendingReconnectId] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [composerDraft, setComposerDraft] = useState("");
-  const [selectedToolId, setSelectedToolId] = useState<string | null>(null);
   const [decidingId, setDecidingId] = useState<string | null>(null);
   const [replayIds, setReplayIds] = useState<Record<string, string>>({});
   const abortRef = useRef<AbortController | null>(null);
@@ -150,13 +162,7 @@ export function Workspace({
       setActiveAgentId(conversation.agentId);
       setMessages(thread);
       releaseApprovalLock();
-      const nextActivities = activitiesFromMessages(thread);
-      setActivities(nextActivities);
-      setSelectedToolId((current) =>
-        current && nextActivities.some((item) => item.id === current)
-          ? current
-          : (nextActivities[nextActivities.length - 1]?.id ?? null),
-      );
+      setActivities(activitiesFromMessages(thread));
       const url = new URL(window.location.href);
       if (query === "agent") {
         url.searchParams.set("agent", conversation.agentId);
@@ -191,7 +197,6 @@ export function Workspace({
         setActiveId(null);
         setMessages([]);
         setActivities([]);
-        setSelectedToolId(null);
         return;
       }
       const data = (await response.json()) as { conversation: Conversation; messages: Message[] };
@@ -244,8 +249,12 @@ export function Workspace({
       );
       if (!snapshot || request !== computerRequest.current) return;
       setComputer(snapshot);
-    } catch {
+      setComputerError(null);
+    } catch (error) {
       // Keep the last snapshot. The pane stays usable if a refresh fails.
+      if (error instanceof ComputerUnavailableError && request === computerRequest.current) {
+        setComputerError(error.message || null);
+      }
     } finally {
       if (request === computerRequest.current) setComputerReady(true);
     }
@@ -392,10 +401,12 @@ export function Workspace({
     window.history.replaceState(null, "", url);
   }
 
-  async function send(text: string) {
+  async function send(text: string, options?: { plan?: boolean }) {
     const trimmed = text.trim();
-    const approvalPending = activitiesRef.current.some((item) => item.state === "approval");
-    if (!trimmed || streaming || approvalPending) return;
+    const approvalPending = activitiesRef.current.some(
+      (item) => item.state === "approval" || item.state === "ask" || item.state === "plan",
+    );
+    if (!trimmed || streaming || resumingRef.current || approvalPending) return;
     agentLoadRequest.current += 1;
     setAlert(null);
     const controller = new AbortController();
@@ -493,6 +504,7 @@ export function Workspace({
           message: trimmed,
           conversationId: conversationId ?? undefined,
           agentId: activeAgentId,
+          ...(options?.plan ? { plan: true } : {}),
         }),
         signal: controller.signal,
       });
@@ -568,7 +580,6 @@ export function Workspace({
                 ...described,
               },
             ]);
-            setSelectedToolId(id);
           } else if (event.event === "tool_args") {
             const id = String(payload.id ?? "");
             const raw = String(payload.arguments ?? "");
@@ -576,6 +587,54 @@ export function Workspace({
               prev.map((item) => {
                 if (item.id !== id) return item;
                 return { ...item, arguments: raw, ...describeTool(item.name, raw) };
+              }),
+            );
+          } else if (event.event === "plan_required" || event.event === "plan_progress") {
+            const id = String(payload.id ?? "");
+            const messageId = String(payload.assistantMessageId ?? "");
+            if (messageId) bindAssistant(messageId);
+            const steps = Array.isArray(payload.steps) ? payload.steps : [];
+            const raw =
+              typeof payload.arguments === "string" ? payload.arguments : JSON.stringify({ steps });
+            const described = describeTool("propose_plan", raw);
+            const status = (
+              event.event === "plan_required" ? "plan" : String(payload.status ?? "running")
+            ) as ToolCallStatus;
+            if (!id) continue;
+            setActivities((prev) => {
+              const existing = prev.find((item) => item.id === id);
+              const next = {
+                id,
+                messageId: messageId || existing?.messageId || "",
+                name: "propose_plan",
+                arguments: raw,
+                output: existing?.output ?? "",
+                preview: existing?.preview ?? "",
+                state: status,
+                ...described,
+              };
+              return [...prev.filter((item) => item.id !== id), next];
+            });
+            if (status !== "plan") {
+              releaseDecision(decidingRef, id);
+              setDecidingId((current) => (current === id ? null : current));
+            }
+          } else if (event.event === "ask_user") {
+            const id = String(payload.id ?? "");
+            const raw = String(payload.arguments ?? "");
+            const question = String(payload.question ?? "");
+            setActivities((prev) =>
+              prev.map((item) => {
+                if (item.id !== id) return item;
+                const described = describeTool(item.name, raw || item.arguments);
+                return {
+                  ...item,
+                  ...described,
+                  state: "ask",
+                  arguments: raw || item.arguments,
+                  summary: question || described.summary,
+                  title: question || described.title,
+                };
               }),
             );
           } else if (event.event === "approval_required") {
@@ -595,7 +654,6 @@ export function Workspace({
                 };
               }),
             );
-            setSelectedToolId(id);
           } else if (event.event === "tool_status") {
             const id = String(payload.id ?? "");
             const status = String(payload.status ?? "") as ToolCallStatus;
@@ -661,6 +719,8 @@ export function Workspace({
   }
 
   async function decide(id: string, decision: "approve" | "deny") {
+    const live = abortRef.current !== null;
+    let saved = false;
     try {
       const outcome = await settleDecision(decidingRef, id, async () => {
         setDecidingId(id);
@@ -670,6 +730,7 @@ export function Workspace({
           body: JSON.stringify({ id, decision }),
         });
         if (response.ok) {
+          saved = true;
           setActivities((prev) =>
             prev.map((item) =>
               item.id === id
@@ -695,27 +756,216 @@ export function Workspace({
       if (outcome === "released") {
         setDecidingId((current) => (current === id ? null : current));
       }
+      const conversationId = activeIdRef.current;
+      if (saved && !live && conversationId) await watchResume(conversationId, id);
     } catch {
       setDecidingId((current) => (current === id ? null : current));
     }
   }
 
+  async function decidePlan(
+    id: string,
+    action:
+      { type: "approve"; steps?: unknown } | { type: "edit"; steps: unknown } | { type: "cancel" },
+  ) {
+    const live = abortRef.current !== null;
+    let saved = false;
+    try {
+      const outcome = await settleDecision(decidingRef, id, async () => {
+        setDecidingId(id);
+        const response = await fetch("/api/tools/plans", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id,
+            decision: action.type === "cancel" ? "cancel" : action.type,
+            ...("steps" in action && action.steps ? { steps: action.steps } : {}),
+          }),
+        });
+        if (response.ok) {
+          saved = action.type !== "edit";
+          const body = (await response.json().catch(() => null)) as { steps?: unknown } | null;
+          if (action.type === "edit" || (action.type === "approve" && body?.steps)) {
+            const raw = JSON.stringify({
+              steps: body?.steps ?? ("steps" in action ? action.steps : []),
+            });
+            const described = describeTool("propose_plan", raw);
+            setActivities((prev) =>
+              prev.map((item) =>
+                item.id === id
+                  ? {
+                      ...item,
+                      ...described,
+                      arguments: raw,
+                      state: action.type === "approve" ? "running" : "plan",
+                    }
+                  : item,
+              ),
+            );
+          } else if (action.type === "approve") {
+            setActivities((prev) =>
+              prev.map((item) => (item.id === id ? { ...item, state: "running" } : item)),
+            );
+          } else {
+            setActivities((prev) =>
+              prev.map((item) =>
+                item.id === id
+                  ? { ...item, state: "denied", output: "Plan cancelled. Nothing ran." }
+                  : item,
+              ),
+            );
+          }
+          return true;
+        }
+        const activity = activitiesRef.current.find((item) => item.id === id);
+        if (!activity || activity.state === "plan") {
+          const body = (await response.json().catch(() => null)) as { error?: string } | null;
+          setAlert({
+            message:
+              body?.error ??
+              (response.status === 404
+                ? "That plan expired. Send the request again."
+                : "Could not save the plan"),
+            kind: "workspace",
+            ownerId: activeIdRef.current,
+          });
+        }
+        return false;
+      });
+      if (outcome === "released") {
+        setDecidingId((current) => (current === id ? null : current));
+      }
+      const conversationId = activeIdRef.current;
+      if (saved && !live && conversationId) await watchPlan(conversationId, id);
+    } catch {
+      setDecidingId((current) => (current === id ? null : current));
+    }
+  }
+
+  async function watchPlan(conversationId: string, toolId: string) {
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      await wait(200);
+      if (activeIdRef.current !== conversationId) return;
+      const response = await fetch(`/api/conversations/${conversationId}`);
+      if (!response.ok) continue;
+      const data = (await response.json()) as { conversation: Conversation; messages: Message[] };
+      if (activeIdRef.current !== conversationId) return;
+      setMessages(data.messages);
+      const next = activitiesFromMessages(data.messages);
+      setActivities(next);
+      const tool = next.find((item) => item.id === toolId);
+      if (!tool || (tool.state !== "plan" && tool.state !== "running")) return;
+    }
+  }
+
+  async function answer(id: string, text: string) {
+    const live = abortRef.current !== null;
+    let saved = false;
+    try {
+      const outcome = await settleDecision(decidingRef, id, async () => {
+        setDecidingId(id);
+        const response = await fetch("/api/tools/asks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id, answer: text }),
+        });
+        if (response.ok) {
+          saved = true;
+          setActivities((prev) =>
+            prev.map((item) => (item.id === id ? { ...item, state: "running" } : item)),
+          );
+          return true;
+        }
+        const activity = activitiesRef.current.find((item) => item.id === id);
+        if (!activity || activity.state === "ask") {
+          const body = (await response.json().catch(() => null)) as { error?: string } | null;
+          setAlert({
+            message:
+              body?.error ??
+              (response.status === 404
+                ? "That question expired. Send the request again."
+                : "Could not save the answer"),
+            kind: "workspace",
+            ownerId: activeIdRef.current,
+          });
+        }
+        return false;
+      });
+      if (outcome === "released") {
+        setDecidingId((current) => (current === id ? null : current));
+      }
+      const conversationId = activeIdRef.current;
+      if (saved && !live && conversationId) await watchResume(conversationId, id);
+    } catch {
+      setDecidingId((current) => (current === id ? null : current));
+    }
+  }
+
+  /**
+   * Follow a turn that continues on the server after a decision. Keep the
+   * composer locked and poll until the turn ends or pauses for the person again.
+   */
+  async function watchResume(conversationId: string, toolId: string) {
+    resumingRef.current = true;
+    setResuming(true);
+    try {
+      for (let attempt = 0; attempt < RESUME_POLL_ATTEMPTS; attempt += 1) {
+        const response = await fetch(`/api/conversations/${conversationId}`);
+        if (activeIdRef.current !== conversationId) return;
+        if (response.ok) {
+          const data = (await response.json()) as {
+            conversation: Conversation;
+            messages: Message[];
+          };
+          if (activeIdRef.current !== conversationId) return;
+          setMessages(data.messages);
+          setActivities(activitiesFromMessages(data.messages));
+          if (resumeProgress(data.messages, toolId) !== "running") return;
+        }
+        await wait(RESUME_POLL_MS);
+      }
+    } finally {
+      resumingRef.current = false;
+      setResuming(false);
+    }
+  }
+
   function stopTurn() {
-    const pending = activitiesRef.current.filter((activity) => activity.state === "approval");
+    const pending = activitiesRef.current.filter(
+      (activity) =>
+        activity.state === "approval" || activity.state === "ask" || activity.state === "plan",
+    );
     if (pending.length > 0) setActivities((current) => activitiesAfterStop(current));
     abortRef.current?.abort();
     stopDecision(decidingRef);
     setDecidingId(null);
     for (const activity of pending) {
-      void fetch("/api/tools/approvals", {
+      const path =
+        activity.state === "ask"
+          ? "/api/tools/asks"
+          : activity.state === "plan"
+            ? "/api/tools/plans"
+            : "/api/tools/approvals";
+      void fetch(path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: activity.id, decision: "stop" }),
+        body: JSON.stringify({
+          id: activity.id,
+          decision: activity.state === "plan" ? "cancel" : "stop",
+        }),
       });
     }
   }
 
   const computerStatus = computerReady ? (computer ? "ready" : "error") : "loading";
+  const computerDocked = computerOpen && !computerPopped;
+  function chooseComputerTab(tab: ComputerContentTab) {
+    setPaneWidth((current) => widthForContentTab(current, tab));
+  }
+  function hideComputer() {
+    setComputerPopped(false);
+    setComputerOpen(false);
+  }
   const speakingId = active?.agentId ?? activeAgentId;
   useEffect(() => {
     if (computerAgentRef.current === speakingId) return;
@@ -725,6 +975,8 @@ export function Workspace({
   const speaking = agents.find((agent) => agent.id === speakingId) ?? null;
   const spriteColor = spriteColorForAgent(speaking);
   const spriteName = speaking?.name ?? "Mockbot";
+  const awaitingAsk = activities.some((activity) => activity.state === "ask");
+  const awaitingPlan = activities.some((activity) => activity.state === "plan");
   const awaitingApproval = activities.some((activity) => activity.state === "approval");
   const error = alertMessageForView(alert, activeId);
   const sprite = useRunSprite({
@@ -747,15 +999,15 @@ export function Workspace({
 
   return (
     <div
-      className={
-        computerOpen
-          ? sidebarCollapsed
-            ? "app with-computer sidebar-collapsed"
-            : "app with-computer"
-          : sidebarCollapsed
-            ? "app sidebar-collapsed"
-            : "app"
-      }
+      className={[
+        "app",
+        computerDocked ? "with-computer" : "",
+        computerPopped ? "computer-popped" : "",
+        sidebarCollapsed ? "sidebar-collapsed" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      style={{ "--rightpane": `${paneWidth}px` } as CSSProperties}
     >
       <Sidebar
         agents={agents}
@@ -866,7 +1118,8 @@ export function Workspace({
             activities={activities}
             decidingId={decidingId}
             onDecide={(id, decision) => void decide(id, decision)}
-            onSelectTool={setSelectedToolId}
+            onAnswer={(id, text) => void answer(id, text)}
+            onPlan={(id, action) => void decidePlan(id, action)}
             onOpenTrace={showTrace}
             agentName={speaking?.name ?? "Mockbot"}
             reconnectFor={(activity) => {
@@ -890,12 +1143,21 @@ export function Workspace({
           ) : null}
           <Composer
             streaming={streaming}
-            awaitingApproval={awaitingApproval}
+            awaitingApproval={awaitingApproval || awaitingAsk || awaitingPlan || resuming}
+            busyHint={
+              awaitingPlan
+                ? "Review the plan"
+                : awaitingAsk
+                  ? "Waiting for an answer"
+                  : resuming
+                    ? "Finishing the reply"
+                    : undefined
+            }
             placeholder={speaking ? `Message ${speaking.name}` : "Message Mockbot"}
             value={composerDraft}
             onValueChange={setComposerDraft}
             onAddConnector={() => openConnectors("add")}
-            onSend={(text) => void send(text)}
+            onSend={(text, options) => void send(text, options)}
             onStop={stopTurn}
           />
         </div>
@@ -911,11 +1173,12 @@ export function Workspace({
             agentId={speakingId}
             onMemoriesChanged={refreshMemories}
             activities={activities}
-            selectedId={selectedToolId}
-            onSelect={setSelectedToolId}
             snapshot={computer}
             status={computerStatus}
+            unavailableReason={computerError}
             messages={messages}
+            onPop={() => setComputerPopped(true)}
+            onComputerTab={chooseComputerTab}
           />
         </div>
       </main>
@@ -923,17 +1186,21 @@ export function Workspace({
         <SidePane
           tab={sideTab}
           onTab={setSideTab}
-          onHide={() => setComputerOpen(false)}
+          onHide={hideComputer}
           memories={memories}
           memoryError={memoryError}
           agentId={speakingId}
           onMemoriesChanged={refreshMemories}
           activities={activities}
-          selectedId={selectedToolId}
-          onSelect={setSelectedToolId}
           snapshot={computer}
           status={computerStatus}
+          unavailableReason={computerError}
           messages={messages}
+          popped={computerPopped}
+          onPop={() => setComputerPopped((open) => !open)}
+          paneWidth={paneWidth}
+          onPaneWidth={setPaneWidth}
+          onComputerTab={chooseComputerTab}
         />
       ) : null}
       <ConnectorsPanel

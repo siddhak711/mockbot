@@ -193,7 +193,10 @@ export function spriteStateForRun(run: SpriteRun): SpriteState {
   const scoped = activitiesForRun(run);
   const toolFailed = scoped.some((activity) => activity.state === "error");
   const toolRunning = scoped.some((activity) => activity.state === "running");
-  const approvalPending = scoped.some((activity) => activity.state === "approval");
+  const approvalPending = scoped.some(
+    (activity) =>
+      activity.state === "approval" || activity.state === "ask" || activity.state === "plan",
+  );
 
   if (run.turnError || toolFailed) return "error";
   if (run.streaming && toolRunning) return "working";

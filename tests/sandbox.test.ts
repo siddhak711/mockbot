@@ -103,8 +103,7 @@ describe("sandbox", { concurrent: false }, () => {
   });
 
   it("creates a file, reads it back, and runs a command that prints it", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const supervisor = await openComputer({ env: {}, dataDir: "memory://" });
+    const supervisor = await openComputer({ env: { MOCK_SANDBOX: "1" }, dataDir: "memory://" });
     const write = await supervisor.invoke("agent", "write", {
       path: "hello.txt",
       content: "hello from the sandbox",
@@ -117,10 +116,6 @@ describe("sandbox", { concurrent: false }, () => {
     expect(read.result.content).toContain("hello from the sandbox");
     expect(read.result.content.startsWith('{"provider":"mock"}\n')).toBe(true);
     expect(exec.result.content.startsWith('{"provider":"mock"}\n')).toBe(true);
-    expect(warn).toHaveBeenCalledWith(
-      "sandbox is using a mock implementation because DAYTONA_API_KEY is not set.",
-    );
-    warn.mockRestore();
     expect(exec.result.isError).toBeUndefined();
     expect(exec.run.command).toBe("cat hello.txt");
     expect(exec.run.stdout).toBe("hello from the sandbox");
@@ -143,7 +138,7 @@ describe("sandbox", { concurrent: false }, () => {
     process.env.HOST_ENV_CANARY = canary;
 
     const supervisor = await openComputer({
-      env: { HOST_ENV_CANARY: canary },
+      env: { MOCK_SANDBOX: "1", HOST_ENV_CANARY: canary },
       dataDir: "memory://",
     });
     try {
@@ -190,7 +185,7 @@ describe("sandbox", { concurrent: false }, () => {
 
   it("kills a command that exceeds its time limit and reports a failed tool result", async () => {
     const supervisor = await openComputer({
-      env: { SANDBOX_COMMAND_TIMEOUT_MS: "40" },
+      env: { MOCK_SANDBOX: "1", SANDBOX_COMMAND_TIMEOUT_MS: "40" },
       dataDir: "memory://",
     });
     const started = Date.now();
@@ -709,7 +704,7 @@ describe("sandbox", { concurrent: false }, () => {
   });
 
   it("streams the sandbox tools through chat and the computer API", async () => {
-    const supervisor = await openComputer({ env: {}, dataDir: "memory://" });
+    const supervisor = await openComputer({ env: { MOCK_SANDBOX: "1" }, dataDir: "memory://" });
     const store = await ConversationStore.open();
     setAppContext({
       store,
@@ -770,7 +765,7 @@ describe("sandbox", { concurrent: false }, () => {
   });
 
   it("leaves an ordinary mock reply alone", async () => {
-    const supervisor = await openComputer({ env: {}, dataDir: "memory://" });
+    const supervisor = await openComputer({ env: { MOCK_SANDBOX: "1" }, dataDir: "memory://" });
     const store = await ConversationStore.open();
     const provider = new SandboxTurnProvider({
       inner: new MockProvider({ delayMs: 0, chunkSize: 80, reply: () => "Still a mock reply" }),

@@ -1,5 +1,5 @@
 import { isHostedRuntime, type ProcessEnv } from "../db/open";
-import { warnMockFallback } from "../tools/mock-fallback";
+import { mockEnabled } from "../mock-gate";
 import {
   createSdkFleet,
   DaytonaRuntime,
@@ -38,9 +38,11 @@ export async function openComputer(options: {
   const store = await openSandboxStore(env, options.dataDir);
   try {
     const settings = readDaytonaSettings(env);
+    const reason = sandboxUnavailableReason(env);
+    if (reason) throw new Error(reason);
     const runtime: SandboxRuntime = settings
       ? new DaytonaRuntime(options.fleet ?? (await createSdkFleet(env)), store, settings.apiKey)
-      : mockSandboxRuntime(store);
+      : new MockSandboxRuntime(store);
     return new ComputerSupervisor(store, runtime, commandTimeoutMs(env));
   } catch (error) {
     await store.close();
@@ -48,7 +50,18 @@ export async function openComputer(options: {
   }
 }
 
-function mockSandboxRuntime(store: SandboxStore): MockSandboxRuntime {
-  warnMockFallback("sandbox", "DAYTONA_API_KEY");
-  return new MockSandboxRuntime(store);
+export const SANDBOX_NOT_CONFIGURED =
+  "The sandbox computer is not configured: DAYTONA_API_KEY is not set. Set DAYTONA_API_KEY, or set MOCK_SANDBOX=1 to use the labeled mock computer outside production.";
+
+/**
+ * Why the sandbox cannot open, or null when it can. Daytona needs its key; the
+ * mock computer needs MOCK_SANDBOX=1 and refuses production builds.
+ */
+export function sandboxUnavailableReason(env: ProcessEnv): string | null {
+  if (readDaytonaSettings(env)) return null;
+  try {
+    return mockEnabled(env, "SANDBOX") ? null : SANDBOX_NOT_CONFIGURED;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
 }

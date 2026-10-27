@@ -124,36 +124,34 @@ export function withAgentMock(provider: LlmProvider): LlmProvider {
   return {
     id: "mock",
     model: provider.model,
-    async *stream(
-      messages: LlmMessage[],
-      input?: Parameters<LlmProvider["stream"]>[1],
-    ): AsyncIterable<LlmStreamEvent> {
+    stream(messages: LlmMessage[], input?: Parameters<LlmProvider["stream"]>[1]) {
       const { signal } = streamOptions(input);
       const script = scriptLiveTurn(messages);
-      if (!script) {
-        yield* provider.stream(messages, input);
-        return;
+      if (!script) return provider.stream(messages, input);
+      const turn = script;
+      async function* scripted(): AsyncIterable<LlmStreamEvent> {
+        if (signal?.aborted) return;
+        yield { type: "start", role: "assistant" };
+        yield { type: "reasoning", text: turn.reasoning };
+        for (let index = 0; index < turn.tools.length; index += 1) {
+          const tool = turn.tools[index];
+          if (!tool) continue;
+          yield {
+            type: "tool_call",
+            index,
+            id: tool.id,
+            name: tool.name,
+            arguments: tool.arguments,
+          };
+        }
+        if (turn.reply !== undefined) {
+          yield { type: "text", text: turn.reply };
+          yield { type: "end", finishReason: "stop" };
+          return;
+        }
+        yield { type: "end", finishReason: "tool_calls" };
       }
-      if (signal?.aborted) return;
-      yield { type: "start", role: "assistant" };
-      yield { type: "reasoning", text: script.reasoning };
-      for (let index = 0; index < script.tools.length; index += 1) {
-        const tool = script.tools[index];
-        if (!tool) continue;
-        yield {
-          type: "tool_call",
-          index,
-          id: tool.id,
-          name: tool.name,
-          arguments: tool.arguments,
-        };
-      }
-      if (script.reply !== undefined) {
-        yield { type: "text", text: script.reply };
-        yield { type: "end", finishReason: "stop" };
-        return;
-      }
-      yield { type: "end", finishReason: "tool_calls" };
+      return scripted();
     },
   };
 }

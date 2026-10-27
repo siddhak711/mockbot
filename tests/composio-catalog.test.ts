@@ -65,7 +65,7 @@ it("connects Notion through Composio and executes the signed-in user's tools", a
   setAppContext({
     store,
     provider: new MockProvider({ delayMs: 0 }),
-    tools: createDefaultTools({}),
+    tools: createDefaultTools(process.env),
   });
 
   const start = await startOAuth(jsonRequest({ catalogId: "notion" }));
@@ -447,7 +447,7 @@ it("rejects a failed Composio sign-in without storing a connection", async () =>
   setAppContext({
     store,
     provider: new MockProvider({ delayMs: 0 }),
-    tools: createDefaultTools({}),
+    tools: createDefaultTools(process.env),
   });
 
   const start = await startOAuth(jsonRequest({ catalogId: "github" }));
@@ -494,7 +494,7 @@ async function openComposio(): Promise<ConversationStore> {
   setAppContext({
     store,
     provider: new MockProvider({ delayMs: 0 }),
-    tools: createDefaultTools({}),
+    tools: createDefaultTools(process.env),
   });
   return store;
 }

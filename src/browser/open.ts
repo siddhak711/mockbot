@@ -25,7 +25,7 @@ export function sandboxBrowseTool(
   return browseTool({
     actionTimeoutMs: browseTimeoutMs(env),
     unavailable:
-      "browse is unavailable: its daemon runs inside the Daytona sandbox, and DAYTONA_API_KEY is not set, so this server uses the mock computer.",
+      "browse is unavailable: its daemon runs inside the Daytona sandbox, and this server is using the labeled mock computer (MOCK_SANDBOX=1).",
     driver(context) {
       const owner = sandboxOwnerId({ agentId: context.agentId ?? agentId, userId: context.userId });
       const existing = browsers.get(owner);

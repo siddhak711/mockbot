@@ -26,7 +26,7 @@ it("rejects a forged session cookie on catalog OAuth start and callback", async 
   setAppContext({
     store,
     provider: new MockProvider({ delayMs: 0 }),
-    tools: createDefaultTools({}),
+    tools: createDefaultTools(process.env),
   });
   const cookie = "authjs.session-token=forged-session";
   try {
@@ -142,7 +142,7 @@ it("exchanges a Notion code, stores the real token, and rejects a mismatched sta
   setAppContext({
     store,
     provider: new MockProvider({ delayMs: 0 }),
-    tools: createDefaultTools({}),
+    tools: createDefaultTools(process.env),
   });
   const original = globalThis.fetch;
   globalThis.fetch = (async (
@@ -231,7 +231,7 @@ it("escapes a provider account label so it cannot close the callback script", as
   setAppContext({
     store,
     provider: new MockProvider({ delayMs: 0 }),
-    tools: createDefaultTools({}),
+    tools: createDefaultTools(process.env),
   });
   const label = "</script><script>alert(1)</script>";
   const original = globalThis.fetch;
@@ -281,7 +281,7 @@ it("exchanges a GitHub code with PKCE and points the connector at the hosted MCP
   setAppContext({
     store,
     provider: new MockProvider({ delayMs: 0 }),
-    tools: createDefaultTools({}),
+    tools: createDefaultTools(process.env),
   });
   const original = globalThis.fetch;
   let verifier = "";
@@ -354,7 +354,7 @@ it("keeps enable and approval choices when a catalog connector reconnects", asyn
   setAppContext({
     store,
     provider: new MockProvider({ delayMs: 0 }),
-    tools: createDefaultTools({}),
+    tools: createDefaultTools(process.env),
   });
   const original = globalThis.fetch;
   globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
@@ -435,7 +435,7 @@ it("keeps saved tool settings when reconnect cannot list tools", async () => {
   setAppContext({
     store,
     provider: new MockProvider({ delayMs: 0 }),
-    tools: createDefaultTools({}),
+    tools: createDefaultTools(process.env),
   });
   const original = globalThis.fetch;
   let verifier = "";
@@ -555,7 +555,7 @@ it("calls the Notion API with the stored token instead of echoing arguments", as
   setAppContext({
     store,
     provider: new MockProvider({ delayMs: 0 }),
-    tools: createDefaultTools({}),
+    tools: createDefaultTools(process.env),
   });
   const seen: { authorization?: string; body?: string }[] = [];
   const server = await listen((req, res) => {
@@ -612,7 +612,7 @@ it("refreshes before a Notion call when the access token is expired", async () =
   setAppContext({
     store,
     provider: new MockProvider({ delayMs: 0 }),
-    tools: createDefaultTools({}),
+    tools: createDefaultTools(process.env),
   });
   const seen: string[] = [];
   const server = await listen((req, res) => {
@@ -678,7 +678,7 @@ it("refreshes once after Notion returns 401 and retries the tool", async () => {
   setAppContext({
     store,
     provider: new MockProvider({ delayMs: 0 }),
-    tools: createDefaultTools({}),
+    tools: createDefaultTools(process.env),
   });
   const seen: string[] = [];
   const server = await listen((req, res) => {
@@ -747,7 +747,7 @@ it("shares one refresh when two Notion calls get 401 at the same time", async ()
   setAppContext({
     store,
     provider: new MockProvider({ delayMs: 0 }),
-    tools: createDefaultTools({}),
+    tools: createDefaultTools(process.env),
   });
   let unauthorized = 0;
   const server = await listen((req, res) => {
@@ -848,7 +848,7 @@ it("routes a GitHub catalog connector through the MCP client", async () => {
   setAppContext({
     store,
     provider: new MockProvider({ delayMs: 0 }),
-    tools: createDefaultTools({}),
+    tools: createDefaultTools(process.env),
   });
   try {
     await store.createConnector({
@@ -886,7 +886,7 @@ it("saves a tool list that recovers after an empty settings map", async () => {
   setAppContext({
     store,
     provider: new MockProvider({ delayMs: 0 }),
-    tools: createDefaultTools({}),
+    tools: createDefaultTools(process.env),
   });
   try {
     await store.createConnector({
@@ -923,7 +923,7 @@ it("does not execute a legacy simulated catalog connector", async () => {
   setAppContext({
     store,
     provider: new MockProvider({ delayMs: 0 }),
-    tools: createDefaultTools({}),
+    tools: createDefaultTools(process.env),
   });
   await store.createConnector({
     name: "Notion",
@@ -953,7 +953,7 @@ it("does not mint a catalog connector from the old catalog POST", async () => {
   setAppContext({
     store,
     provider: new MockProvider({ delayMs: 0 }),
-    tools: createDefaultTools({}),
+    tools: createDefaultTools(process.env),
   });
   const response = await createConnector(
     new Request("http://localhost/api/connectors", {

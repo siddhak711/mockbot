@@ -8,7 +8,7 @@ export type Conversation = {
   updatedAt: string;
 };
 
-export type ToolCallStatus = "running" | "approval" | "done" | "denied" | "error";
+export type ToolCallStatus = "running" | "approval" | "ask" | "plan" | "done" | "denied" | "error";
 
 export type StoredToolCall = {
   id: string;
@@ -49,6 +49,12 @@ export type MessageTrace = {
   prefill?: string;
   /** Production order. Absent on traces stored before ordered segments existed. */
   segments?: TraceSegment[];
+  /** Model tier chosen for this turn. Absent on traces stored before routing. */
+  route?: {
+    tier: "cheap" | "strong";
+    reason: "chat" | "tool" | "plan" | "code" | "retry";
+    model: string;
+  };
 };
 
 export type Message = {
@@ -72,9 +78,14 @@ export type LlmMessage = {
   content: string;
   tool_calls?: LlmToolCall[];
   tool_call_id?: string;
+  /**
+   * Live tool results set this when the tool failed. It is not sent to the
+   * provider. The model router uses it to escalate the next round.
+   */
+  failed?: boolean;
 };
 
-export type ProviderId = "mock" | "openai";
+export type ProviderId = "mock" | "openai" | "unconfigured";
 
 export type MemoryKind = "profile" | "fact";
 
@@ -114,6 +125,12 @@ export type ModelUsage = {
 export type LlmStreamEvent =
   | { type: "start"; role: "assistant" }
   | { type: "reasoning"; text: string }
+  | {
+      type: "route";
+      tier: "cheap" | "strong";
+      reason: "chat" | "tool" | "plan" | "code" | "retry";
+      model: string;
+    }
   | { type: "tool_call"; index: number; id?: string; name?: string; arguments?: string }
   | { type: "tool_result"; id: string; name: string; content: string }
   | { type: "text"; text: string }

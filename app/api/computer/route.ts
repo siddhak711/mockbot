@@ -13,8 +13,8 @@ const TOOLS = new Set<ComputerToolName>(["list", "read", "write", "exec"]);
 export async function GET(request: Request): Promise<Response> {
   const actor = await requireApiUser(request);
   if (!actor.ok) return actor.response;
-  const { sandbox } = await getAppContext();
-  if (!sandbox) return Response.json({ error: "Sandbox is not available" }, { status: 503 });
+  const { sandbox, sandboxError } = await getAppContext();
+  if (!sandbox) return unavailable(sandboxError);
   const requested = new URL(request.url).searchParams.get("agentId") ?? undefined;
   const agentId = normalizeAgentId(requested ?? LEAD_AGENT_ID);
   if (!agentId) return Response.json({ error: "Unknown agent" }, { status: 400 });
@@ -24,8 +24,8 @@ export async function GET(request: Request): Promise<Response> {
 export async function POST(request: Request): Promise<Response> {
   const actor = await requireApiUser(request);
   if (!actor.ok) return actor.response;
-  const { sandbox } = await getAppContext();
-  if (!sandbox) return Response.json({ error: "Sandbox is not available" }, { status: 503 });
+  const { sandbox, sandboxError } = await getAppContext();
+  if (!sandbox) return unavailable(sandboxError);
   let body: unknown;
   try {
     body = await request.json();
@@ -70,4 +70,15 @@ export async function POST(request: Request): Promise<Response> {
 /** The same (user, agent) sandbox the chat tools use for this person. */
 function ownerFor(actor: { scoped: boolean; user: { id: string } }, agentId: string): string {
   return sandboxOwnerId({ agentId, userId: actor.scoped ? actor.user.id : undefined });
+}
+
+/** 503 for the Computer pane. sandboxError names the missing setting when there is one. */
+function unavailable(sandboxError: string | undefined): Response {
+  return Response.json(
+    {
+      error: sandboxError ?? "Sandbox is not available",
+      ...(sandboxError ? { sandboxError } : {}),
+    },
+    { status: 503 },
+  );
 }
