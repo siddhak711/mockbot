@@ -74,6 +74,11 @@ it("redirects anonymous app requests to login and leaves auth routes public", as
 
   expect(proxy(request("/login")).headers.get("location")).toBeNull();
   expect(proxy(request("/login?error=Configuration")).headers.get("location")).toBeNull();
+  for (const path of ["/favicon.ico", "/icon", "/icon?v=1", "/apple-icon"]) {
+    const icon = proxy(request(path));
+    expect(icon.status).toBe(200);
+    expect(icon.headers.get("location")).toBeNull();
+  }
   expect(proxy(request("/api/auth/session")).status).toBe(200);
   expect(proxy(request("/api/auth/password")).status).toBe(200);
   expect(proxy(request("/api/auth/callback/google")).status).toBe(200);

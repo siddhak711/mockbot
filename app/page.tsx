@@ -21,7 +21,6 @@ export async function generateMetadata(): Promise<Metadata> {
       title: "mockbot",
       description: LANDING_DESCRIPTION,
     },
-    icons: { icon: "/landing/icon.svg" },
   };
 }
 
