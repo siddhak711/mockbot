@@ -190,6 +190,12 @@ it("keeps text colors at AA 4.5:1 and keeps faint, accent, and line-strong off t
     ).toBeGreaterThanOrEqual(4.5);
   }
 
+  const selected = parseColor(light.selected ?? "");
+  expect(
+    contrast(paint(light.link ?? "", selected), selected),
+    "link on selected",
+  ).toBeGreaterThanOrEqual(4.6);
+
   const textUses: string[] = [];
   for (const match of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
     const selector = (match[1] ?? "").replace(/\s+/g, " ").trim();
@@ -199,6 +205,37 @@ it("keeps text colors at AA 4.5:1 and keeps faint, accent, and line-strong off t
     }
   }
   expect(textUses).toEqual([".tool-mark -> faint", ".try-chip svg -> accent"]);
+});
+
+it("keeps landing text tokens at AA 4.5:1 on page, band, and card surfaces", () => {
+  const css = readFileSync(new URL("../components/landing/landing.css", import.meta.url), "utf8");
+  const theme = variables(css, ".daylight {");
+  const surfaces = {
+    page: theme.bg ?? "",
+    band: theme.bg2 ?? "",
+    card: "#ffffff",
+  };
+  for (const token of ["ink", "t2", "t3"] as const) {
+    for (const [name, value] of Object.entries(surfaces)) {
+      const background = parseColor(value);
+      expect(
+        contrast(paint(theme[token] ?? "", background), background),
+        `${token} on ${name}`,
+      ).toBeGreaterThanOrEqual(4.5);
+    }
+  }
+
+  for (const selector of [
+    ".daylight .msg",
+    ".daylight .dayhead",
+    ".daylight .ev .t",
+    ".daylight .ev p",
+    ".daylight form.wl input::placeholder",
+  ]) {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const block = css.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`));
+    expect(block?.[1] ?? "", selector).toMatch(/color:\s*var\(--t[23]\)/);
+  }
 });
 
 it("detects search, invalid input, oauth, api keys, and unreachable servers", async () => {
