@@ -101,6 +101,25 @@ const RULES: Array<{ turn: RouterTurn; tier: "cheap" | "strong"; reason: string 
   },
 ];
 
+it("routes an inline-code question cheap and an explicit run request strong", () => {
+  expect(pickModel({ text: "what does `npm ci` do?" })).toMatchObject({
+    tier: "cheap",
+    reason: "chat",
+  });
+  expect(pickModel({ text: "what does `npm run build` do?" })).toMatchObject({
+    tier: "cheap",
+    reason: "chat",
+  });
+  expect(pickModel({ text: "run npm ci" })).toMatchObject({
+    tier: "strong",
+    reason: "code",
+  });
+  expect(pickModel({ text: "run `npm ci`" })).toMatchObject({
+    tier: "strong",
+    reason: "code",
+  });
+});
+
 it("routes each rule to the cheap or strong open-weights tier", () => {
   const config = loadRouterConfig({ LLM_BASE_URL: "https://openrouter.ai/api/v1" });
   expect(config.cheap.id).toBe(DEFAULT_ROUTER_CONFIG.cheap.id);

@@ -466,12 +466,34 @@ function toolsForTurn(turn: RouterTurn): RouterToolCall[] {
   return tools;
 }
 
+const RUN_REQUEST = /\b(?:run|exec|execute)\b/i;
+
 function impliedTools(text: string): RouterToolCall[] {
   const named = NAMED_CALL.exec(text.trim());
   if (named?.[1]) return [{ name: named[1], arguments: named[2] }];
-  const computer = planComputerTurn(text);
-  if (!computer) return [];
-  return computer.map((action) => ({ name: action.name, arguments: JSON.stringify(action.args) }));
+  const computer = planComputerTurn(text) ?? [];
+  // planComputerTurn treats any backtick span as an exec. A mention such as
+  // "what does `npm ci` do?" is still chat. An exec counts only when the
+  // surrounding prose asks to run it.
+  const actions = computer.filter((action) => action.name !== "exec" || asksToRun(text));
+  if (!actions.some((action) => action.name === "exec") && asksToRun(text)) {
+    const command = runCommand(text);
+    if (command) actions.push({ name: "exec", args: { command } });
+  }
+  return actions.map((action) => ({ name: action.name, arguments: JSON.stringify(action.args) }));
+}
+
+function asksToRun(text: string): boolean {
+  return RUN_REQUEST.test(text.replace(/`[^`\n]*`/g, " "));
+}
+
+function runCommand(text: string): string | null {
+  const quoted = text.match(/`([^`\n]+)`/);
+  if (quoted?.[1]?.trim()) return quoted[1].trim();
+  const plain = text.replace(/`[^`\n]*`/g, " ").match(/\b(?:run|exec|execute)\s+(.+)$/i);
+  const command = plain?.[1]?.replace(/[.?!]+$/, "").trim();
+  if (!command || /^a command\b/i.test(command)) return null;
+  return command;
 }
 
 function isCode(text: string, tools: readonly RouterToolCall[]): boolean {
