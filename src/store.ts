@@ -820,4 +820,13 @@ export class ConversationStore {
     const row = result.rows[0];
     return row ? mapConnector(row) : null;
   }
+
+  /** Adds an email to the landing-page waitlist. Joining twice is a no-op. */
+  async joinWaitlist(email: string): Promise<{ created: boolean }> {
+    const result = await this.db.query<{ email: string }>(
+      `INSERT INTO waitlist (email) VALUES ($1) ON CONFLICT (email) DO NOTHING RETURNING email`,
+      [email],
+    );
+    return { created: result.rows.length > 0 };
+  }
 }

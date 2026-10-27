@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { SECURE_SESSION_COOKIE, SESSION_COOKIE } from "./src/auth/cookies";
 
-const PUBLIC_PATHS = new Set(["/", "/login"]);
+const PUBLIC_PATHS = new Set(["/", "/login", "/api/waitlist"]);
 
 function hasSessionCookie(request: NextRequest): boolean {
   return request.cookies.has(SESSION_COOKIE) || request.cookies.has(SECURE_SESSION_COOKIE);

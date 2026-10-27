@@ -527,4 +527,13 @@ $run_events_constraints$;
 DELETE FROM schema_migrations WHERE id = '007_run_events';
 `,
   },
+  {
+    id: "014_waitlist",
+    sql: `
+CREATE TABLE IF NOT EXISTS waitlist (
+  email TEXT PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+`,
+  },
 ];

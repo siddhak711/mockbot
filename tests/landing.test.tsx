@@ -1,12 +1,24 @@
 // @vitest-environment happy-dom
 import { readFileSync } from "node:fs";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { NextRequest } from "next/server";
 import { afterEach, expect, it, vi } from "vitest";
+import { POST as joinWaitlist } from "../app/api/waitlist/route";
 import { LandingPage } from "../components/landing/landing-page";
-import { waitlistMessage } from "../src/landing/waitlist";
+import { proxy } from "../proxy";
+import { resetAppContext, setAppContext } from "../src/context";
+import {
+  WAITLIST_FAILED,
+  WAITLIST_INVALID,
+  WAITLIST_PENDING,
+  normalizeWaitlistEmail,
+} from "../src/landing/waitlist";
+import { MockProvider } from "../src/llm";
+import { ConversationStore } from "../src/store";
 
-afterEach(() => {
+afterEach(async () => {
   cleanup();
+  await resetAppContext();
 });
 
 it("keeps the violet actually word, the example names, and placeholder legal links", () => {
@@ -33,29 +45,72 @@ it("keeps the violet actually word, the example names, and placeholder legal lin
   expect(fonts).toContain('url("/fonts/jetbrains-mono-500.woff2")');
 });
 
-it("treats the waitlist as a browser demo and does not call the network", () => {
-  const fetchSpy = vi.spyOn(globalThis, "fetch");
+it("posts the waitlist email and shows pending, success, and failure states", async () => {
+  let resolve: (response: Response) => void = () => {};
+  const fetchSpy = vi
+    .spyOn(globalThis, "fetch")
+    .mockImplementationOnce(() => new Promise<Response>((done) => (resolve = done)))
+    .mockRejectedValueOnce(new TypeError("Failed to fetch"));
   render(<LandingPage />);
 
-  const email = screen.getAllByLabelText("Email address")[0];
+  const email = screen.getAllByLabelText("Email address")[0] as HTMLInputElement;
   const form = email.closest("form");
   expect(form).toBeTruthy();
 
   fireEvent.change(email, { target: { value: "not-an-email" } });
   fireEvent.submit(form!);
-  expect(screen.getByText("That email looks incomplete. Check it and try again.")).toBeTruthy();
-
-  fireEvent.change(email, { target: { value: "ada@example.com" } });
-  fireEvent.submit(form!);
-  expect(
-    screen.getByText("You are on the list. We will write to ada@example.com when your spot opens."),
-  ).toBeTruthy();
+  expect(screen.getByText(WAITLIST_INVALID)).toBeTruthy();
   expect(fetchSpy).not.toHaveBeenCalled();
+
+  fireEvent.change(email, { target: { value: " Ada@Example.com " } });
+  fireEvent.submit(form!);
+  expect(screen.getByText(WAITLIST_PENDING)).toBeTruthy();
+  expect(email.disabled).toBe(true);
+  expect(fetchSpy).toHaveBeenCalledWith(
+    "/api/waitlist",
+    expect.objectContaining({ method: "POST", body: JSON.stringify({ email: "ada@example.com" }) }),
+  );
+  resolve(Response.json({ ok: true }));
+  await waitFor(() =>
+    expect(
+      screen.getByText(
+        "You are on the list. We will write to ada@example.com when your spot opens.",
+      ),
+    ).toBeTruthy(),
+  );
+  expect(email.disabled).toBe(false);
+
+  fireEvent.submit(form!);
+  await waitFor(() => expect(screen.getByText(WAITLIST_FAILED)).toBeTruthy());
+  expect(email.disabled).toBe(false);
   fetchSpy.mockRestore();
 });
 
-it("accepts a simple address and rejects a blank one", () => {
-  expect(waitlistMessage("ada@example.com").ok).toBe(true);
-  expect(waitlistMessage("").ok).toBe(false);
-  expect(waitlistMessage("ada@example").ok).toBe(false);
+it("normalizes a simple address and rejects a blank one", () => {
+  expect(normalizeWaitlistEmail(" Ada@Example.com ")).toBe("ada@example.com");
+  expect(normalizeWaitlistEmail("")).toBeNull();
+  expect(normalizeWaitlistEmail("ada@example")).toBeNull();
+  expect(normalizeWaitlistEmail(42)).toBeNull();
+});
+
+it("stores waitlist emails once, without a session", async () => {
+  const store = await ConversationStore.open();
+  setAppContext({ store, provider: new MockProvider({ delayMs: 0 }) });
+  const post = (body: unknown) =>
+    joinWaitlist(
+      new Request("http://localhost/api/waitlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    );
+
+  expect((await post({ email: "nope" })).status).toBe(400);
+  expect((await post({ email: "Ada@Example.com" })).status).toBe(200);
+  expect((await post({ email: "ada@example.com" })).status).toBe(200);
+  const rows = await store.connection.query<{ email: string }>("SELECT email FROM waitlist");
+  expect(rows.rows).toEqual([{ email: "ada@example.com" }]);
+  expect(await store.joinWaitlist("ada@example.com")).toEqual({ created: false });
+
+  expect(proxy(new NextRequest("http://localhost:3000/api/waitlist")).status).toBe(200);
 });
