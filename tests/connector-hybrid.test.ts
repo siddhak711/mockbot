@@ -130,34 +130,75 @@ it("classifies pasted input, catalog search, and tool risk", () => {
   expect(allOn.find((tool) => tool.name === "export_pdf")?.enabled).toBe(false);
 });
 
-it("keeps muted text and status colors at 4.5:1 in both themes", () => {
+it("keeps text colors at AA 4.5:1 and keeps faint, accent, and line-strong off text", () => {
   const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
+  const tokens = JSON.parse(
+    readFileSync(new URL("../docs/design/tokens.json", import.meta.url), "utf8"),
+  ) as { color: { light: Record<string, string>; dark: Record<string, string> } };
   const light = variables(css, ":root {");
   const dark = variables(css, ':root[data-theme="dark"]');
+  const systemDark = variables(css, ':root:not([data-theme="light"])');
+  const backgrounds = ["window", "sidebar", "surface", "selected", "hover"] as const;
+  const text = [
+    "ink",
+    "ink-2",
+    "muted",
+    "link",
+    "accent-text",
+    "success",
+    "danger",
+    "warn",
+  ] as const;
+
+  for (const [name, cssVars, tokenTheme] of [
+    ["light", light, tokens.color.light],
+    ["dark", dark, tokens.color.dark],
+  ] as const) {
+    for (const [token, value] of Object.entries(tokenTheme)) {
+      expect(normColor(cssVars[token] ?? ""), `${name} ${token}`).toBe(normColor(value));
+    }
+    expect(normColor(cssVars["danger-fill"] ?? ""), `${name} danger-fill`).toBe(
+      normColor(tokenTheme.danger ?? ""),
+    );
+  }
+  for (const token of [...Object.keys(tokens.color.dark), "danger-fill", "on-danger"]) {
+    expect(normColor(systemDark[token] ?? ""), token).toBe(normColor(dark[token] ?? ""));
+  }
+
   for (const theme of [light, dark]) {
-    const surface = parseColor(theme.surface);
-    const windowColor = parseColor(theme.window);
-    const hover = parseColor(theme.hover);
-    const ink = parseColor(theme.ink);
-    expect(contrast(paint(theme.muted, surface), surface)).toBeGreaterThanOrEqual(4.5);
-    expect(contrast(paint(theme.muted, windowColor), windowColor)).toBeGreaterThanOrEqual(4.5);
-    expect(contrast(paint(theme.faint, windowColor), windowColor)).toBeGreaterThanOrEqual(4.5);
-    expect(contrast(paint(theme["ink-2"], surface), surface)).toBeGreaterThanOrEqual(4.5);
-    expect(contrast(paint(theme["ink-2"], hover), hover)).toBeGreaterThanOrEqual(4.5);
-    expect(contrast(ink, windowColor)).toBeGreaterThanOrEqual(4.5);
-    expect(contrast(windowColor, ink)).toBeGreaterThanOrEqual(4.5);
-    expect(contrast(paint(theme.link, surface), surface)).toBeGreaterThanOrEqual(4.5);
-    expect(contrast(paint(theme.danger, surface), surface)).toBeGreaterThanOrEqual(4.5);
+    for (const foreground of text) {
+      for (const backgroundName of backgrounds) {
+        const background = parseColor(theme[backgroundName] ?? "");
+        expect(
+          contrast(paint(theme[foreground] ?? "", background), background),
+          `${foreground} on ${backgroundName}`,
+        ).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+    const dangerFill = parseColor(theme["danger-fill"] ?? "");
+    const ink = parseColor(theme.ink ?? "");
     expect(
-      contrast(
-        paint(theme["on-danger"], parseColor(theme["danger-fill"])),
-        parseColor(theme["danger-fill"]),
-      ),
+      contrast(paint(theme["on-danger"] ?? "", dangerFill), dangerFill),
+      "on-danger on danger",
     ).toBeGreaterThanOrEqual(4.5);
-    for (const name of ["success", "warn", "danger"] as const) {
-      expect(contrast(paint(theme[name], surface), surface), name).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(parseColor(theme.window ?? ""), ink), "window on ink").toBeGreaterThanOrEqual(
+      4.5,
+    );
+    expect(
+      contrast(parseColor(theme["accent-on-ink"] ?? ""), ink),
+      "accent-on-ink on ink",
+    ).toBeGreaterThanOrEqual(4.5);
+  }
+
+  const textUses: string[] = [];
+  for (const match of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const selector = (match[1] ?? "").replace(/\s+/g, " ").trim();
+    const body = match[2] ?? "";
+    for (const color of body.matchAll(/(?:^|;)\s*color:\s*var\(--(faint|accent|line-strong)\)/gm)) {
+      textUses.push(`${selector} -> ${color[1]}`);
     }
   }
+  expect(textUses).toEqual([".tool-mark -> faint", ".try-chip svg -> accent"]);
 });
 
 it("detects search, invalid input, oauth, api keys, and unreachable servers", async () => {
@@ -684,6 +725,10 @@ function jsonRequest(body: unknown): Request {
 }
 
 type RGB = { r: number; g: number; b: number };
+
+function normColor(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, "").replace(/0\./g, ".");
+}
 
 function variables(css: string, header: string): Record<string, string> {
   const start = css.indexOf(header);

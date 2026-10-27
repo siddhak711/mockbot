@@ -430,7 +430,7 @@ Source of truth: `/workspace/mockbot-design/cursor-style/tokens.json` (cursor-st
 | tool line                                                                                                                                                                                                                   | 14 / 22 / 400               | ink-2 |
 | label                                                                                                                                                                                                                       | 13 / 18 / 500               | muted |
 | small                                                                                                                                                                                                                       | 12 / 16 / 400               | muted |
-| meta                                                                                                                                                                                                                        | 11 / 14 / 400               | faint |
+| meta                                                                                                                                                                                                                        | 11 / 14 / 400               | muted |
 | code                                                                                                                                                                                                                        | 12 / 20 / 400 mono          | ink   |
 | Landing page: hero and tagline reveal use B1's Tailwind steps (`text-5xl`–`text-7xl` hero, `text-4xl`–`text-6xl` tagline); body `text-base`/`text-lg`. The app keeps the roles above (deliberate exception to B1 snapping). |
 
@@ -446,16 +446,19 @@ Source of truth: `/workspace/mockbot-design/cursor-style/tokens.json` (cursor-st
 | line                                                                                                                                                                                                    | #EBEBEB | rgba(237,236,236,.08) |
 | line-strong                                                                                                                                                                                             | #DCDCDC | rgba(237,236,236,.14) |
 | ink                                                                                                                                                                                                     | #282828 | #EDECEC               |
-| ink-2                                                                                                                                                                                                   | #676767 | rgba(237,236,236,.72) |
-| muted                                                                                                                                                                                                   | #878787 | rgba(237,236,236,.55) |
+| ink-2                                                                                                                                                                                                   | #505050 | rgba(237,236,236,.72) |
+| muted                                                                                                                                                                                                   | #646464 | rgba(237,236,236,.55) |
 | faint                                                                                                                                                                                                   | #ADADAD | rgba(237,236,236,.38) |
-| link                                                                                                                                                                                                    | #2F7BD8 | #6AA8F0               |
+| link                                                                                                                                                                                                    | #2765B3 | #6AA8F0               |
 | accent                                                                                                                                                                                                  | #F54E00 | #F54E00               |
-| success                                                                                                                                                                                                 | #1F8A65 | #3FB68B               |
-| warn                                                                                                                                                                                                    | #C08532 | #E0A85A               |
-| danger                                                                                                                                                                                                  | #CF2D56 | #E5577A               |
+| success                                                                                                                                                                                                 | #1C7253 | #3FB68B               |
+| warn                                                                                                                                                                                                    | #805E1F | #E0A85A               |
+| danger                                                                                                                                                                                                  | #BB2D4C | #E56588               |
+| accent-text                                                                                                                                                                                             | #B63900 | #FF5405               |
+| accent-on-ink                                                                                                                                                                                           | #FF5202 | #BF3C00               |
+| on-danger                                                                                                                                                                                               | #FFFFFF | #14120B               |
 | Dark backgrounds come from this palette (overrides B4's list). Primary button: ink background, window text. Accent is for small highlights (sparkle, Mochi bulb, one hero emphasis), never large fills. |
-| Hero heading gradient (B5): light #282828 → #878787, dark #EDECEC → rgba(237,236,236,.55) (ink → muted instead of pure black/white).                                                                    |
+| Hero heading gradient (B5): light #282828 → #646464, dark #EDECEC → rgba(237,236,236,.55) (ink → muted instead of pure black/white).                                                                    |
 
 ## Spacing
 
@@ -486,7 +489,7 @@ Base curve from B7 `cubic-bezier(0.22,1,0.36,1)`. Hover/color 200–300ms. Mochi
 
 Files: `/workspace/mockbot-design/sprites/mochi/final/svg/mochi-<state>-<light|dark>.svg` (animated) and `.static.svg`, PNGs @1x 64 / @2x 128.
 
-- **States:** idle (dim orange bulb), thinking (tilt, dots, pulsing bulb), working (squash, `> <`, bright #F54E00), done (hop, green #1F8A65 bulb + check), error (X eyes, red #CF2D56 bulb).
+- **States:** idle (dim orange bulb), thinking (tilt, dots, pulsing bulb), working (squash, `> <`, bright #F54E00), done (hop, green #1C7253 bulb + check), error (X eyes, red #BB2D4C bulb).
 - **Sizes:** 16 (status dot use; bulb color carries meaning), 22–24 (sidebar rows, transcript next to "Thought for"), 32 (chat header), 64 (empty states), 128+ (landing hero, onboarding).
 - **Landing:** Mochi appears once in the hero visual (inside the product screenshot, live states) and optionally in the final CTA. Never as decoration on every section, never as a background pattern, never recolored outside the tokens.
 - Use the light or dark variant to match the theme. Always provide alt text such as "Mochi, working". Respect `prefers-reduced-motion` (use the static SVGs).
