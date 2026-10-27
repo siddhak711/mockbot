@@ -109,3 +109,74 @@ export async function* runWithDelegate(
   if (current) yield* settle(current, true);
   if (!sawText && closing) yield { type: "text", text: closing };
 }
+
+/**
+ * Like `runWithDelegate`, but a round that also proposes a plan does not start
+ * the delegate call. The plan gate has not approved anything yet.
+ * Delegate calls are settled at the end of the round, once that is known.
+ */
+export async function* runWithDelegateUnlessPlan(
+  source: AsyncIterable<LlmStreamEvent>,
+  delegate: (call: { id: string; arguments: string }) => Promise<string>,
+  planToolName: string,
+): AsyncIterable<LlmStreamEvent> {
+  const calls = new Map<number, OpenCall>();
+  let planning = false;
+  let sawText = false;
+  let settled = false;
+
+  const flush = async function* (): AsyncGenerator<LlmStreamEvent> {
+    if (settled || planning) return;
+    settled = true;
+    let closing: string | null = null;
+    const ordered = [...calls.values()].sort((left, right) => left.index - right.index);
+    for (const call of ordered) {
+      if (call.name !== DELEGATE_TOOL_NAME) continue;
+      let parsed = false;
+      if (call.arguments.trim()) {
+        try {
+          JSON.parse(call.arguments);
+          parsed = true;
+        } catch {
+          parsed = false;
+        }
+      }
+      const content = parsed
+        ? await delegate({ id: call.id, arguments: call.arguments })
+        : "Delegation failed: arguments are not JSON.";
+      yield { type: "tool_result", id: call.id, name: DELEGATE_TOOL_NAME, content };
+      if (!sawText) {
+        closing = content.startsWith("Delegation failed")
+          ? "The handoff failed. This conversation can continue."
+          : `Delegated to ${agentLabel(call.arguments)}.`;
+      }
+    }
+    if (!sawText && closing) yield { type: "text", text: closing };
+  };
+
+  for await (const event of source) {
+    if (event.type === "tool_call") {
+      const current = calls.get(event.index) ?? {
+        index: event.index,
+        id: "",
+        name: "",
+        arguments: "",
+      };
+      if (event.id && !current.id) current.id = event.id;
+      if (event.name) current.name = mergeName(current.name, event.name);
+      if (event.arguments) current.arguments += event.arguments;
+      calls.set(event.index, current);
+      if (current.name === planToolName) planning = true;
+      yield event;
+      continue;
+    }
+    if (event.type === "text" && event.text) sawText = true;
+    if (event.type === "end") {
+      yield* flush();
+      yield event;
+      continue;
+    }
+    yield event;
+  }
+  yield* flush();
+}

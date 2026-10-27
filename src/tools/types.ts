@@ -38,8 +38,10 @@ export type ToolContext = {
   memory?: MemoryToolDeps;
   /** Fresh each chat run. Tools count actions here to enforce per-run caps. */
   runCounters?: Map<string, number>;
-  /** Signed-in user. Site tools store scripts against this id. */
-  userId?: string;
+  /** The agent this turn speaks as. Per-agent tools, such as the sandbox, key on it. */
+  agentId?: string;
+  /** The signed-in user, when the turn is scoped to one. Site tools store scripts against it. */
+  userId?: string | null;
 };
 
 export type PreparedArgs = { args: Record<string, unknown> } | { error: string };

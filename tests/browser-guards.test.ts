@@ -54,16 +54,14 @@ function shellOk(command: string): Promise<boolean> {
 
 async function installTree(
   dir: string,
-  options: { stamp?: string; binary?: boolean },
+  options: { stamp?: string; playwright?: boolean },
 ): Promise<void> {
   await mkdir(join(dir, "node/bin"), { recursive: true });
-  await mkdir(join(dir, "lib/node_modules/playwright-core"), { recursive: true });
-  await mkdir(join(dir, "browsers/partial"), { recursive: true });
   await writeFile(join(dir, "node/bin/node"), "");
   await chmod(join(dir, "node/bin/node"), 0o755);
-  await writeFile(join(dir, "lib/node_modules/playwright-core/package.json"), "{}");
-  if (options.binary) {
-    await writeFile(join(dir, "browsers/partial/chrome-headless-shell"), "");
+  if (options.playwright) {
+    await mkdir(join(dir, "lib/node_modules/playwright-core"), { recursive: true });
+    await writeFile(join(dir, "lib/node_modules/playwright-core/package.json"), "{}");
   }
   if (options.stamp !== undefined) {
     await writeFile(join(dir, INSTALL_COMPLETE_NAME), options.stamp);
@@ -101,6 +99,11 @@ function browserWith(host: BrowserHost): SandboxBrowser {
   return new SandboxBrowser(host, {
     paths: { node: "node", nodePath: "/modules" },
     install: true,
+    sessions: {
+      acquire: async () => ({ id: "s1", connectUrl: "ws://cdp", expiresAt: Date.now() + 60_000 }),
+      invalidate: async () => undefined,
+      close: async () => undefined,
+    },
   });
 }
 
@@ -151,6 +154,74 @@ it("runs one installer for overlapping browse calls", async () => {
   expect(tracked.installs()).toBe(1);
 });
 
+it("passes the browse abort signal through to prepare", async () => {
+  const tracked = hostTrackingInstalls(async () => ({
+    stdout: "",
+    stderr: "",
+    exitCode: 0,
+    timedOut: false,
+  }));
+  const signals: Array<AbortSignal | undefined> = [];
+  tracked.host.prepare = async (signal) => {
+    signals.push(signal);
+  };
+  const browser = browserWith(tracked.host);
+  const controller = new AbortController();
+  await expect(browser.perform(openStep(), controller.signal)).resolves.toMatchObject({
+    ok: true,
+  });
+  expect(signals).toEqual([controller.signal]);
+});
+
+it("reinstalls using the sandbox id resolved after replacement", async () => {
+  let stored = "sandbox-old";
+  let resolved = "sandbox-old";
+  const reads: string[] = [];
+  const tracked = hostTrackingInstalls(async () => ({
+    stdout: "",
+    stderr: "",
+    exitCode: 0,
+    timedOut: false,
+  }));
+  tracked.host.prepare = async () => {
+    stored = resolved;
+  };
+  tracked.host.sandboxId = async () => {
+    reads.push(stored);
+    return stored;
+  };
+  const browser = browserWith(tracked.host);
+  await expect(browser.perform(openStep())).resolves.toMatchObject({ ok: true });
+  expect(tracked.installs()).toBe(1);
+
+  // The store still names the dead sandbox until prepare creates the replacement.
+  resolved = "sandbox-new";
+  const before = reads.length;
+  await expect(browser.perform(openStep())).resolves.toMatchObject({ ok: true });
+  expect(tracked.installs()).toBe(2);
+  expect(reads.slice(before)).toContain("sandbox-new");
+  expect(reads.slice(before)).not.toContain("sandbox-old");
+});
+
+it("reinstalls when the sandbox id changes", async () => {
+  let sandboxId = "sandbox-old";
+  const tracked = hostTrackingInstalls(async () => ({
+    stdout: "",
+    stderr: "",
+    exitCode: 0,
+    timedOut: false,
+  }));
+  tracked.host.sandboxId = async () => sandboxId;
+  const browser = browserWith(tracked.host);
+  await expect(browser.perform(openStep())).resolves.toMatchObject({ ok: true });
+  await expect(browser.perform(openStep())).resolves.toMatchObject({ ok: true });
+  expect(tracked.installs()).toBe(1);
+
+  sandboxId = "sandbox-new";
+  await expect(browser.perform(openStep())).resolves.toMatchObject({ ok: true });
+  expect(tracked.installs()).toBe(2);
+});
+
 it("starts another installer only after the in-flight install has failed", async () => {
   const tracked = hostTrackingInstalls(async () => ({
     stdout: "",
@@ -164,18 +235,16 @@ it("starts another installer only after the in-flight install has failed", async
   expect(tracked.installs()).toBe(2);
 });
 
-it("writes the install stamp only after Chromium install succeeds", () => {
+it("writes the install stamp only after playwright-core installs, and installs no Chromium", () => {
   const script = browserInstallScript();
-  expect(script).not.toContain('[ -d "$DIR/browsers" ]');
-  const installAt = script.indexOf("install --with-deps --only-shell chromium");
+  const installAt = script.indexOf(`playwright-core@${PLAYWRIGHT_VERSION}`);
   const clearAt = script.indexOf(`rm -f "$DIR/${INSTALL_COMPLETE_NAME}"`);
   const stampAt = script.lastIndexOf(`> "$DIR/${INSTALL_COMPLETE_NAME}"`);
-  const binaryAt = script.indexOf("Chromium install did not finish");
   expect(clearAt).toBeGreaterThan(-1);
   expect(installAt).toBeGreaterThan(clearAt);
-  expect(binaryAt).toBeGreaterThan(installAt);
-  expect(stampAt).toBeGreaterThan(binaryAt);
-  expect(script).toContain(PLAYWRIGHT_VERSION);
+  expect(stampAt).toBeGreaterThan(installAt);
+  // The browser runs on Browserbase; the sandbox only needs the CDP client.
+  expect(script).not.toMatch(/chromium|PLAYWRIGHT_BROWSERS_PATH/i);
 });
 
 it("does not treat a partial browser directory as a finished install", async () => {
@@ -189,10 +258,10 @@ it("does not treat a partial browser directory as a finished install", async () 
   await installTree(dir, { stamp: `${PLAYWRIGHT_VERSION}\n` });
   expect(await ready()).toBe(false);
 
-  await installTree(dir, { binary: true, stamp: "0.0.0\n" });
+  await installTree(dir, { playwright: true, stamp: "0.0.0\n" });
   expect(await ready()).toBe(false);
 
-  await installTree(dir, { binary: true, stamp: `${PLAYWRIGHT_VERSION}\n` });
+  await installTree(dir, { playwright: true, stamp: `${PLAYWRIGHT_VERSION}\n` });
   expect(await ready()).toBe(true);
 });
 
@@ -204,22 +273,25 @@ module.exports = {
   chromium: {
     async launch() {
       record("launch");
+      throw new Error("the daemon must not launch a local browser");
+    },
+    async connectOverCDP(url) {
+      record("connect " + url);
       await new Promise((resolve) => setTimeout(resolve, 300));
+      const page = {
+        setDefaultTimeout() {},
+        setDefaultNavigationTimeout() {},
+        async setViewportSize() {},
+        url() { return "about:blank"; },
+        async title() { return ""; },
+      };
+      const context = { pages() { return [page]; } };
       return {
+        contexts() { return [context]; },
+        isConnected() { return true; },
+        on() {},
         async close() {
           record("close");
-        },
-        async newContext() {
-          return {
-            async newPage() {
-              return {
-                setDefaultTimeout() {},
-                setDefaultNavigationTimeout() {},
-                url() { return "about:blank"; },
-                async title() { return ""; },
-              };
-            },
-          };
         },
       };
     },
@@ -256,6 +328,9 @@ async function daemonFixture() {
     NODE_PATH: modules,
     MOCKBOT_BROWSER_PORT: String(port),
     BROWSER_LAUNCH_LOG: log,
+    // What send passes to a serve it starts; set here for tests that run serve directly.
+    MOCKBOT_BROWSER_CDP: "ws://session-a",
+    MOCKBOT_BROWSER_SESSION: "session-a",
   };
   return {
     root,
@@ -349,11 +424,20 @@ async function killDaemons(root: string) {
   });
 }
 
-it("starts one Chromium when two first actions overlap", async () => {
-  const ctx = await daemonFixture();
-  const step = Buffer.from(
-    JSON.stringify({ action: "noop", timeoutMs: 1_000, startTimeoutMs: 5_000 }),
+function encodedStep(sessionId: string, action = "noop"): string {
+  return Buffer.from(
+    JSON.stringify({
+      action,
+      timeoutMs: 1_000,
+      startTimeoutMs: 5_000,
+      session: { id: sessionId, connectUrl: `ws://${sessionId}` },
+    }),
   ).toString("base64");
+}
+
+it("opens one CDP connection when two first actions overlap", async () => {
+  const ctx = await daemonFixture();
+  const step = encodedStep("session-a");
   const first = ctx.spawn(["send", step]);
   const second = ctx.spawn(["send", step]);
   const [codeA, codeB] = await Promise.all([first.exited(), second.exited()]);
@@ -361,17 +445,36 @@ it("starts one Chromium when two first actions overlap", async () => {
   expect({ code: codeB, ...second.output() }).toMatchObject({ code: 0 });
   expect(first.output().stdout).toContain("Unknown browser action.");
   expect(second.output().stdout).toContain("Unknown browser action.");
-  expect(await ctx.events()).toEqual(["launch"]);
+  expect(await ctx.events()).toEqual(["connect ws://session-a"]);
   expect(await ping(ctx.port)).toBe(true);
 });
 
-it("does not launch a second Chromium while the daemon lock is held", async () => {
+it("reconnects on the new session when the app hands over a different one", async () => {
+  const ctx = await daemonFixture();
+  const first = ctx.spawn(["send", encodedStep("session-a")]);
+  expect(await first.exited()).toBe(0);
+  const second = ctx.spawn(["send", encodedStep("session-b")]);
+  expect({ code: await second.exited(), ...second.output() }).toMatchObject({ code: 0 });
+  expect(second.output().stdout).toContain("Unknown browser action.");
+  expect(await ctx.events()).toEqual(["connect ws://session-a", "close", "connect ws://session-b"]);
+});
+
+it("refuses an action that names no remote session", async () => {
+  const ctx = await daemonFixture();
+  const bare = Buffer.from(JSON.stringify({ action: "open", timeoutMs: 1_000 })).toString("base64");
+  const child = ctx.spawn(["send", bare]);
+  expect(await child.exited()).toBe(0);
+  expect(child.output().stdout).toContain("No remote browser session was given.");
+  expect(await ctx.events()).toEqual([]);
+});
+
+it("does not open a second CDP connection while the daemon lock is held", async () => {
   const ctx = await daemonFixture();
   const first = ctx.spawn(["serve"]);
   await waitFor(() => ping(ctx.port));
   const second = ctx.spawn(["serve"]);
   expect(await second.exited()).toBe(0);
-  expect(await ctx.events()).toEqual(["launch"]);
+  expect(await ctx.events()).toEqual(["connect ws://session-a"]);
   expect(first.child.exitCode).toBeNull();
 });
 
@@ -381,11 +484,11 @@ it("replaces a stale daemon lock left by a dead process", async () => {
   await writeFile(join(ctx.root, "browserd.lock", "pid"), "999999");
   const child = ctx.spawn(["serve"]);
   await waitFor(() => ping(ctx.port));
-  expect(await ctx.events()).toEqual(["launch"]);
+  expect(await ctx.events()).toEqual(["connect ws://session-a"]);
   expect(child.child.exitCode).toBeNull();
 });
 
-it("closes Chromium when the daemon cannot bind its port", async () => {
+it("closes the CDP connection when the daemon cannot bind its port", async () => {
   const ctx = await daemonFixture();
   const blocker: Server = createServer();
   blocker.listen(ctx.port, "127.0.0.1");
@@ -394,7 +497,7 @@ it("closes Chromium when the daemon cannot bind its port", async () => {
     const child = ctx.spawn(["serve"]);
     const code = await child.exited();
     expect({ code, ...child.output() }).toMatchObject({ code: 1 });
-    expect(await ctx.events()).toEqual(["launch", "close"]);
+    expect(await ctx.events()).toEqual(["connect ws://session-a", "close"]);
   } finally {
     blocker.close();
   }

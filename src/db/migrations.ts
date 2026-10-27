@@ -470,6 +470,82 @@ CREATE UNIQUE INDEX conversations_user_agent_key
   ON conversations (user_id, agent_id) NULLS NOT DISTINCT;
 `,
   },
+  // 010_ask_user sits between 009_one_thread_per_agent and 011_run_events.
+  // Main reserved 010 for this pull request.
+  {
+    id: "010_ask_user",
+    sql: `
+ALTER TABLE tool_calls DROP CONSTRAINT IF EXISTS tool_calls_status_check;
+ALTER TABLE tool_calls ADD CONSTRAINT tool_calls_status_check
+  CHECK (status IN ('running', 'approval', 'ask', 'done', 'denied', 'error'));
+`,
+  },
+  // 011_run_events stays after 009_one_thread_per_agent. PR #37 claims
+  // 010_ask_user, so this id is 011. A preview already applied this table as
+  // 007_run_events. That SQL has the same columns, check, and primary key, so
+  // every statement below is a no-op on that table. The stray schema_migrations
+  // row is removed.
+  {
+    id: "011_run_events",
+    sql: `
+CREATE TABLE IF NOT EXISTS run_events (
+  run_id TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  type TEXT NOT NULL CHECK (type IN ('model', 'tool', 'event', 'error')),
+  input TEXT,
+  output TEXT,
+  tokens INTEGER,
+  cost_usd DOUBLE PRECISION,
+  ms INTEGER,
+  PRIMARY KEY (run_id, seq)
+);
+
+ALTER TABLE run_events ADD COLUMN IF NOT EXISTS run_id TEXT;
+ALTER TABLE run_events ADD COLUMN IF NOT EXISTS seq INTEGER;
+ALTER TABLE run_events ADD COLUMN IF NOT EXISTS type TEXT;
+ALTER TABLE run_events ADD COLUMN IF NOT EXISTS input TEXT;
+ALTER TABLE run_events ADD COLUMN IF NOT EXISTS output TEXT;
+ALTER TABLE run_events ADD COLUMN IF NOT EXISTS tokens INTEGER;
+ALTER TABLE run_events ADD COLUMN IF NOT EXISTS cost_usd DOUBLE PRECISION;
+ALTER TABLE run_events ADD COLUMN IF NOT EXISTS ms INTEGER;
+
+CREATE UNIQUE INDEX IF NOT EXISTS run_events_pkey ON run_events (run_id, seq);
+
+DO $run_events_constraints$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.run_events'::regclass
+      AND conname = 'run_events_type_check'
+  ) THEN
+    ALTER TABLE run_events
+      ADD CONSTRAINT run_events_type_check
+      CHECK (type IN ('model', 'tool', 'event', 'error'));
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.run_events'::regclass
+      AND contype = 'p'
+  ) THEN
+    ALTER TABLE run_events
+      ADD CONSTRAINT run_events_pkey PRIMARY KEY (run_id, seq);
+  END IF;
+END
+$run_events_constraints$;
+
+DELETE FROM schema_migrations WHERE id = '007_run_events';
+`,
+  },
+  // 012_plan_mode. 008, 009, 010, and 011 are already used on main and other branches.
+  {
+    id: "012_plan_mode",
+    sql: `
+ALTER TABLE tool_calls DROP CONSTRAINT IF EXISTS tool_calls_status_check;
+ALTER TABLE tool_calls ADD CONSTRAINT tool_calls_status_check
+  CHECK (status IN ('running', 'approval', 'ask', 'plan', 'done', 'denied', 'error'));
+`,
+  },
   {
     id: "013_site_tools",
     sql: `

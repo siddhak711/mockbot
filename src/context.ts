@@ -3,16 +3,19 @@ import { withAgentMock } from "./agents/mock-script";
 import { NoteMemory, defaultComputer, defaultConnector } from "./agents/ports";
 import type { AgentMemoryPort, ComputerPort, ConnectorPort } from "./agents/types";
 import { selectProvider, type LlmProvider } from "./llm";
+import { loadRouterConfig, RoutingProvider } from "./model-router";
 import { RoutineStore } from "./routines/store";
 import { sandboxBrowseTool } from "./browser/open";
-import { BROWSE_TOOL_NAME } from "./browser/tool";
+import { BROWSE_TOOL_NAME, browseTool } from "./browser/tool";
 import { siteToolsForApp } from "./site-tools/tools";
-import { openComputer } from "./sandbox/open";
+import { openComputer, sandboxUnavailableReason } from "./sandbox/open";
 import type { ComputerSupervisor } from "./sandbox/supervisor";
-import { createComputerTools } from "./sandbox/tools";
+import { createComputerTools, createUnavailableComputerTools } from "./sandbox/tools";
 import { SandboxTurnProvider } from "./sandbox/turn";
 import { ConversationStore } from "./store";
+import { AskGate } from "./tools/ask-user";
 import { ApprovalGate } from "./tools/approval";
+import { PlanGate } from "./tools/plan";
 import { createDefaultTools } from "./tools/builtins";
 import { registerMemoryTools, type ToolRegistry } from "./tools/registry";
 
@@ -21,7 +24,11 @@ export type AppContext = {
   provider: LlmProvider;
   tools: ToolRegistry;
   approvals: ApprovalGate;
+  asks: AskGate;
+  plans: PlanGate;
   sandbox?: ComputerSupervisor;
+  /** Why the sandbox did not open, shown in the computer pane and tool results. */
+  sandboxError?: string;
   routines?: RoutineStore;
   agents?: AgentDirectory;
   memory?: AgentMemoryPort;
@@ -71,28 +78,47 @@ export function registerSiteTools(
   }
 }
 
+export function registerUnavailableComputerTools(registry: ToolRegistry, reason: string): void {
+  for (const tool of createUnavailableComputerTools(reason)) {
+    if (!registry.get(tool.name)) registry.register(tool);
+  }
+  // browse runs in the sandbox too, so it fails with the same reason.
+  if (!registry.get(BROWSE_TOOL_NAME)) {
+    registry.register(
+      browseTool({ driver: () => null, unavailable: `browse is unavailable: ${reason}` }),
+    );
+  }
+}
+
 export function setAppContext(context: {
   store: ConversationStore;
   provider: LlmProvider;
   tools?: ToolRegistry;
   approvals?: ApprovalGate;
+  asks?: AskGate;
+  plans?: PlanGate;
   sandbox?: ComputerSupervisor;
+  sandboxError?: string;
   routines?: RoutineStore;
   agents?: AgentDirectory;
   memory?: AgentMemoryPort;
   computer?: ComputerPort;
   connector?: ConnectorPort;
 }): void {
-  const tools = context.tools ?? createDefaultTools({});
+  const tools = context.tools ?? createDefaultTools(process.env);
   if (!context.tools) registerMemoryTools(tools, context.store);
   if (context.sandbox) registerComputerTools(tools, context.sandbox);
+  else if (context.sandboxError) registerUnavailableComputerTools(tools, context.sandboxError);
   registerSiteTools(tools, context.store, context.sandbox, process.env);
   current = {
     store: context.store,
     provider: context.provider,
     tools,
     approvals: context.approvals ?? new ApprovalGate(),
+    asks: context.asks ?? new AskGate(),
+    plans: context.plans ?? new PlanGate(),
     sandbox: context.sandbox,
+    sandboxError: context.sandboxError,
     routines: context.routines,
     agents: context.agents,
     memory: context.memory,
@@ -147,19 +173,28 @@ export async function getAppContext(): Promise<AppContext> {
 async function openApp(): Promise<AppContext> {
   const store = await ConversationStore.connect(process.env);
   let sandbox: ComputerSupervisor | undefined;
+  const sandboxError = sandboxUnavailableReason(process.env) ?? undefined;
   try {
-    sandbox = await openComputer({ env: process.env });
+    if (!sandboxError) sandbox = await openComputer({ env: process.env });
     const tools = createDefaultTools(process.env);
     registerMemoryTools(tools, store);
-    registerComputerTools(tools, sandbox, process.env);
+    if (sandbox) registerComputerTools(tools, sandbox, process.env);
+    else registerUnavailableComputerTools(tools, sandboxError ?? "The sandbox is not available.");
     registerSiteTools(tools, store, sandbox, process.env);
     const agents = await AgentDirectory.attach(store);
-    const inner = withAgentMock(selectProvider(process.env));
+    const inner = new RoutingProvider({
+      inner: withAgentMock(selectProvider(process.env)),
+      config: loadRouterConfig(process.env),
+      db: store.connection,
+    });
     return {
       store,
       sandbox,
+      sandboxError,
       tools,
       approvals: new ApprovalGate(),
+      asks: new AskGate(),
+      plans: new PlanGate(),
       agents,
       memory: new NoteMemory(agents),
       computer: defaultComputer,

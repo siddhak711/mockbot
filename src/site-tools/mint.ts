@@ -8,7 +8,7 @@ import type { ReviewVerdict, ScriptRunResult, SiteToolDeps, SiteToolRecord } fro
 import { validateSiteToolArgs } from "./validate";
 
 export const SITE_TOOL_UNAVAILABLE =
-  "Site tools run Playwright inside the Daytona sandbox, and DAYTONA_API_KEY is not set, so this server uses the mock computer.";
+  "Site tools run Playwright inside the Daytona sandbox, and this server has no Daytona sandbox (it is unavailable or the labeled mock computer).";
 
 export type MintResult =
   | {
@@ -33,6 +33,8 @@ export async function mintSiteTool(
     site: string;
     task: string;
     name?: string;
+    /** The (user, agent) sandbox owner. Defaults to the deps' own choice. */
+    owner?: string;
     signal?: AbortSignal;
     /** True only after this mint call passed the submit approval card. */
     allowSubmit?: boolean;
@@ -54,7 +56,7 @@ export async function mintSiteTool(
   });
   if (!compiled.ok) return { saved: false, stage: "compile", error: compiled.error };
 
-  const driver = deps.driver();
+  const driver = deps.driver(input.owner);
   if (!driver) return { saved: false, stage: "explore", error: SITE_TOOL_UNAVAILABLE };
   const explored = await exploreSite({
     driver,
@@ -85,6 +87,7 @@ export async function mintSiteTool(
 
   const ran = await executeScript(
     deps,
+    input.owner,
     compiled.script,
     compiled.sampleArgs,
     input.signal,
@@ -129,6 +132,8 @@ export async function runSiteTool(
     userId: string;
     name: string;
     args: unknown;
+    /** The (user, agent) sandbox owner. Defaults to the deps' own choice. */
+    owner?: string;
     signal?: AbortSignal;
     /** True only after this replay passed the submit approval card. */
     allowSubmit?: boolean;
@@ -144,6 +149,7 @@ export async function runSiteTool(
   if (!validated.ok) return validated;
   const ran = await executeScript(
     deps,
+    input.owner,
     record.script,
     validated.args,
     input.signal,
@@ -155,22 +161,28 @@ export async function runSiteTool(
 
 async function executeScript(
   deps: SiteToolDeps,
+  owner: string | undefined,
   script: string,
   args: Record<string, string>,
   signal: AbortSignal | undefined,
   allowSubmit: boolean,
 ): Promise<ScriptRunResult> {
   if (deps.runScript) return deps.runScript({ script, args, signal, allowSubmit });
-  const host = deps.host();
-  const driver = deps.driver();
+  const host = deps.host(owner);
+  const driver = deps.driver(owner);
   if (!host || !driver) return { ok: false, error: SITE_TOOL_UNAVAILABLE };
   if (driver.ensureReady) {
     const ready = await driver.ensureReady(signal);
     if (!ready.ok) return ready;
   }
+  const sessions = deps.scriptSessions?.() ?? {
+    error: "Site tools have no remote browser to run the script in.",
+  };
+  if ("error" in sessions) return { ok: false, error: sessions.error };
   return runPlaywrightScript({
     host,
     paths: deps.paths,
+    sessions,
     script,
     args,
     timeoutMs: deps.timeoutMs,

@@ -4,7 +4,9 @@ import { createServer } from "node:http";
 import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { chromium, type Browser as CdpBrowser } from "playwright-core";
 import { afterEach, expect, it } from "vitest";
+import type { BrowserSessionSource, RemoteBrowserSession } from "../src/browser/browserbase";
 import type { BrowserHost } from "../src/browser/sandbox-browser";
 import { SandboxBrowser } from "../src/browser/sandbox-browser";
 import { MIGRATIONS } from "../src/db/migrations";
@@ -21,6 +23,8 @@ import type { ScriptRunRequest, SiteBrowser, SiteToolDeps } from "../src/site-to
 import { SseParser } from "../src/sse";
 import { ConversationStore } from "../src/store";
 import { ApprovalGate } from "../src/tools/approval";
+import { AskGate } from "../src/tools/ask-user";
+import { PlanGate } from "../src/tools/plan";
 import { ToolRegistry } from "../src/tools/registry";
 import type { BrowseStep } from "../src/browser/types";
 import type { LlmMessage, LlmStreamEvent } from "../src/types";
@@ -498,6 +502,8 @@ it("asks for approval before a mint live run clicks a submit button", async () =
     provider: model,
     tools,
     approvals,
+    asks: new AskGate(),
+    plans: new PlanGate(),
     message: "Place the order",
     userId: "user_gate",
   });
@@ -548,6 +554,8 @@ it("asks for approval before replaying a script that clicks a label", async () =
     provider: model,
     tools,
     approvals,
+    asks: new AskGate(),
+    plans: new PlanGate(),
     message: "Run the saved order tool",
     userId: "user_gate",
   });
@@ -585,6 +593,8 @@ it("does not submit a form from a replay until the call is allowed", async () =>
   const workspace = await mkdtemp(join(tmpdir(), "mockbot-site-submit-"));
   const host = localHost(workspace);
   const paths = { node: process.execPath, nodePath: REPO_MODULES };
+  const remote = await localRemote();
+  const sessions = remote.sessions;
   try {
     const button = compileSiteTool({
       site,
@@ -601,6 +611,7 @@ it("does not submit a form from a replay until the call is allowed", async () =>
     const blocked = await runPlaywrightScript({
       host,
       paths,
+      sessions,
       script: button.script,
       args: {},
       allowSubmit: false,
@@ -611,6 +622,7 @@ it("does not submit a form from a replay until the call is allowed", async () =>
     const labeled = await runPlaywrightScript({
       host,
       paths,
+      sessions,
       script: label.script,
       args: {},
       allowSubmit: false,
@@ -621,6 +633,7 @@ it("does not submit a form from a replay until the call is allowed", async () =>
     const allowed = await runPlaywrightScript({
       host,
       paths,
+      sessions,
       script: button.script,
       args: {},
       allowSubmit: true,
@@ -629,6 +642,7 @@ it("does not submit a form from a replay until the call is allowed", async () =>
     expect(allowed.ok).toBe(true);
     expect(posts).toEqual(["/order"]);
   } finally {
+    await remote.browser.close();
     server.close();
     await rm(workspace, { recursive: true, force: true });
   }
@@ -675,15 +689,18 @@ it("saves a script that passes on the live page and replays it with another sele
   const baseUrl = `http://127.0.0.1:${address.port}/`;
   const workspace = await mkdtemp(join(tmpdir(), "mockbot-site-tools-"));
   const host = localHost(workspace);
+  const remote = await localRemote();
   const browser = new SandboxBrowser(host, {
     paths: { node: process.execPath, nodePath: REPO_MODULES },
     install: false,
+    sessions: remote.sessions,
     port: await freePort(),
   });
   const liveDeps = {
     repository: new SiteToolRepository((await openStore()).connection),
     driver: () => browser,
     host: () => host,
+    scriptSessions: () => remote.sessions,
     paths: { node: process.execPath, nodePath: REPO_MODULES },
     env: {},
     timeoutMs: 20_000,
@@ -731,6 +748,7 @@ it("saves a script that passes on the live page and replays it with another sele
     ]);
   } finally {
     await browser.close();
+    await remote.browser.close();
     server.close();
     await rm(workspace, { recursive: true, force: true });
   }
@@ -846,4 +864,23 @@ async function freePort(): Promise<number> {
   probe.close();
   if (!address || typeof address === "string") throw new Error("No port");
   return address.port;
+}
+
+/**
+ * Stands in for Browserbase: a local Chromium that accepts CDP connections,
+ * handed out as one long-lived session.
+ */
+class LocalSessions implements BrowserSessionSource {
+  constructor(private readonly connectUrl: string) {}
+  async acquire(): Promise<RemoteBrowserSession> {
+    return { id: "local-session", connectUrl: this.connectUrl, expiresAt: Date.now() + 3_600_000 };
+  }
+  async invalidate(): Promise<void> {}
+  async close(): Promise<void> {}
+}
+
+async function localRemote(): Promise<{ browser: CdpBrowser; sessions: LocalSessions }> {
+  const port = await freePort();
+  const browser = await chromium.launch({ args: [`--remote-debugging-port=${port}`] });
+  return { browser, sessions: new LocalSessions(`http://127.0.0.1:${port}`) };
 }

@@ -1,3 +1,4 @@
+import type { BrowserSessionSource } from "../browser/browserbase";
 import type { BrowserHost } from "../browser/sandbox-browser";
 import type { BrowserPaths } from "../browser/install";
 import type { BrowserDriver } from "../browser/types";
@@ -82,8 +83,14 @@ export type SiteToolDeps = {
     }): Promise<SiteToolRecord>;
     latest(userId: string, name: string): Promise<SiteToolRecord | null>;
   };
-  driver: () => SiteBrowser | null;
-  host: () => BrowserHost | null;
+  /** The (user, agent) owner's sandbox browser. Null when there is no real sandbox. */
+  driver: (owner?: string) => SiteBrowser | null;
+  host: (owner?: string) => BrowserHost | null;
+  /**
+   * A fresh remote browser session source for one script run. The script
+   * connects to it over CDP; the sandbox has no local Chromium.
+   */
+  scriptSessions?: () => BrowserSessionSource | { error: string };
   paths: BrowserPaths;
   env: Record<string, string | undefined>;
   fetchImpl?: typeof fetch;

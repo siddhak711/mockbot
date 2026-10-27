@@ -1,6 +1,8 @@
 import type { BrowserPaths } from "../browser/install";
 import { SANDBOX_BROWSER_PATHS } from "../browser/install";
-import { SandboxBrowser } from "../browser/sandbox-browser";
+import { sandboxBrowsers } from "../browser/open";
+import { DEFAULT_AGENT_ID } from "../sandbox/limits";
+import { sandboxOwnerId } from "../sandbox/owner";
 import type { ComputerSupervisor } from "../sandbox/supervisor";
 import type { ConversationStore } from "../store";
 import type { ToolDefinition } from "../tools/types";
@@ -23,20 +25,18 @@ export function siteToolsForApp(options: {
   paths?: BrowserPaths;
 }): ToolDefinition[] {
   const paths = options.paths ?? SANDBOX_BROWSER_PATHS;
-  let browser: SandboxBrowser | null = null;
-  const host = () => options.sandbox?.browserHost() ?? null;
+  const env = options.env ?? {};
+  // The same per-owner browsers the browse tool drives, so both share one daemon.
+  const browsers = options.sandbox ? sandboxBrowsers(options.sandbox, env) : null;
+  const ownerOf = (owner?: string) => owner ?? DEFAULT_AGENT_ID;
   const deps: SiteToolDeps = {
     repository: new SiteToolRepository(options.store.connection),
     paths,
-    env: options.env ?? {},
-    host,
-    driver() {
-      if (browser) return browser;
-      const next = host();
-      if (!next) return null;
-      browser = new SandboxBrowser(next, { paths, install: true });
-      return browser;
-    },
+    env,
+    host: (owner) => browsers?.host(ownerOf(owner)) ?? null,
+    driver: (owner) => browsers?.driver(ownerOf(owner)) ?? null,
+    scriptSessions: () =>
+      browsers?.scriptSessions() ?? { error: "Site tools have no Daytona sandbox." },
   };
   return createSiteTools(deps);
 }
@@ -96,6 +96,7 @@ function mintTool(deps: SiteToolDeps): ToolDefinition {
           site: String(args.site ?? ""),
           task: String(args.task ?? ""),
           name: typeof args.name === "string" ? args.name : undefined,
+          owner: turnOwner(context),
           signal: context.signal,
           allowSubmit,
         },
@@ -174,6 +175,7 @@ function runTool(deps: SiteToolDeps): ToolDefinition {
           userId,
           name: String(args.name ?? ""),
           args: args.args,
+          owner: turnOwner(context),
           signal: context.signal,
           allowSubmit,
         },
@@ -189,4 +191,9 @@ function runTool(deps: SiteToolDeps): ToolDefinition {
       };
     },
   };
+}
+
+/** The (user, agent) sandbox this turn's browse tool uses. */
+function turnOwner(context: { agentId?: string; userId?: string | null }): string {
+  return sandboxOwnerId({ agentId: context.agentId ?? DEFAULT_AGENT_ID, userId: context.userId });
 }

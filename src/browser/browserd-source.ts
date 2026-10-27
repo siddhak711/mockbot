@@ -2,9 +2,11 @@
  * The browser daemon that runs inside the sandbox, as CommonJS source.
  * The host uploads it to `.mockbot/browserd.cjs` and runs
  * `node browserd.cjs send <base64 step>`. The first send starts `serve` in the
- * background, which keeps one headless Chromium page open between actions.
- * The daemon takes a lock before launching Chromium, and closes that browser
- * if it never binds its port, so a second starter cannot orphan a process.
+ * background, which connects over CDP to the remote browser session named in
+ * the step and keeps one page open between actions. A step for a different
+ * session restarts `serve` on that session. The daemon takes a lock before
+ * connecting, and closes that connection if it never binds its port, so a
+ * second starter cannot orphan a process. It never launches a local browser.
  *
  * The daemon refuses form submits, login clicks, and password typing unless the
  * step has `allowSubmit`, which the host sets only after the approval layer.
@@ -19,6 +21,9 @@ const crypto = require("node:crypto");
 const { spawn } = require("node:child_process");
 
 const PORT = Number(process.env.MOCKBOT_BROWSER_PORT || 9417);
+// Set only on the serve child, from the step the app sent.
+const CDP_URL = process.env.MOCKBOT_BROWSER_CDP || "";
+const SESSION_ID = process.env.MOCKBOT_BROWSER_SESSION || "";
 const IDLE_MS = 10 * 60 * 1000;
 const SHOT_DIR = "browser";
 const MAX_TEXT = 4000;
@@ -172,10 +177,12 @@ async function serve() {
   }
   let browser = null;
   try {
+    if (!CDP_URL) throw new Error("No remote browser session was given.");
     const { chromium } = require("playwright-core");
-    browser = await chromium.launch({ headless: true });
-    const context = await browser.newContext({ viewport: VIEWPORT, acceptDownloads: false });
-    const page = await context.newPage();
+    browser = await chromium.connectOverCDP(CDP_URL, { timeout: 30000 });
+    const context = browser.contexts()[0] || (await browser.newContext());
+    const page = context.pages()[0] || (await context.newPage());
+    await page.setViewportSize(VIEWPORT);
     let shots = 0;
     let queue = Promise.resolve();
     let idle = null;
@@ -186,6 +193,8 @@ async function serve() {
       stopped = true;
       try {
         await browser.close();
+      } catch (error) {
+        process.stderr.write(message(error) + "\n");
       } finally {
         releaseServeLock();
         process.exit(0);
@@ -256,7 +265,7 @@ async function serve() {
 
   const server = http.createServer((req, res) => {
     if (req.method === "GET" && req.url === "/ping") {
-      res.end("ok");
+      res.end(SESSION_ID);
       return;
     }
     if (req.method !== "POST" || req.url !== "/step") {
@@ -276,6 +285,10 @@ async function serve() {
         try {
           return await perform(JSON.parse(body));
         } catch (error) {
+          if (!browser.isConnected()) {
+            setTimeout(shutdown, 10);
+            return { ok: false, error: "The remote browser session ended: " + message(error), sessionEnded: true };
+          }
           return { ok: false, error: message(error), timedOut: isTimeout(error) };
         }
       });
@@ -291,6 +304,10 @@ async function serve() {
       process.stderr.write(message(error) + "\n");
       shutdown();
     });
+    // Browserbase ends the session at its time limit; the next step starts a new one.
+    browser.on("disconnected", () => {
+      setTimeout(shutdown, 10);
+    });
     touch();
   } catch (error) {
     if (browser) {
@@ -305,38 +322,61 @@ async function serve() {
   }
 }
 
+/** The running daemon's session id, or null when no daemon answers. */
 function ping() {
   return new Promise((resolve) => {
     const req = http.get({ host: "127.0.0.1", port: PORT, path: "/ping", timeout: 1000 }, (res) => {
-      res.resume();
-      resolve(res.statusCode === 200);
+      let data = "";
+      res.setEncoding("utf8");
+      res.on("data", (chunk) => (data += chunk));
+      res.on("end", () => resolve(res.statusCode === 200 ? data : null));
     });
-    req.on("error", () => resolve(false));
+    req.on("error", () => resolve(null));
     req.on("timeout", () => {
       req.destroy();
-      resolve(false);
+      resolve(null);
     });
   });
 }
 
-async function ensureServer(timeoutMs) {
+async function stopServer(timeoutMs) {
+  await post({ action: "close", timeoutMs: 1000 }, 3000);
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if ((await ping()) === null && !lockHeldByOther()) return true;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return false;
+}
+
+async function ensureServer(session, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   let spawned = false;
   while (Date.now() < deadline) {
-    if (await ping()) return true;
+    const running = await ping();
+    if (running === session.id) return true;
+    if (running !== null) {
+      // A daemon on another session: stop it, then start one on this session.
+      if (!(await stopServer(Math.max(0, deadline - Date.now())))) return false;
+      continue;
+    }
     if (!spawned && !lockHeldByOther()) {
       spawned = true;
       const log = fs.openSync(path.join(__dirname, "browserd.log"), "a");
+      const env = Object.assign({}, process.env, {
+        MOCKBOT_BROWSER_CDP: session.connectUrl,
+        MOCKBOT_BROWSER_SESSION: session.id,
+      });
       const child = spawn(process.execPath, [__filename, "serve"], {
         detached: true,
         stdio: ["ignore", log, log],
-        env: process.env,
+        env: env,
       });
       child.unref();
     }
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
-  return ping();
+  return (await ping()) === session.id;
 }
 
 function post(step, timeoutMs) {
@@ -381,17 +421,43 @@ async function send(encoded) {
     process.stdout.write(JSON.stringify({ ok: false, error: "The browser step is not valid JSON." }));
     return;
   }
-  if (step.action === "close" && !(await ping())) {
-    process.stdout.write(JSON.stringify({ ok: true }));
+  if (step.action === "close") {
+    if ((await ping()) === null) {
+      process.stdout.write(JSON.stringify({ ok: true }));
+      return;
+    }
+    process.stdout.write(JSON.stringify(await post(step, 3000)));
     return;
   }
-  const started = await ensureServer(Number(step.startTimeoutMs) || 20000);
+  const session = step.session;
+  delete step.session;
+  if (!session || !session.id || !session.connectUrl) {
+    process.stdout.write(JSON.stringify({ ok: false, error: "No remote browser session was given." }));
+    return;
+  }
+  const started = await ensureServer(session, Number(step.startTimeoutMs) || 20000);
   if (!started) {
-    process.stdout.write(JSON.stringify({ ok: false, error: "The sandbox browser did not start." }));
+    const log = readLogTail();
+    process.stdout.write(
+      JSON.stringify({
+        ok: false,
+        error: "The sandbox browser could not connect to the remote session." + (log ? " " + log : ""),
+        sessionEnded: true,
+      }),
+    );
     return;
   }
   const result = await post(step, (Number(step.timeoutMs) || 10000) + 2000);
   process.stdout.write(JSON.stringify(result));
+}
+
+function readLogTail() {
+  try {
+    const text = fs.readFileSync(path.join(__dirname, "browserd.log"), "utf8").trim();
+    return text.split("\n").slice(-1)[0].slice(0, 300);
+  } catch (error) {
+    return "";
+  }
 }
 
 const mode = process.argv[2];

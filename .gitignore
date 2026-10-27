@@ -10,3 +10,4 @@ playwright-report
 .env
 .env.local
 .env.*.local
+blob-report

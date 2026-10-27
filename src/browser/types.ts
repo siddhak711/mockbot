@@ -45,6 +45,8 @@ export type BrowseOutcome =
       /** The daemon refused because the action submits a form or logs in. */
       needsApproval?: boolean;
       timedOut?: boolean;
+      /** The remote browser session ended, such as at its time limit. */
+      sessionEnded?: boolean;
     };
 
 export type BrowserDriver = {

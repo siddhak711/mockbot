@@ -103,6 +103,8 @@ const SITE = ${JSON.stringify(site)};
 const STEPS = ${JSON.stringify(steps)};
 
 const ALLOW_SUBMIT = process.argv[3] === "1";
+// The remote browser session's CDP URL. The sandbox has no local Chromium.
+const CDP_URL = process.argv[4] || "";
 
 function selectorRisk(op, selector) {
   const value = String(selector || "");
@@ -199,9 +201,14 @@ async function run(page, args) {
 async function main() {
   const encoded = process.argv[2] || "";
   const args = encoded ? JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) : {};
-  const browser = await chromium.launch({ headless: true });
+  let browser = null;
+  let page = null;
   try {
-    const page = await browser.newPage({ viewport: { width: 1024, height: 640 } });
+    if (!CDP_URL) throw new Error("No remote browser session was given.");
+    browser = await chromium.connectOverCDP(CDP_URL, { timeout: 30000 });
+    const context = browser.contexts()[0] || (await browser.newContext());
+    page = await context.newPage();
+    await page.setViewportSize({ width: 1024, height: 640 });
     const result = await run(page, args);
     process.stdout.write(JSON.stringify({ ok: true, result }));
   } catch (error) {
@@ -209,7 +216,8 @@ async function main() {
     process.stdout.write(JSON.stringify({ ok: false, error: message }));
     process.exitCode = 1;
   } finally {
-    await browser.close();
+    if (page) await page.close().catch(() => undefined);
+    if (browser) await browser.close().catch(() => undefined);
   }
 }
 
