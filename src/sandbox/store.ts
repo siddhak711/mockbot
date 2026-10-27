@@ -197,6 +197,26 @@ export class SandboxStore {
     ]);
   }
 
+  /**
+   * Store this sandbox only while the computer still points at `expected`
+   * (NULL, or the stale id the caller failed to reconnect to). Returns the id
+   * saved afterwards: this one when the claim won, another process's when it lost.
+   */
+  async claimSandboxId(
+    agentId: string,
+    sandboxId: string,
+    expected: string | null,
+  ): Promise<string | null> {
+    const claimed = await this.db.query<{ sandbox_id: string }>(
+      `UPDATE computers SET sandbox_id = $2
+       WHERE agent_id = $1 AND sandbox_id IS NOT DISTINCT FROM $3
+       RETURNING sandbox_id`,
+      [agentId, sandboxId, expected],
+    );
+    if (claimed.rows[0]) return claimed.rows[0].sandbox_id;
+    return (await this.getComputer(agentId))?.sandboxId ?? null;
+  }
+
   async writeFile(agentId: string, path: string, content: string): Promise<void> {
     await this.db.query(
       `INSERT INTO sandbox_files (agent_id, path, content)

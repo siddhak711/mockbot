@@ -333,6 +333,44 @@ describe("sandbox", { concurrent: false }, () => {
     await supervisor.close();
   });
 
+  it("keeps one Daytona sandbox when two instances open the same agent at once", async () => {
+    const store = await SandboxStore.open("memory://");
+    const fleet = new FakeFleet();
+    fleet.bootMs = 20;
+    // Two runtimes stand in for two serverless instances: no shared in-process map.
+    const left = new DaytonaRuntime(fleet, store, "secret");
+    const right = new DaytonaRuntime(fleet, store, "secret");
+    await Promise.all([left.prepare("agent-race"), right.prepare("agent-race")]);
+
+    expect(fleet.creates).toHaveLength(2);
+    const saved = (await store.getComputer("agent-race"))?.sandboxId;
+    const loser = fleet.creates.map((item) => item.id).find((id) => id !== saved);
+    expect(saved).toBeTruthy();
+    expect(fleet.destroyed).toEqual([loser]);
+    const [one, two] = await Promise.all([
+      left.exec("agent-race", "echo hi", 1_000),
+      right.exec("agent-race", "echo hi", 1_000),
+    ]);
+    expect(one.exitCode).toBe(0);
+    expect(two.exitCode).toBe(0);
+    expect(fleet.reconnects).toContain(saved);
+    await store.close();
+  });
+
+  it("replaces a stale Daytona sandbox id that no longer reconnects", async () => {
+    const store = await SandboxStore.open("memory://");
+    await store.ensureComputer("agent-stale", "daytona");
+    expect(await store.claimSandboxId("agent-stale", "sbx-gone", null)).toBe("sbx-gone");
+    expect(await store.claimSandboxId("agent-stale", "sbx-other", null)).toBe("sbx-gone");
+    const fleet = new FakeFleet();
+    const runtime = new DaytonaRuntime(fleet, store, "secret");
+    await runtime.prepare("agent-stale");
+    expect(fleet.creates).toHaveLength(1);
+    expect((await store.getComputer("agent-stale"))?.sandboxId).toBe(fleet.creates[0]?.id);
+    expect(fleet.destroyed).toEqual([]);
+    await store.close();
+  });
+
   it("restarts a cached Daytona sandbox that has stopped", async () => {
     const fleet = new FakeFleet();
     const store = await SandboxStore.open("memory://");
@@ -823,6 +861,7 @@ describe("sandbox", { concurrent: false }, () => {
     readonly starts: string[] = [];
     readonly reconnects: string[] = [];
     readonly reads: string[] = [];
+    readonly destroyed: string[] = [];
     bootMs = 0;
     failNextStart = false;
     readonly #sandboxes = new Map<string, Map<string, string>>();
@@ -839,6 +878,12 @@ describe("sandbox", { concurrent: false }, () => {
       this.#sandboxes.set(id, new Map());
       this.#running.add(id);
       return this.#handle(id);
+    }
+
+    async destroy(sandboxId: string): Promise<void> {
+      this.destroyed.push(sandboxId);
+      this.#sandboxes.delete(sandboxId);
+      this.#running.delete(sandboxId);
     }
 
     async reconnect(sandboxId: string): Promise<RemoteSandbox | null> {
