@@ -24,5 +24,7 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|fonts/|sprites/|.*\\..*).*)"],
+  // `/icon` is the extensionless alias of `/icon.svg`. It has no dot, so the
+  // file exception below would otherwise send the favicon to the login page.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon$|fonts/|sprites/|.*\\..*).*)"],
 };
