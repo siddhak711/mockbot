@@ -27,6 +27,7 @@ import {
   activitiesAfterReconnect,
   activitiesAfterStop,
   activitiesFromMessages,
+  resumeProgress,
   describeTool,
   previewText,
   type ToolActivity,
@@ -42,6 +43,10 @@ import type { Conversation, LivePhase, Memory, Message, ToolCallStatus } from ".
 function isAbort(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
 }
+
+const RESUME_POLL_MS = 500;
+/** About ten minutes, the longest a resumed turn's tools may run. */
+const RESUME_POLL_ATTEMPTS = 1200;
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -73,6 +78,9 @@ export function Workspace({
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState(false);
+  // A paused turn running again after a decision made with no live stream.
+  const [resuming, setResuming] = useState(false);
+  const resumingRef = useRef(false);
   const [livePhase, setLivePhase] = useState<LivePhase | null>(null);
   const [alert, setAlert] = useState<SpriteAlert | null>(null);
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus>({
@@ -394,7 +402,7 @@ export function Workspace({
     const approvalPending = activitiesRef.current.some(
       (item) => item.state === "approval" || item.state === "ask",
     );
-    if (!trimmed || streaming || approvalPending) return;
+    if (!trimmed || streaming || resumingRef.current || approvalPending) return;
     agentLoadRequest.current += 1;
     setAlert(null);
     const controller = new AbortController();
@@ -679,6 +687,8 @@ export function Workspace({
   }
 
   async function decide(id: string, decision: "approve" | "deny") {
+    const live = abortRef.current !== null;
+    let saved = false;
     try {
       const outcome = await settleDecision(decidingRef, id, async () => {
         setDecidingId(id);
@@ -688,6 +698,7 @@ export function Workspace({
           body: JSON.stringify({ id, decision }),
         });
         if (response.ok) {
+          saved = true;
           setActivities((prev) =>
             prev.map((item) =>
               item.id === id
@@ -713,6 +724,8 @@ export function Workspace({
       if (outcome === "released") {
         setDecidingId((current) => (current === id ? null : current));
       }
+      const conversationId = activeIdRef.current;
+      if (saved && !live && conversationId) await watchResume(conversationId, id);
     } catch {
       setDecidingId((current) => (current === id ? null : current));
     }
@@ -755,27 +768,38 @@ export function Workspace({
         setDecidingId((current) => (current === id ? null : current));
       }
       const conversationId = activeIdRef.current;
-      if (saved && !live && conversationId) await watchAnswer(conversationId, id);
+      if (saved && !live && conversationId) await watchResume(conversationId, id);
     } catch {
       setDecidingId((current) => (current === id ? null : current));
     }
   }
 
-  async function watchAnswer(conversationId: string, toolId: string) {
-    for (let attempt = 0; attempt < 50; attempt += 1) {
-      await wait(200);
-      if (activeIdRef.current !== conversationId) return;
-      const response = await fetch(`/api/conversations/${conversationId}`);
-      if (!response.ok) continue;
-      const data = (await response.json()) as { conversation: Conversation; messages: Message[] };
-      if (activeIdRef.current !== conversationId) return;
-      setMessages(data.messages);
-      const next = activitiesFromMessages(data.messages);
-      setActivities(next);
-      const tool = next.find((item) => item.id === toolId);
-      const message = data.messages.find((item) => item.id === tool?.messageId);
-      const settled = !tool || (tool.state !== "ask" && tool.state !== "running");
-      if (settled && message?.content.trim()) return;
+  /**
+   * Follow a turn that continues on the server after a decision. Keep the
+   * composer locked and poll until the turn ends or pauses for the person again.
+   */
+  async function watchResume(conversationId: string, toolId: string) {
+    resumingRef.current = true;
+    setResuming(true);
+    try {
+      for (let attempt = 0; attempt < RESUME_POLL_ATTEMPTS; attempt += 1) {
+        const response = await fetch(`/api/conversations/${conversationId}`);
+        if (activeIdRef.current !== conversationId) return;
+        if (response.ok) {
+          const data = (await response.json()) as {
+            conversation: Conversation;
+            messages: Message[];
+          };
+          if (activeIdRef.current !== conversationId) return;
+          setMessages(data.messages);
+          setActivities(activitiesFromMessages(data.messages));
+          if (resumeProgress(data.messages, toolId) !== "running") return;
+        }
+        await wait(RESUME_POLL_MS);
+      }
+    } finally {
+      resumingRef.current = false;
+      setResuming(false);
     }
   }
 
@@ -969,8 +993,10 @@ export function Workspace({
           ) : null}
           <Composer
             streaming={streaming}
-            awaitingApproval={awaitingApproval || awaitingAsk}
-            busyHint={awaitingAsk ? "Waiting for an answer" : undefined}
+            awaitingApproval={awaitingApproval || awaitingAsk || resuming}
+            busyHint={
+              awaitingAsk ? "Waiting for an answer" : resuming ? "Finishing the reply" : undefined
+            }
             placeholder={speaking ? `Message ${speaking.name}` : "Message Mockbot"}
             value={composerDraft}
             onValueChange={setComposerDraft}

@@ -1,6 +1,8 @@
-import { noteStoredAsk, resumeStoredAsk } from "../../../../src/ask-resume";
 import { requireApiUser } from "../../../../src/auth/guard";
+import { resumeChatTurn } from "../../../../src/chat";
 import { getAppContext } from "../../../../src/context";
+import { withUserTools } from "../../../../src/mcp/user-tools";
+import { SseParser } from "../../../../src/sse";
 import { STOPPED_TOOL_OUTPUT } from "../../../../src/tools/display";
 import {
   acceptedAskAnswer,
@@ -9,6 +11,7 @@ import {
   readAskUser,
 } from "../../../../src/tools/ask-user";
 import type { ConversationStore } from "../../../../src/store";
+import { applyStreamEvent, emptyTrace } from "../../../../src/trace";
 import type { StoredToolCall } from "../../../../src/types";
 
 export const runtime = "nodejs";
@@ -42,20 +45,13 @@ export async function POST(request: Request): Promise<Response> {
   const { asks, store } = context;
   const userId = actor.scoped ? actor.user.id : undefined;
   const pending = await loadPendingAsk(store, id, userId);
-  if (!pending) {
-    return Response.json({ error: "That question is no longer waiting" }, { status: 404 });
-  }
+  if (!pending) return gone();
 
   if (decision === "stop") {
-    if (asks.waiting(id)) {
-      asks.stop(id);
-      return Response.json({ id, decision: "stop" });
-    }
+    // Claim the row first, so a racing answer cannot also continue the turn.
     const claimed = await store.claimToolCall(id, "error", STOPPED_TOOL_OUTPUT);
-    if (!claimed) {
-      return Response.json({ error: "That question is no longer waiting" }, { status: 404 });
-    }
-    await noteStoredAsk(store, claimed, STOPPED_TOOL_OUTPUT);
+    if (!claimed) return gone();
+    if (!asks.stop(id)) await noteStoredAsk(store, claimed, STOPPED_TOOL_OUTPUT);
     return Response.json({ id, decision: "stop" });
   }
 
@@ -70,31 +66,103 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: "That answer is not one of the options" }, { status: 400 });
   }
 
-  if (asks.waiting(id)) {
-    const result = asks.answer(id, accepted);
-    if (result === "rejected") {
-      return Response.json({ error: "That answer is not one of the options" }, { status: 400 });
-    }
-    if (result === "ok") return Response.json({ id, answer: accepted });
+  // One winner per question: the database claim decides, before any waiter wakes.
+  const claimed = await store.claimToolCall(id, "done", accepted);
+  if (!claimed) return gone();
+  if (asks.waiting(id) && asks.answer(id, accepted) === "ok") {
+    return Response.json({ id, answer: accepted });
   }
 
-  const claimed = await store.claimToolCall(id, "done", accepted);
-  if (!claimed) {
-    return Response.json({ error: "That question is no longer waiting" }, { status: 404 });
+  // The live turn is gone. Resume it through the same turn builder a new
+  // message uses, with this user's own connector tools.
+  const agents =
+    context.agents && actor.scoped ? context.agents.forUser(actor.user.id) : context.agents;
+  const response = await withUserTools(
+    { store, tools: context.tools, userId: actor.user.id },
+    (fresh) =>
+      resumeChatTurn({
+        store,
+        provider: context.provider,
+        tools: fresh,
+        approvals: context.approvals,
+        asks,
+        agents,
+        memory: context.memory,
+        computer: context.computer,
+        connector: context.connector,
+        userId,
+        tool: claimed,
+        answer: accepted,
+      }),
+  );
+  if (!response.body || !response.headers.get("content-type")?.includes("text/event-stream")) {
+    const failure = (await response.json().catch(() => null)) as { error?: string } | null;
+    const text = failure?.error ?? "The turn could not continue.";
+    await noteStoredAsk(store, { ...claimed, output: accepted }, accepted);
+    return Response.json({ error: text }, { status: response.status || 500 });
   }
+  const outcome = await followResume(response.body);
+  return Response.json({ id, answer: accepted, resumed: true, ...outcome });
+}
+
+function gone(): Response {
+  return Response.json({ error: "That question is no longer waiting" }, { status: 404 });
+}
+
+/**
+ * Read the resumed turn until it finishes or pauses for the person again. A
+ * paused turn keeps running here, waiting on the same approval and question
+ * gates a live chat uses, while the client polls the conversation.
+ */
+async function followResume(
+  body: ReadableStream<Uint8Array>,
+): Promise<{ state: "done" | "paused" | "error"; error?: string }> {
+  const reader = body.getReader();
+  const parser = new SseParser();
+  const decoder = new TextDecoder();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) return { state: "done" };
+    for (const message of parser.push(decoder.decode(value, { stream: true }))) {
+      if (message.event === "done") return { state: "done" };
+      if (message.event === "error") {
+        const data = JSON.parse(message.data) as { message?: string };
+        return { state: "error", error: data.message ?? "The model request failed" };
+      }
+      if (message.event === "approval_required" || message.event === "ask_user") {
+        void drain(reader);
+        return { state: "paused" };
+      }
+    }
+  }
+}
+
+async function drain(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<void> {
   try {
-    await resumeStoredAsk({
-      store,
-      provider: context.provider,
-      tools: context.tools.clone(),
-      tool: claimed,
-      answer: accepted,
-    });
-  } catch (error) {
-    const text = error instanceof Error ? error.message : "The model request failed";
-    await noteStoredAsk(store, { ...claimed, output: text }, text);
+    while (!(await reader.read()).done) {
+      // The turn persists its own progress; nobody reads these events.
+    }
+  } catch {
+    // The turn already stored what it could.
   }
-  return Response.json({ id, answer: accepted, resumed: true });
+}
+
+/** Write a settled answer onto the assistant message that asked. */
+async function noteStoredAsk(
+  store: ConversationStore,
+  tool: StoredToolCall,
+  output: string,
+): Promise<void> {
+  const loaded = await store.getConversation(tool.conversationId);
+  const message = loaded?.messages.find((item) => item.id === tool.messageId);
+  if (!message) return;
+  const trace = applyStreamEvent(message.trace ?? emptyTrace(), {
+    type: "tool_result",
+    id: tool.id,
+    name: tool.name,
+    content: output,
+  });
+  await store.updateMessage(message.id, trace.text || message.content, trace);
 }
 
 async function loadPendingAsk(

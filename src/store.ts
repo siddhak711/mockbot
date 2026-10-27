@@ -432,6 +432,17 @@ export class ConversationStore {
     return row ? mapToolCall(row) : null;
   }
 
+  /** True while a stored ask_user row in this conversation still waits for an answer. */
+  async hasOpenAsk(conversationId: string): Promise<boolean> {
+    const result = await this.db.query<{ id: string }>(
+      `SELECT id FROM tool_calls
+       WHERE conversation_id = $1 AND status = 'ask' AND name = 'ask_user'
+       LIMIT 1`,
+      [conversationId],
+    );
+    return result.rows.length > 0;
+  }
+
   /**
    * Move one stored ask_user row out of `ask`. A second caller gets null so two
    * instances cannot both continue the same question.

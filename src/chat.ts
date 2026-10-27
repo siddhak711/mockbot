@@ -27,9 +27,16 @@ import {
   emptyModelCapture,
   ignoreRunLog,
 } from "./runs/events";
-import { buildModelInput } from "./turn";
+import { buildModelInput, dropAbandonedPrompts } from "./turn";
 import { applyStreamEvent, emptyTrace, hasVisibleStream, modelPromptParts } from "./trace";
-import type { LlmStreamEvent, LlmToolCall, MessageTrace } from "./types";
+import type {
+  Conversation,
+  LlmMessage,
+  LlmStreamEvent,
+  LlmToolCall,
+  MessageTrace,
+  StoredToolCall,
+} from "./types";
 
 const MAX_MESSAGE_LENGTH = 20_000;
 const MAX_ROUNDS = 8;
@@ -118,7 +125,8 @@ function upsertCall(
   if (event.arguments) call.arguments += event.arguments;
 }
 
-export async function streamChatTurn(options: {
+/** What every chat turn needs, whether it starts from a message or resumes an answer. */
+export type ChatTurnOptions = {
   store: ConversationStore;
   provider: LlmProvider;
   tools: ToolRegistry;
@@ -126,16 +134,54 @@ export async function streamChatTurn(options: {
   asks: AskGate;
   /** Routine and other background runs must not wait for a person. */
   unattended?: boolean;
-  message: string;
-  conversationId?: string;
-  agentId?: string;
   signal?: AbortSignal;
   agents?: AgentDirectory;
   memory?: AgentMemoryPort;
   computer?: ComputerPort;
   connector?: ConnectorPort;
   userId?: string;
-}): Promise<Response> {
+  /** Reuse a run id chosen by the caller, such as a routine run. */
+  runId?: string;
+};
+
+export const UNATTENDED_APPROVAL =
+  "This run has nobody to approve actions, so this one was not run. Do not retry it unless the person asks.";
+
+/** New turns wait while a question or approval in this conversation is still open. */
+/** Conversations whose paused turn is running again after a stored answer. */
+const resumingConversations = new Set<string>();
+
+const RESUMING_ERROR = "The previous turn is still finishing in this conversation.";
+
+async function pendingTurnBlock(
+  options: ChatTurnOptions,
+  conversationId: string,
+): Promise<Response | null> {
+  if (resumingConversations.has(conversationId)) {
+    return Response.json({ error: RESUMING_ERROR }, { status: 409 });
+  }
+  if (options.approvals.hasPending(conversationId)) {
+    return Response.json(
+      { error: "An approval is still pending for this conversation." },
+      { status: 409 },
+    );
+  }
+  if (options.asks.hasPending(conversationId) || (await options.store.hasOpenAsk(conversationId))) {
+    return Response.json(
+      { error: "A question is still waiting for an answer in this conversation." },
+      { status: 409 },
+    );
+  }
+  return null;
+}
+
+export async function streamChatTurn(
+  options: ChatTurnOptions & {
+    message: string;
+    conversationId?: string;
+    agentId?: string;
+  },
+): Promise<Response> {
   const message = options.message.trim();
   if (!message) {
     return Response.json({ error: "Message is required" }, { status: 400 });
@@ -145,9 +191,6 @@ export async function streamChatTurn(options: {
   }
 
   const agents = options.agents ?? (await AgentDirectory.attach(options.store));
-  const memory = options.memory ?? new NoteMemory(agents);
-  const computer = options.computer ?? defaultComputer;
-  const connector = options.connector ?? defaultConnector;
   const conversationId = options.conversationId?.trim() || undefined;
   const userId = options.userId ?? null;
   let conversation = conversationId
@@ -164,20 +207,108 @@ export async function streamChatTurn(options: {
   }
   const named = await options.store.nameIfEmpty(conversation.id, titleFromMessage(message), userId);
   if (named) conversation = named;
-  if (options.approvals.hasPending(conversation.id)) {
+  const blocked = await pendingTurnBlock(options, conversation.id);
+  if (blocked) return blocked;
+
+  const user = await options.store.addMessage(conversation.id, "user", message);
+  return runChatTurn({ ...options, agents }, conversation, { userMessageId: user.id });
+}
+
+/**
+ * Continue a turn that paused on ask_user after its live waiter is gone. The
+ * answer row is already claimed. The same turn builder and loop as a new
+ * message run it, seeded with the stored assistant message.
+ */
+export async function resumeChatTurn(
+  options: ChatTurnOptions & { tool: StoredToolCall; answer: string },
+): Promise<Response> {
+  const loaded = await options.store.getConversation(
+    options.tool.conversationId,
+    undefined,
+    options.userId,
+  );
+  if (!loaded) return Response.json({ error: "Conversation not found" }, { status: 404 });
+  const message = loaded.messages.find((item) => item.id === options.tool.messageId);
+  if (!message) return Response.json({ error: "Question message not found" }, { status: 404 });
+  if (loaded.messages.at(-1)?.id !== message.id) {
+    return Response.json(
+      { error: "The conversation moved on after this question." },
+      { status: 409 },
+    );
+  }
+  if (options.approvals.hasPending(loaded.conversation.id)) {
     return Response.json(
       { error: "An approval is still pending for this conversation." },
       { status: 409 },
     );
   }
-  if (options.asks.hasPending(conversation.id)) {
-    return Response.json(
-      { error: "A question is still waiting for an answer in this conversation." },
-      { status: 409 },
-    );
+  const conversationId = loaded.conversation.id;
+  if (resumingConversations.has(conversationId)) {
+    return Response.json({ error: RESUMING_ERROR }, { status: 409 });
   }
+  resumingConversations.add(conversationId);
+  try {
+    const trace = applyStreamEvent(message.trace ?? emptyTrace(), {
+      type: "tool_result",
+      id: options.tool.id,
+      name: ASK_USER_TOOL,
+      content: options.answer,
+    });
+    await options.store.updateMessage(message.id, trace.text, trace);
+    const response = await runChatTurn(options, loaded.conversation, {
+      resume: { messageId: message.id, trace },
+    });
+    // A streamed turn releases the conversation when its stream finishes.
+    if (!response.headers.get("content-type")?.includes("text/event-stream")) {
+      resumingConversations.delete(conversationId);
+    }
+    return response;
+  } catch (error) {
+    resumingConversations.delete(conversationId);
+    throw error;
+  }
+}
 
-  const user = await options.store.addMessage(conversation.id, "user", message);
+type TurnStart = { userMessageId: string } | { resume: { messageId: string; trace: MessageTrace } };
+
+/** The stored turn as model history: one assistant message with its calls, then each result. */
+function resumedHistory(trace: MessageTrace): LlmMessage[] {
+  const calls = trace.tools.filter((tool) => tool.id && tool.name);
+  const messages: LlmMessage[] = [
+    {
+      role: "assistant",
+      content: trace.text,
+      ...(calls.length
+        ? {
+            tool_calls: calls.map((tool) => ({
+              id: tool.id,
+              type: "function" as const,
+              function: { name: tool.name, arguments: tool.arguments || "{}" },
+            })),
+          }
+        : {}),
+    },
+  ];
+  for (const tool of calls) {
+    messages.push({
+      role: "tool",
+      tool_call_id: tool.id,
+      content: tool.result ?? "This tool did not finish.",
+    });
+  }
+  return messages;
+}
+
+async function runChatTurn(
+  options: ChatTurnOptions,
+  conversation: Conversation,
+  start: TurnStart,
+): Promise<Response> {
+  const agents = options.agents ?? (await AgentDirectory.attach(options.store));
+  const memory = options.memory ?? new NoteMemory(agents);
+  const computer = options.computer ?? defaultComputer;
+  const connector = options.connector ?? defaultConnector;
+  const resume = "resume" in start ? start.resume : null;
   const speaker = (await agents.get(conversation.agentId)) ?? (await agents.lead());
   if (!speaker) return Response.json({ error: "Agent not found" }, { status: 404 });
   const [memories, grants] = await Promise.all([
@@ -191,11 +322,17 @@ export async function streamChatTurn(options: {
     agentPrompt: buildAgentSystemPrompt({ agent: speaker, memories, grants, child: false }),
   });
   if (!prepared) return Response.json({ error: "Conversation not found" }, { status: 404 });
-  const history = prepared.messages;
+  const history = options.unattended ? dropAbandonedPrompts(prepared.messages) : prepared.messages;
+  if (resume) {
+    // The paused message is the last one. Replace its plain text with the full
+    // turn so far: every tool call this turn made and its result.
+    if (history.at(-1)?.role === "assistant") history.pop();
+    history.push(...resumedHistory(resume.trace));
+  }
   const memoryDeps = prepared.deps;
 
   const { store, provider, approvals, asks, signal } = options;
-  const runLog = new RunLog(store.connection);
+  const runLog = new RunLog(store.connection, options.runId);
   const tools = toolsForSpeaker(options.tools, speaker, {
     directory: agents,
     store,
@@ -218,14 +355,16 @@ export async function streamChatTurn(options: {
     },
   };
 
-  let partial = "";
   const promptParts = modelPromptParts(history);
-  let trace: MessageTrace = {
-    ...emptyTrace(),
-    system: promptParts.system,
-    prefill: promptParts.prefill,
-  };
-  let assistantId: string | null = null;
+  let trace: MessageTrace = resume
+    ? resume.trace
+    : {
+        ...emptyTrace(),
+        system: promptParts.system,
+        prefill: promptParts.prefill,
+      };
+  let partial = trace.text;
+  let assistantId: string | null = resume?.messageId ?? null;
   let saved = "";
   let persistQueue = Promise.resolve();
   let userStopped = false;
@@ -323,12 +462,13 @@ export async function streamChatTurn(options: {
         enqueue("meta", {
           conversationId: conversationSnapshot.id,
           title: conversationSnapshot.title,
-          userMessageId: user.id,
+          userMessageId: "userMessageId" in start ? start.userMessageId : null,
           runId: runLog.id,
+          ...(resume ? { resumedMessageId: resume.messageId } : {}),
         });
         enqueue("prompt", { system: trace.system ?? "", prefill: trace.prefill ?? "" });
 
-        let sawStart = false;
+        let sawStart = Boolean(resume?.trace.started);
         let roundEnded = false;
         for (let round = 0; round < MAX_ROUNDS; round += 1) {
           if (clientCancelled() || userStopped) break;
@@ -338,6 +478,11 @@ export async function streamChatTurn(options: {
           let finishReason: string | null = null;
           roundEnded = false;
           const indexBase = trace.tools.length;
+          // A later round, or a resumed one, can reuse an id this turn already
+          // stored. A fresh id keeps the new call from overwriting that row.
+          const takenIds = new Set(trace.tools.map((tool) => tool.id).filter(Boolean));
+          const renamed = new Map<string, string>();
+          const idsByIndex = new Map<number, string>();
           const roundAbort = new AbortController();
           const providerSignal = roundAbort.signal as AbortSignal & {
             tools?: typeof exposed;
@@ -372,8 +517,9 @@ export async function streamChatTurn(options: {
 
           runLog.holdWrites();
           try {
-            for await (const event of events) {
-              captureModelEvent(capture, event);
+            for await (const raw of events) {
+              captureModelEvent(capture, raw);
+              const event = freshToolIds(raw, takenIds, renamed, idsByIndex);
               if (clientCancelled() || userStopped) break;
               if (!sawStart && event.type !== "start") {
                 sawStart = true;
@@ -486,6 +632,7 @@ export async function streamChatTurn(options: {
           await persist(partial, trace);
           await ignoreRunLog(runLog.mark("run.finished", { status: runStatus }));
         } finally {
+          if (resume) resumingConversations.delete(conversation.id);
           close();
         }
       }
@@ -517,7 +664,9 @@ export async function streamChatTurn(options: {
           { question, options, allowCustom },
           conversationSnapshot.id,
         );
-        if (outcome.reason !== "user") {
+        if (outcome.reason === "timeout") {
+          // The answer route may have claimed the row as the waiter timed out.
+          // That route continues the turn, so this loop steps aside.
           const stored = await store.getToolCall(call.id);
           if (stored && stored.status !== "ask") {
             call.status = "done";
@@ -595,6 +744,9 @@ export async function streamChatTurn(options: {
           return askPerson(call, prepared.args);
         }
         if (requiresApproval(tool, prepared.args)) {
+          if (options.unattended) return finish(call, "denied", UNATTENDED_APPROVAL);
+          // Store what will run if approved, not the raw model arguments.
+          call.arguments = JSON.stringify(prepared.args);
           call.status = "approval";
           await saveCall(call);
           const described = describeTool(call.name, JSON.stringify(prepared.args));
@@ -704,6 +856,30 @@ export async function streamChatTurn(options: {
   });
 
   return new Response(stream, { headers: SSE_HEADERS });
+}
+
+function freshToolIds(
+  event: LlmStreamEvent,
+  takenIds: Set<string>,
+  renamed: Map<string, string>,
+  idsByIndex: Map<number, string>,
+): LlmStreamEvent {
+  if (event.type === "tool_result") {
+    const id = renamed.get(event.id);
+    return id ? { ...event, id } : event;
+  }
+  if (event.type !== "tool_call") return event;
+  const assigned = idsByIndex.get(event.index);
+  if (assigned) return event.id ? { ...event, id: assigned } : event;
+  if (!event.id) return event;
+  let id = event.id;
+  if (takenIds.has(id)) {
+    id = `call_${crypto.randomUUID()}`;
+    renamed.set(event.id, id);
+  }
+  idsByIndex.set(event.index, id);
+  takenIds.add(id);
+  return id === event.id ? event : { ...event, id };
 }
 
 function parseArguments(
