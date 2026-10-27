@@ -42,6 +42,22 @@ it("gives thread actions their labels and clicks", () => {
   expect(onShowComputer).toHaveBeenCalledOnce();
   expect(screen.queryByRole("button", { name: "Rename" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+  expect(screen.queryByRole("link", { name: "Replay" })).toBeNull();
+});
+
+it("shows replay as an icon link once the thread has a run", () => {
+  render(
+    <ThreadActions
+      replayHref="/runs/run_1"
+      computerOpen={false}
+      onMemory={() => {}}
+      onShowComputer={() => {}}
+    />,
+  );
+
+  const replay = screen.getByRole("link", { name: "Replay" });
+  expect(replay.getAttribute("href")).toBe("/runs/run_1");
+  expect(replay.querySelector("svg")).toBeTruthy();
 });
 
 it("gives side-panel tabs their labels and clicks", () => {

@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { ComputerSnapshot, SandboxRun } from "../src/sandbox/types";
-import type { SpriteState } from "../src/sprite";
+import type { SpriteColor, SpriteState } from "../src/sprite";
 import { BotSprite } from "./bot-sprite";
 
 export type ChangedFileRef = {
@@ -44,6 +44,8 @@ export function ComputerPane({
   activities = [],
   unavailableReason = null,
   embedded = false,
+  agentName = "mockbot",
+  spriteColor,
   onContentTab,
 }: {
   snapshot?: ComputerSnapshot | null;
@@ -52,6 +54,9 @@ export function ComputerPane({
   /** The server's sandboxError, shown instead of the generic message. */
   unavailableReason?: string | null;
   embedded?: boolean;
+  /** The agent whose sandbox this is. The pane is titled with its name and sprite. */
+  agentName?: string;
+  spriteColor?: SpriteColor;
   onContentTab?: (tab: ComputerContentTab) => void;
 }) {
   const runs = snapshot?.runs ?? [];
@@ -106,10 +111,10 @@ export function ComputerPane({
 
   const header = (
     <div className="computer-head">
-      <BotSprite state={presenceSprite(presence)} size={22} />
+      <BotSprite state={presenceSprite(presence)} color={spriteColor} size={22} />
       <div className="computer-head-copy">
         <h2 className="computer-head-title">
-          mockbot&apos;s computer
+          {agentName}&apos;s computer
           <span className="computer-head-provider"> · {provider}</span>
         </h2>
       </div>
@@ -190,12 +195,16 @@ export function ComputerPane({
         aria-labelledby={`${baseId}-tab-screen`}
       >
         <h3>Nothing on screen yet</h3>
-        <p>When mockbot uses its computer, you&apos;ll see it here live.</p>
+        <p>When {agentName} uses its computer, you&apos;ll see it here live.</p>
       </div>
     );
   } else if (contentTab === "browser") {
     panel = (
-      <BrowserPlaceholder id={`${baseId}-panel-browser`} labelledBy={`${baseId}-tab-browser`} />
+      <BrowserPlaceholder
+        id={`${baseId}-panel-browser`}
+        labelledBy={`${baseId}-tab-browser`}
+        agentName={agentName}
+      />
     );
   } else {
     panel = (
@@ -327,7 +336,15 @@ function TerminalMirror({ runs, id }: { runs: readonly SandboxRun[]; id: string 
   );
 }
 
-function BrowserPlaceholder({ id, labelledBy }: { id: string; labelledBy: string }) {
+function BrowserPlaceholder({
+  id,
+  labelledBy,
+  agentName,
+}: {
+  id: string;
+  labelledBy: string;
+  agentName: string;
+}) {
   return (
     <div className="computer-browser" role="tabpanel" id={id} aria-labelledby={labelledBy}>
       <div className="computer-browser-bar">
@@ -350,7 +367,7 @@ function BrowserPlaceholder({ id, labelledBy }: { id: string; labelledBy: string
       </div>
       <div className="computer-empty">
         <h3>Nothing on screen yet</h3>
-        <p>Browser pages show up here when mockbot opens one.</p>
+        <p>Browser pages show up here when {agentName} opens one.</p>
       </div>
     </div>
   );

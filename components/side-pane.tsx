@@ -14,6 +14,7 @@ import { MemoryPanel } from "./memory-panel";
 import { TokenStreamPanel } from "./token-stream";
 import type { ComputerSnapshot } from "../src/sandbox/types";
 import type { ToolActivity } from "../src/tools/display";
+import type { SpriteColor } from "../src/sprite";
 import type { Memory, Message } from "../src/types";
 
 export type SideTab = "computer" | "memory" | "trace";
@@ -25,6 +26,8 @@ export function SidePane({
   memories,
   memoryError,
   agentId,
+  agentName,
+  spriteColor,
   onMemoriesChanged,
   activities = [],
   snapshot = null,
@@ -43,6 +46,8 @@ export function SidePane({
   memories: Memory[] | null;
   memoryError: string | null;
   agentId: string;
+  agentName?: string;
+  spriteColor?: SpriteColor;
   onMemoriesChanged: () => Promise<void>;
   activities?: ToolActivity[];
   snapshot?: ComputerSnapshot | null;
@@ -124,6 +129,8 @@ export function SidePane({
       ) : (
         <ComputerPane
           embedded
+          agentName={agentName}
+          spriteColor={spriteColor}
           snapshot={snapshot}
           status={status}
           activities={activities}
