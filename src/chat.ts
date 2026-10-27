@@ -18,6 +18,7 @@ import {
   STOPPED_TOOL_OUTPUT,
 } from "./tools/display";
 import type { ToolContext } from "./tools/types";
+import { currentModelRoute } from "./model-router";
 import { buildModelInput } from "./turn";
 import { applyStreamEvent, emptyTrace, hasVisibleStream, modelPromptParts } from "./trace";
 import type { LlmStreamEvent, LlmToolCall, MessageTrace } from "./types";
@@ -213,15 +214,17 @@ export async function streamChatTurn(options: {
   const liveCalls: PendingCall[] = [];
 
   const persist = (text: string, current: MessageTrace) => {
-    const encoded = JSON.stringify({ text, trace: current });
+    const stamped = stampRoute(current);
+    if (stamped !== current) trace = stamped;
+    const encoded = JSON.stringify({ text, trace: stamped });
     persistQueue = persistQueue.then(async () => {
       if (encoded === saved) return;
-      if (!hasVisibleStream(current, text)) return;
+      if (!hasVisibleStream(stamped, text)) return;
       if (!assistantId) {
-        const created = await store.addMessage(conversationSnapshot.id, "assistant", text, current);
+        const created = await store.addMessage(conversationSnapshot.id, "assistant", text, stamped);
         assistantId = created.id;
       } else {
-        await store.updateMessage(assistantId, text, current);
+        await store.updateMessage(assistantId, text, stamped);
       }
       saved = encoded;
     });
@@ -598,6 +601,22 @@ function toLlmToolCall(call: PendingCall): LlmToolCall {
     id: call.id,
     type: "function",
     function: { name: call.name, arguments: call.arguments || "{}" },
+  };
+}
+
+function stampRoute(current: MessageTrace): MessageTrace {
+  const route = currentModelRoute();
+  if (!route) return current;
+  if (
+    current.route?.tier === route.tier &&
+    current.route.reason === route.reason &&
+    current.route.model === route.model
+  ) {
+    return current;
+  }
+  return {
+    ...current,
+    route: { tier: route.tier, reason: route.reason, model: route.model },
   };
 }
 

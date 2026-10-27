@@ -49,6 +49,12 @@ export type MessageTrace = {
   prefill?: string;
   /** Production order. Absent on traces stored before ordered segments existed. */
   segments?: TraceSegment[];
+  /** Model tier chosen for this turn. Absent on traces stored before routing. */
+  route?: {
+    tier: "cheap" | "strong";
+    reason: "chat" | "tool" | "plan" | "code" | "retry";
+    model: string;
+  };
 };
 
 export type Message = {

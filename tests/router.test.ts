@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { once } from "node:events";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { POST } from "../app/api/chat/route";
 import { resetAppContext, setAppContext } from "../src/context";
 import { MockProvider, selectProvider } from "../src/llm";
@@ -25,6 +25,8 @@ import {
 import type { Sql } from "../src/db/sql";
 import { SandboxTurnProvider } from "../src/sandbox/turn";
 import { ConversationStore } from "../src/store";
+import { emptyTrace } from "../src/trace";
+import { buildModelInput } from "../src/turn";
 import { createDefaultTools } from "../src/tools/builtins";
 import { readSse } from "./helpers";
 
@@ -138,13 +140,100 @@ it("reads tier ids and prices from env and refuses a closed model", () => {
   expect(() => loadRouterConfig({ MODEL_TIER_CHEAP_INPUT_USD_PER_MTOK: "-1" })).toThrow(/price/i);
 });
 
-it("keeps both tiers on LLM_MODEL when tiers are unset and the base URL is not OpenRouter", () => {
+it("keeps a retry on the strong tier after the failed tool is stored as assistant text", async () => {
+  const rebuilt = describeTurn([
+    { role: "user", content: "Look up the grove notes" },
+    {
+      role: "assistant",
+      content: "Previous tool activity:\nweb_search (error): Unknown tool",
+      failed: true,
+    },
+    { role: "user", content: "Please try again" },
+  ]);
+  expect(pickModel(rebuilt)).toMatchObject({ tier: "strong", reason: "retry" });
+
+  const store = await ConversationStore.open();
+  const conversation = await store.createConversation("retry");
+  await store.addMessage(conversation.id, "user", "Look up the grove notes");
+  const assistant = await store.addMessage(
+    conversation.id,
+    "assistant",
+    "I could not look that up.",
+    {
+      ...emptyTrace(),
+      started: true,
+      role: "assistant",
+      ended: true,
+      text: "I could not look that up.",
+      route: { tier: "cheap", reason: "tool", model: DEFAULT_ROUTER_CONFIG.cheap.id },
+    },
+  );
+  await store.saveToolCall({
+    id: "call_saved",
+    conversationId: conversation.id,
+    messageId: assistant.id,
+    name: "web_search",
+    arguments: "{}",
+    status: "error",
+    output: "Unknown tool",
+  });
+  await store.addMessage(conversation.id, "user", "Please try again");
+  const prepared = await buildModelInput({ store, conversationId: conversation.id });
+  expect(prepared).not.toBeNull();
+  expect(pickModel(describeTurn(prepared!.messages), DEFAULT_ROUTER_CONFIG)).toMatchObject({
+    tier: "strong",
+    reason: "retry",
+  });
+
+  await store.addMessage(conversation.id, "user", "Never mind, how are you?");
+  const next = await buildModelInput({ store, conversationId: conversation.id });
+  expect(pickModel(describeTurn(next!.messages), DEFAULT_ROUTER_CONFIG)).toMatchObject({
+    tier: "cheap",
+    reason: "chat",
+  });
+});
+
+it("records the chosen tier on the log line and on the saved turn", async () => {
+  const info = vi.spyOn(console, "info").mockImplementation(() => {});
+  try {
+    const store = await ConversationStore.open();
+    setAppContext({
+      store,
+      provider: new RoutingProvider({
+        inner: new MockProvider({ delayMs: 0, chunkSize: 80 }),
+        config: DEFAULT_ROUTER_CONFIG,
+      }),
+    });
+    const response = await POST(
+      new Request("http://localhost/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "Hello there" }),
+      }),
+    );
+    await readSse(response);
+    expect(info.mock.calls.some((call) => String(call[0]).includes("tier=cheap"))).toBe(true);
+    expect(info.mock.calls.some((call) => String(call[0]).includes("reason=chat"))).toBe(true);
+    const loaded = await store.getConversation((await store.listConversations())[0]!.id);
+    expect(loaded?.messages[1]?.trace?.route).toMatchObject({
+      tier: "cheap",
+      reason: "chat",
+      model: DEFAULT_ROUTER_CONFIG.cheap.id,
+    });
+  } finally {
+    info.mockRestore();
+  }
+});
+
+it("keeps both tiers on LLM_MODEL when tiers are unset and the base URL is not OpenRouter", async () => {
   const config = loadRouterConfig({
     LLM_MODEL: "gpt-4o-mini",
     LLM_BASE_URL: "https://api.openai.com/v1",
   });
   expect(config.cheap.id).toBe("gpt-4o-mini");
   expect(config.strong.id).toBe("gpt-4o-mini");
+  expect(config.cheap.inputUsdPerMillion).toBe(0);
+  expect(config.strong.outputUsdPerMillion).toBe(0);
   expect(pickModel({ text: "Hey, what can you help me with today?" }, config).model).toBe(
     "gpt-4o-mini",
   );
@@ -157,6 +246,29 @@ it("keeps both tiers on LLM_MODEL when tiers are unset and the base URL is not O
   });
   expect(openRouter.cheap.id).toBe(DEFAULT_ROUTER_CONFIG.cheap.id);
   expect(openRouter.strong.id).toBe(DEFAULT_ROUTER_CONFIG.strong.id);
+  expect(openRouter.cheap.inputUsdPerMillion).toBe(DEFAULT_ROUTER_CONFIG.cheap.inputUsdPerMillion);
+  expect(openRouter.strong.outputUsdPerMillion).toBe(
+    DEFAULT_ROUTER_CONFIG.strong.outputUsdPerMillion,
+  );
+
+  const provider = new RoutingProvider({
+    inner: new MockProvider({ delayMs: 0, chunkSize: 80 }),
+    config,
+  });
+  for await (const _event of provider.stream([{ role: "user", content: "Hello there" }])) {
+    // The fallback id has to be accepted by the constructor and sent as the model.
+  }
+  expect(provider.lastDecision).toMatchObject({ tier: "cheap", model: "gpt-4o-mini" });
+  expect(
+    () =>
+      new RoutingProvider({
+        inner: new MockProvider({ delayMs: 0, chunkSize: 80 }),
+        config: {
+          cheap: { id: "openai/gpt-4o", inputUsdPerMillion: 1, outputUsdPerMillion: 1 },
+          strong: DEFAULT_ROUTER_CONFIG.strong,
+        },
+      }),
+  ).toThrow(/open-weights/);
 });
 
 it("escalates the next round after a failed tool, and a later try-again", () => {
@@ -301,6 +413,18 @@ it("logs the tier and cost to run_events, and no-ops when the table is absent", 
   expect(await logModelRoute({ ...event, id: "route_test_3" }, counted.db)).toBe("noop");
   const notes = await store.connection.query(`SELECT id FROM run_events`);
   expect(notes.rows).toEqual([]);
+
+  const other = await ConversationStore.open();
+  await other.connection.exec(`
+    CREATE TABLE run_events (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      payload JSONB
+    );
+  `);
+  expect(await logModelRoute({ ...event, id: "route_other_db" }, other.connection)).toBe("logged");
+  const otherRows = await other.connection.query<{ id: string }>(`SELECT id FROM run_events`);
+  expect(otherRows.rows).toEqual([{ id: "route_other_db" }]);
 });
 
 it("sends the cheap tier for chat and the strong tier after a failed tool", async () => {

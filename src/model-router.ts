@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { Sql } from "./db/sql";
 import { streamOptions, type LlmProvider, type StreamOptions } from "./llm";
 import { estimateTokens } from "./memory/tokens";
@@ -115,28 +116,38 @@ export function loadRouterConfig(
   env: Record<string, string | undefined> = process.env,
 ): RouterConfig {
   return {
-    cheap: {
-      id: resolveTierId(env.MODEL_TIER_CHEAP, DEFAULT_ROUTER_CONFIG.cheap.id, env),
-      inputUsdPerMillion: readRate(
-        env.MODEL_TIER_CHEAP_INPUT_USD_PER_MTOK,
-        DEFAULT_ROUTER_CONFIG.cheap.inputUsdPerMillion,
-      ),
-      outputUsdPerMillion: readRate(
-        env.MODEL_TIER_CHEAP_OUTPUT_USD_PER_MTOK,
-        DEFAULT_ROUTER_CONFIG.cheap.outputUsdPerMillion,
-      ),
-    },
-    strong: {
-      id: resolveTierId(env.MODEL_TIER_STRONG, DEFAULT_ROUTER_CONFIG.strong.id, env),
-      inputUsdPerMillion: readRate(
-        env.MODEL_TIER_STRONG_INPUT_USD_PER_MTOK,
-        DEFAULT_ROUTER_CONFIG.strong.inputUsdPerMillion,
-      ),
-      outputUsdPerMillion: readRate(
-        env.MODEL_TIER_STRONG_OUTPUT_USD_PER_MTOK,
-        DEFAULT_ROUTER_CONFIG.strong.outputUsdPerMillion,
-      ),
-    },
+    cheap: tierRates(
+      env.MODEL_TIER_CHEAP,
+      env.MODEL_TIER_CHEAP_INPUT_USD_PER_MTOK,
+      env.MODEL_TIER_CHEAP_OUTPUT_USD_PER_MTOK,
+      DEFAULT_ROUTER_CONFIG.cheap,
+      env,
+    ),
+    strong: tierRates(
+      env.MODEL_TIER_STRONG,
+      env.MODEL_TIER_STRONG_INPUT_USD_PER_MTOK,
+      env.MODEL_TIER_STRONG_OUTPUT_USD_PER_MTOK,
+      DEFAULT_ROUTER_CONFIG.strong,
+      env,
+    ),
+  };
+}
+
+function tierRates(
+  explicitId: string | undefined,
+  explicitInput: string | undefined,
+  explicitOutput: string | undefined,
+  openWeights: TierRates,
+  env: Record<string, string | undefined>,
+): TierRates {
+  const id = resolveTierId(explicitId, openWeights.id, env);
+  // List prices belong to the open-weights default. A fallback id (LLM_MODEL)
+  // keeps them only when the operator sets MODEL_TIER_*_USD_PER_MTOK.
+  const listed = id === openWeights.id;
+  return {
+    id,
+    inputUsdPerMillion: readRate(explicitInput, listed ? openWeights.inputUsdPerMillion : 0),
+    outputUsdPerMillion: readRate(explicitOutput, listed ? openWeights.outputUsdPerMillion : 0),
   };
 }
 
@@ -157,6 +168,16 @@ function resolveTierId(
   }
   if (isOpenRouterBase(env.LLM_BASE_URL)) return openWeightsDefault;
   return env.LLM_MODEL?.trim() || PROVIDER_MODEL_FALLBACK;
+}
+
+/**
+ * Explicit tier ids and the open-weights defaults must stay open-weights.
+ * The LLM_MODEL fallback is the provider's own model, including a closed id
+ * on a non-OpenRouter server, so constructing the router must not reject it.
+ */
+function assertRoutableTier(id: string, env: Record<string, string | undefined>): void {
+  if (id === (env.LLM_MODEL?.trim() || PROVIDER_MODEL_FALLBACK)) return;
+  assertOpenWeights(id);
 }
 
 export function isOpenRouterBase(value: string | undefined): boolean {
@@ -204,7 +225,7 @@ export function describeTurn(
   for (let index = 0; index < messages.length; index += 1) {
     const message = messages[index];
     if (!message) continue;
-    if (message.role === "tool" && message.failed) {
+    if (message.failed && (message.role === "tool" || message.role === "assistant")) {
       if (index > lastUser) failedThisRound = true;
       else failedEarlier = true;
     }
@@ -350,6 +371,17 @@ export function messagesForTurn(turn: RouterTurn): LlmMessage[] {
   return messages;
 }
 
+const routeContext = new AsyncLocalStorage<RouteDecision>();
+
+/** Tier chosen for the turn that is streaming in this async context. */
+export function currentModelRoute(): RouteDecision | null {
+  return routeContext.getStore() ?? null;
+}
+
+export function noteModelRoute(decision: RouteDecision): void {
+  routeContext.enterWith(decision);
+}
+
 export class RoutingProvider implements LlmProvider {
   readonly #inner: LlmProvider;
   readonly #config: RouterConfig;
@@ -360,8 +392,8 @@ export class RoutingProvider implements LlmProvider {
   constructor(options: { inner: LlmProvider; config?: RouterConfig; db?: Sql | null }) {
     this.#inner = options.inner;
     this.#config = options.config ?? loadRouterConfig();
-    assertOpenWeights(this.#config.cheap.id);
-    assertOpenWeights(this.#config.strong.id);
+    assertRoutableTier(this.#config.cheap.id, process.env);
+    assertRoutableTier(this.#config.strong.id, process.env);
     this.#db = options.db ?? null;
   }
 
@@ -385,6 +417,7 @@ export class RoutingProvider implements LlmProvider {
     const turn = describeTurn(messages, { retryAfterFailure: options.retryAfterFailure });
     const decision = pickModel(turn, this.#config);
     this.lastDecision = decision;
+    noteModelRoute(decision);
     let outputTokens = 0;
     try {
       for await (const event of this.#inner.stream(messages, {
@@ -408,6 +441,9 @@ export class RoutingProvider implements LlmProvider {
         ...(options.conversationId ? { conversationId: options.conversationId } : {}),
       };
       this.lastEvent = event;
+      console.info(
+        `model route tier=${event.tier} reason=${event.reason} model=${event.model} costUsd=${event.costUsd}`,
+      );
       try {
         await logModelRoute(event, this.#db);
       } catch {

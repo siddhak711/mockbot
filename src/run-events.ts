@@ -25,14 +25,18 @@ const recent: ModelRouteEvent[] = [];
 
 type SchemaCache = { status: "missing" } | { status: "ready"; columns: ColumnInfo[] };
 
-/** One probe per process. A missing table stays missing until the process restarts. */
-let schemaCache: SchemaCache | null = null;
-let schemaProbe: Promise<SchemaCache> | null = null;
+/**
+ * One probe per connection. A missing table stays missing for that connection
+ * until `clearRunEventSchemaCache` or process restart. A second database does
+ * not reuse the first connection's answer.
+ */
+let schemaEpoch = 0;
+const schemaCache = new WeakMap<Sql, { epoch: number; value: SchemaCache }>();
+const schemaProbe = new WeakMap<Sql, { epoch: number; promise: Promise<SchemaCache> }>();
 
-/** Tests reset this after they create or drop `run_events` in the same process. */
+/** Tests reset this after they create or drop `run_events` on a connection. */
 export function clearRunEventSchemaCache(): void {
-  schemaCache = null;
-  schemaProbe = null;
+  schemaEpoch += 1;
 }
 
 /**
@@ -144,20 +148,25 @@ async function insertRunEvent(db: Sql, event: ModelRouteEvent): Promise<boolean>
 }
 
 async function loadSchema(db: Sql): Promise<SchemaCache> {
-  if (schemaCache) return schemaCache;
-  if (!schemaProbe) {
-    schemaProbe = probeSchema(db)
-      .then((result) => {
-        schemaCache = result;
-        schemaProbe = null;
-        return result;
-      })
-      .catch((error: unknown) => {
-        schemaProbe = null;
-        throw error;
-      });
-  }
-  return schemaProbe;
+  const epoch = schemaEpoch;
+  const cached = schemaCache.get(db);
+  if (cached && cached.epoch === epoch) return cached.value;
+  const inflight = schemaProbe.get(db);
+  if (inflight && inflight.epoch === epoch) return inflight.promise;
+  const promise = probeSchema(db)
+    .then((result) => {
+      if (schemaEpoch === epoch) schemaCache.set(db, { epoch, value: result });
+      const current = schemaProbe.get(db);
+      if (current?.promise === promise) schemaProbe.delete(db);
+      return result;
+    })
+    .catch((error: unknown) => {
+      const current = schemaProbe.get(db);
+      if (current?.promise === promise) schemaProbe.delete(db);
+      throw error;
+    });
+  schemaProbe.set(db, { epoch, promise });
+  return promise;
 }
 
 async function probeSchema(db: Sql): Promise<SchemaCache> {
