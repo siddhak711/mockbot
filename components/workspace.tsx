@@ -103,6 +103,7 @@ export function Workspace({
   const [composerDraft, setComposerDraft] = useState("");
   const [selectedToolId, setSelectedToolId] = useState<string | null>(null);
   const [decidingId, setDecidingId] = useState<string | null>(null);
+  const [replayIds, setReplayIds] = useState<Record<string, string>>({});
   const abortRef = useRef<AbortController | null>(null);
   const computerRequest = useRef(0);
   const agentLoadRequest = useRef(0);
@@ -528,6 +529,10 @@ export function Workspace({
                 item.id === localUserId ? { ...item, conversationId: id } : item,
               ),
             );
+            if (typeof payload.runId === "string" && payload.runId) {
+              const replayRunId = payload.runId;
+              setReplayIds((prev) => ({ ...prev, [id]: replayRunId }));
+            }
           } else if (
             event.event === "prompt" ||
             event.event === "start" ||
@@ -832,6 +837,11 @@ export function Workspace({
             />
             <span className="thread-title">{speaking?.name ?? "Mockbot"}</span>
           </h1>
+          {active && replayIds[active.id] ? (
+            <a className="ghost-text" href={`/runs/${replayIds[active.id]}`}>
+              Replay
+            </a>
+          ) : null}
           <ThreadActions
             computerOpen={computerOpen}
             onMemory={showMemory}

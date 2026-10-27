@@ -1,4 +1,5 @@
 import type { LlmProvider } from "../llm";
+import type { RunLog } from "../runs/events";
 import type { ConversationStore } from "../store";
 import { ToolRegistry } from "../tools/registry";
 import type { ToolDefinition } from "../tools/types";
@@ -65,6 +66,8 @@ export type DelegateDeps = {
   parentAgentId: string;
   /** Account that owns the child conversation. Omitted for the unscoped test path. */
   userId?: string;
+  /** When set, the child model call and the delegate tool are written to this run. */
+  runLog?: RunLog;
 };
 
 export function delegateTool(deps: DelegateDeps): AgentTool {
