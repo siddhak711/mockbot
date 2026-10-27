@@ -73,5 +73,13 @@ export async function buildModelInput(options: {
 function renderTurnMessage(message: Message): LlmMessage | null {
   const content = messagePromptText(message);
   if (!content) return null;
-  return { role: message.role === "user" ? "user" : "assistant", content };
+  const failed =
+    message.role !== "user" &&
+    (message.tools?.some((tool) => tool.status === "error") === true ||
+      message.trace?.route?.reason === "retry");
+  return {
+    role: message.role === "user" ? "user" : "assistant",
+    content,
+    ...(failed ? { failed: true } : {}),
+  };
 }

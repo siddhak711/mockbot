@@ -20,7 +20,7 @@ export class SandboxTurnProvider implements LlmProvider {
     return this.#inner.model;
   }
 
-  async *stream(
+  stream(
     messages: LlmMessage[],
     input?: StreamOptions | AbortSignal,
   ): AsyncIterable<LlmStreamEvent> {
@@ -30,30 +30,35 @@ export class SandboxTurnProvider implements LlmProvider {
     const plan =
       this.#inner.id === "mock" && ownsComputerTurn(messages, text) ? planComputerTurn(text) : null;
     if (!plan) {
-      yield* this.#inner.stream(messages, input);
-      return;
+      // Hand back the router iterable itself. A new generator would drop `.decision`.
+      return this.#inner.stream(messages, input);
     }
 
-    const next = plan[toolResultsSinceUser(messages)];
-    if (!next) {
-      for (const piece of chunk(summarize(plan), 48)) {
-        await sleep(this.#delayMs, signal);
+    const delayMs = this.#delayMs;
+    const actions = plan;
+    async function* scripted(): AsyncIterable<LlmStreamEvent> {
+      const next = actions[toolResultsSinceUser(messages)];
+      if (!next) {
+        for (const piece of chunk(summarize(actions), 48)) {
+          await sleep(delayMs, signal);
+          if (signal?.aborted) return;
+          yield { type: "text", text: piece };
+        }
         if (signal?.aborted) return;
-        yield { type: "text", text: piece };
+        yield { type: "end", finishReason: "stop" };
+        return;
       }
-      if (signal?.aborted) return;
-      yield { type: "end", finishReason: "stop" };
-      return;
-    }
 
-    const id = `call_${next.name}_${toolResultsSinceUser(messages)}`;
-    if (signal?.aborted) return;
-    yield { type: "tool_call", index: 0, id, name: next.name };
-    await sleep(this.#delayMs, signal);
-    if (signal?.aborted) return;
-    yield { type: "tool_call", index: 0, arguments: JSON.stringify(next.args) };
-    if (signal?.aborted) return;
-    yield { type: "end", finishReason: "tool_calls" };
+      const id = `call_${next.name}_${toolResultsSinceUser(messages)}`;
+      if (signal?.aborted) return;
+      yield { type: "tool_call", index: 0, id, name: next.name };
+      await sleep(delayMs, signal);
+      if (signal?.aborted) return;
+      yield { type: "tool_call", index: 0, arguments: JSON.stringify(next.args) };
+      if (signal?.aborted) return;
+      yield { type: "end", finishReason: "tool_calls" };
+    }
+    return scripted();
   }
 }
 

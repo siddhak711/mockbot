@@ -9,6 +9,8 @@ import { findSecrets } from "./memory/scrub";
 import { encodeSse, ssePadding } from "./sse";
 import { titleFromMessage, type ConversationStore } from "./store";
 import type { LlmProvider } from "./llm";
+import { streamDecision } from "./model-router";
+import type { ModelRouteEvent } from "./run-events";
 import { requiresApproval, type ApprovalGate } from "./tools/approval";
 import { runTool, type ToolRegistry } from "./tools/registry";
 import {
@@ -79,6 +81,8 @@ function eventData(event: LlmStreamEvent): unknown {
       return { id: event.id, name: event.name, content: event.content };
     case "end":
       return { finishReason: event.finishReason };
+    case "route":
+      return { tier: event.tier, reason: event.reason, model: event.model };
   }
 }
 
@@ -220,17 +224,20 @@ export async function streamChatTurn(options: {
   let persistQueue = Promise.resolve();
   let userStopped = false;
   const liveCalls: PendingCall[] = [];
+  let route: MessageTrace["route"];
 
   const persist = (text: string, current: MessageTrace) => {
-    const encoded = JSON.stringify({ text, trace: current });
+    const stamped = stampRoute(current, route);
+    if (stamped !== current) trace = stamped;
+    const encoded = JSON.stringify({ text, trace: stamped });
     persistQueue = persistQueue.then(async () => {
       if (encoded === saved) return;
-      if (!hasVisibleStream(current, text)) return;
+      if (!hasVisibleStream(stamped, text)) return;
       if (!assistantId) {
-        const created = await store.addMessage(conversationSnapshot.id, "assistant", text, current);
+        const created = await store.addMessage(conversationSnapshot.id, "assistant", text, stamped);
         assistantId = created.id;
       } else {
-        await store.updateMessage(assistantId, text, current);
+        await store.updateMessage(assistantId, text, stamped);
       }
       saved = encoded;
     });
@@ -336,7 +343,18 @@ export async function streamChatTurn(options: {
           const modelInput = cloneMessages(history);
           const capture = emptyModelCapture();
           const modelStarted = performance.now();
-          const modelEvents = provider.stream(history, providerSignal);
+          // The router reports its tier and cost here once this model call ends.
+          const routeLog: { event?: ModelRouteEvent } = {};
+          const modelEvents = provider.stream(history, {
+            signal: providerSignal,
+            tools: exposed,
+            conversationId: conversationSnapshot.id,
+            onRoute: (event) => {
+              routeLog.event = event;
+            },
+          });
+          const streamed = streamDecision(modelEvents);
+          if (streamed) route = streamed;
           const events = delegateTool
             ? runWithDelegate(modelEvents, async (call) => {
                 let args: Record<string, unknown>;
@@ -357,6 +375,10 @@ export async function streamChatTurn(options: {
           runLog.holdWrites();
           try {
             for await (const event of events) {
+              if (event.type === "route") {
+                route = { tier: event.tier, reason: event.reason, model: event.model };
+                continue;
+              }
               captureModelEvent(capture, event);
               if (signal?.aborted || userStopped) break;
               if (!sawStart && event.type !== "start") {
@@ -391,12 +413,13 @@ export async function streamChatTurn(options: {
             try {
               await ignoreRunLog(
                 runLog.recordModel({
-                  model: provider.model,
+                  model: route?.model ?? provider.model,
                   messages: modelInput,
                   capture,
                   ms: elapsedMs(modelStarted),
                 }),
               );
+              if (routeLog.event) await ignoreRunLog(runLog.recordModelRoute(routeLog.event));
             } finally {
               await ignoreRunLog(runLog.appendHeld(deferred));
             }
@@ -431,7 +454,12 @@ export async function streamChatTurn(options: {
             liveCalls.push(call);
             const output = await executeCall(call);
             if (output === null) break;
-            history.push({ role: "tool", tool_call_id: call.id, content: output });
+            history.push({
+              role: "tool",
+              tool_call_id: call.id,
+              content: output,
+              failed: call.status === "error",
+            });
           }
           if (signal?.aborted || userStopped) break;
         }
@@ -645,6 +673,18 @@ function toLlmToolCall(call: PendingCall): LlmToolCall {
     type: "function",
     function: { name: call.name, arguments: call.arguments || "{}" },
   };
+}
+
+function stampRoute(current: MessageTrace, route: MessageTrace["route"]): MessageTrace {
+  if (!route) return current;
+  if (
+    current.route?.tier === route.tier &&
+    current.route.reason === route.reason &&
+    current.route.model === route.model
+  ) {
+    return current;
+  }
+  return { ...current, route: { ...route } };
 }
 
 export function toolActivity(

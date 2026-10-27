@@ -6,6 +6,7 @@ import type { LlmMessage, LlmStreamEvent, ProviderId } from "./types";
 export { SYSTEM_PROMPT };
 import { readModelUsage, readOpenAiEvents } from "./openai-events";
 import { SseParser } from "./sse";
+import type { ModelRouteEvent } from "./run-events";
 import type { ToolDefinition } from "./tools/types";
 
 const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
@@ -19,6 +20,15 @@ export const MOCK_TOOL_RESULT =
 export type StreamOptions = {
   tools?: readonly ToolDefinition[];
   signal?: AbortSignal;
+  /** Overrides the provider model for this request. The router sets it per turn. */
+  model?: string;
+  conversationId?: string;
+  /** The previous attempt on this turn failed. The router escalates when this is set. */
+  retryAfterFailure?: boolean;
+  /** Completion cap for this request. The router sets it from the chosen tier. */
+  maxTokens?: number;
+  /** Called once with the router's tier and cost when this request ends. */
+  onRoute?: (event: ModelRouteEvent) => void;
 };
 
 export interface LlmProvider {
@@ -33,8 +43,21 @@ export interface LlmProvider {
 export function streamOptions(input?: StreamOptions | AbortSignal): StreamOptions {
   if (!input) return {};
   if (input instanceof AbortSignal) {
-    const tools = (input as AbortSignal & { tools?: readonly ToolDefinition[] }).tools;
-    return tools ? { signal: input, tools } : { signal: input };
+    const extra = input as AbortSignal & {
+      tools?: readonly ToolDefinition[];
+      model?: string;
+      conversationId?: string;
+      retryAfterFailure?: boolean;
+      maxTokens?: number;
+    };
+    return {
+      signal: input,
+      ...(extra.tools ? { tools: extra.tools } : {}),
+      ...(extra.model ? { model: extra.model } : {}),
+      ...(extra.conversationId ? { conversationId: extra.conversationId } : {}),
+      ...(extra.retryAfterFailure ? { retryAfterFailure: true } : {}),
+      ...(typeof extra.maxTokens === "number" ? { maxTokens: extra.maxTokens } : {}),
+    };
   }
   return input;
 }
@@ -527,7 +550,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     messages: LlmMessage[],
     input?: StreamOptions | AbortSignal,
   ): AsyncIterable<LlmStreamEvent> {
-    const { signal, tools = [] } = streamOptions(input);
+    const { signal, tools = [], model, maxTokens } = streamOptions(input);
     let response: Response;
     try {
       response = await fetch(`${this.#baseUrl}/chat/completions`, {
@@ -538,10 +561,11 @@ export class OpenAiCompatibleProvider implements LlmProvider {
           Accept: "text/event-stream",
         },
         body: JSON.stringify({
-          model: this.model,
+          model: model || this.model,
           stream: true,
           stream_options: { include_usage: true },
           messages: messages.map(wireMessage),
+          ...(typeof maxTokens === "number" ? { max_tokens: maxTokens } : {}),
           ...(tools.length > 0 ? { tools: wireTools(tools), tool_choice: "auto" } : {}),
         }),
         signal,
