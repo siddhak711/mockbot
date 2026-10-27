@@ -3612,3 +3612,298 @@ a.icon-btn {
     grid-column: 2;
   }
 }
+
+.settings-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 28px 48px;
+}
+
+.settings-column {
+  width: min(720px, 100%);
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.settings-card {
+  padding: 16px;
+}
+
+.settings-card h2 {
+  margin: 0 0 4px;
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 600;
+}
+
+.settings-card h3 {
+  margin: 16px 0 0;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.settings-form {
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-form .field textarea {
+  font-family: inherit;
+}
+
+.settings-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.settings-actions .primary-btn,
+.settings-actions .btn {
+  height: 30px;
+  padding: 0 14px;
+  font-size: 13px;
+}
+
+.settings-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.settings-card > .settings-hint {
+  margin-top: 12px;
+}
+
+.settings-saved {
+  margin: 4px 0 0;
+  color: var(--success);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.settings-delete {
+  color: var(--danger);
+}
+
+.settings-agent-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.settings-agent {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px 4px 6px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.settings-agent:hover {
+  background: var(--hover);
+}
+
+.settings-agent.on {
+  background: var(--selected);
+  border-color: var(--line-strong);
+}
+
+.settings-checks {
+  border: 0;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-checks legend {
+  margin-bottom: 6px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--muted);
+}
+
+.settings-checks label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--ink);
+}
+
+.settings-checks .empty {
+  margin: 0;
+}
+
+.settings-profile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 8px 0 4px;
+}
+
+.settings-profile .ava {
+  width: 44px;
+  height: 44px;
+  font-size: 16px;
+}
+
+.settings-profile-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.settings-profile-copy span {
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.settings-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 16px;
+  margin: 12px 0 0;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.settings-facts dt {
+  color: var(--muted);
+}
+
+.settings-facts dd {
+  margin: 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.settings-themes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.settings-theme {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--line);
+  cursor: pointer;
+}
+
+.settings-theme:hover {
+  background: var(--hover);
+}
+
+.settings-theme.on {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 1px var(--ink);
+}
+
+.settings-theme input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.settings-theme:has(input:focus-visible) {
+  outline: 2px solid var(--link);
+  outline-offset: 2px;
+}
+
+.settings-swatch {
+  height: 64px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line-strong);
+}
+
+.settings-swatch.light {
+  background: linear-gradient(90deg, #efefef 0 30%, #fdfdfd 30%);
+}
+
+.settings-swatch.dark {
+  background: linear-gradient(90deg, #1b1913 0 30%, #14120b 30%);
+}
+
+.settings-swatch.system {
+  background: linear-gradient(135deg, #f6f6f6 0 50%, #14120b 50%);
+}
+
+.settings-theme-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.settings-theme-copy span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.settings-links {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.settings-links li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-links a {
+  color: var(--link);
+  font-weight: 500;
+}
+
+.settings-links span {
+  color: var(--muted);
+}
+
+@media (max-width: 640px) {
+  .settings-body {
+    padding: 8px 16px 40px;
+  }
+}
+
+.settings-checks a {
+  color: var(--link);
+}

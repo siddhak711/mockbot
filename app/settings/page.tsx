@@ -1,7 +1,25 @@
-import { Workspace } from "../../components/workspace";
+import type { Metadata } from "next";
+import { SettingsWorkspace } from "../../components/settings-workspace";
 import { requirePageUser } from "../../src/auth/guard";
+import { isSettingsSection } from "../../src/settings";
 
-export default async function SettingsPage() {
+export const metadata: Metadata = {
+  title: "Settings · Mockbot",
+  description: "Agents, account, appearance, and the model this workspace runs on",
+};
+
+export default async function SettingsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const user = await requirePageUser();
-  return <Workspace user={user} connectorLaunch={{ intent: "list" }} />;
+  const raw = (await searchParams).section;
+  const section = Array.isArray(raw) ? raw[0] : raw;
+  return (
+    <SettingsWorkspace
+      user={user}
+      initialSection={isSettingsSection(section) ? section : "agents"}
+    />
+  );
 }

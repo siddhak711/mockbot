@@ -25,13 +25,17 @@ export function initialSystemScheme(input: {
   return "light";
 }
 
-/**
- * Leaves system-follow and pins the opposite of the scheme currently on screen.
- * A reload starts from "system" again; the spec does not say to store an override.
- */
+/** Where the chosen theme is kept. Settings and the header toggle both write it. */
+export const THEME_STORAGE_KEY = "mockbot.theme";
+
+export function parsePreference(value: string | null | undefined): ThemePreference {
+  return value === "light" || value === "dark" ? value : "system";
+}
+
+/** Leaves system-follow and pins the opposite of the scheme currently on screen. */
 export function toggleTheme(resolved: ColorScheme): Exclude<ThemePreference, "system"> {
   return resolved === "dark" ? "light" : "dark";
 }
 
-/** Apply the system scheme before paint. An explicit toggle replaces it after load. */
-export const themeBootScript = `(function(){try{var dark=window.matchMedia("(prefers-color-scheme: dark)").matches;var theme=dark?"dark":"light";var root=document.documentElement;root.setAttribute("data-theme",theme);root.style.colorScheme=theme;}catch(e){}})();`;
+/** Paint the stored choice, or the system scheme, before the first frame. */
+export const themeBootScript = `(function(){try{var root=document.documentElement;var stored=null;try{stored=window.localStorage.getItem("${THEME_STORAGE_KEY}");}catch(e){}var theme=stored==="light"||stored==="dark"?stored:(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");root.setAttribute("data-theme",theme);root.style.colorScheme=theme;}catch(e){}})();`;

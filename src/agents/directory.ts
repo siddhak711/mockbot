@@ -279,4 +279,99 @@ export class AgentDirectory {
     if (!row) throw new Error("Failed to store grant");
     return mapGrant(row);
   }
+
+  /** Saves a new name, instructions, memory note, and the full set of grants. */
+  async update(
+    id: string,
+    input: {
+      name: string;
+      instructions: string;
+      memoryNote?: string;
+      computerIds?: string[];
+      connectorIds?: string[];
+    },
+  ): Promise<{ agent: Agent; grants: AgentGrant[] }> {
+    const current = await this.get(id);
+    if (!current) throw new AgentInputError("Agent not found", 404);
+    const agentInput = validatedAgent(input);
+    const grants: Array<{ kind: GrantKind; resourceId: string }> = [];
+    for (const raw of input.computerIds ?? []) {
+      if (raw.trim())
+        grants.push({ kind: "computer", resourceId: checkedResourceId("computer", raw) });
+    }
+    for (const raw of input.connectorIds ?? []) {
+      if (raw.trim()) {
+        grants.push({ kind: "connector", resourceId: checkedResourceId("connector", raw) });
+      }
+    }
+    const clash = await this.findByName(agentInput.name);
+    if (clash && clash.id !== id) {
+      throw new AgentInputError("An agent with that name already exists", 409);
+    }
+
+    return this.db.transaction(async (tx) => {
+      const updated = await tx.query<AgentRow>(
+        `UPDATE agents
+         SET name = $2, instructions = $3, memory_note = $4
+         WHERE id = $1 AND ($5::text IS NULL OR user_id = $5)
+         RETURNING ${AGENT_COLUMNS}`,
+        [id, agentInput.name, agentInput.instructions, agentInput.memoryNote, this.ownerId],
+      );
+      const row = updated.rows[0];
+      if (!row) throw new AgentInputError("Agent not found", 404);
+      await tx.query(`DELETE FROM agent_grants WHERE agent_id = $1`, [id]);
+      const stored: AgentGrant[] = [];
+      const seen = new Set<string>();
+      for (const grant of grants) {
+        const key = `${grant.kind}:${grant.resourceId}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const saved = await tx.query<GrantRow>(
+          `INSERT INTO agent_grants (id, agent_id, resource_kind, resource_id)
+           VALUES ($1, $2, $3, $4)
+           RETURNING id, agent_id, resource_kind, resource_id`,
+          [crypto.randomUUID(), id, grant.kind, grant.resourceId],
+        );
+        const grantRow = saved.rows[0];
+        if (!grantRow) throw new Error("Failed to store grant");
+        stored.push(mapGrant(grantRow));
+      }
+      return { agent: mapAgent(row), grants: stored };
+    });
+  }
+
+  /**
+   * Deletes an agent with its thread, memories, and grants.
+   * The lead stays, and so does an agent a routine still runs as.
+   */
+  async remove(id: string): Promise<void> {
+    const agent = await this.get(id);
+    if (!agent) throw new AgentInputError("Agent not found", 404);
+    if (agent.isLead) throw new AgentInputError("The lead agent can't be deleted");
+    const routines = await this.rows<{ present: string | null }>(
+      `SELECT to_regclass('routines')::text AS present`,
+    );
+    if (routines[0]?.present) {
+      const used = await this.rows<{ name: string }>(
+        `SELECT name FROM routines WHERE agent_id = $1 ORDER BY name ASC`,
+        [id],
+      );
+      if (used.length > 0) {
+        const names = used.map((row) => row.name).join(", ");
+        throw new AgentInputError(`Routines still run as this agent: ${names}`, 409);
+      }
+    }
+    await this.db.transaction(async (tx) => {
+      await tx.query(
+        `DELETE FROM conversations
+         WHERE agent_id = $1 AND ($2::text IS NULL OR user_id IS NOT DISTINCT FROM $2)`,
+        [id, this.ownerId],
+      );
+      await tx.query(`DELETE FROM memories WHERE agent_id = $1`, [id]);
+      await tx.query(`DELETE FROM agents WHERE id = $1 AND ($2::text IS NULL OR user_id = $2)`, [
+        id,
+        this.ownerId,
+      ]);
+    });
+  }
 }

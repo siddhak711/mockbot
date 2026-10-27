@@ -12,6 +12,7 @@ import {
   AppsIcon,
   ClockIcon,
   CloseIcon,
+  GearIcon,
   HidePanelIcon,
   PlugIcon,
   PlusIcon,
@@ -212,7 +213,7 @@ function AppsMenu({ onOpenConnectors }: { onOpenConnectors?: () => void }) {
       <button
         type="button"
         className="round-btn"
-        aria-label="Routines and connectors"
+        aria-label="Settings, routines, and connectors"
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={menuId}
@@ -222,6 +223,10 @@ function AppsMenu({ onOpenConnectors }: { onOpenConnectors?: () => void }) {
       </button>
       {open ? (
         <div className="menu apps-pop" id={menuId} role="menu" aria-label="Workspace">
+          <a className="nav-action" role="menuitem" href="/settings">
+            <GearIcon />
+            Settings
+          </a>
           <a className="nav-action" role="menuitem" href="/routines">
             <ClockIcon />
             Routines
