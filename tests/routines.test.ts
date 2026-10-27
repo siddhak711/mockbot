@@ -3,12 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { AgentDirectory } from "../src/agents/directory";
+import { LEAD_AGENT_ID } from "../src/agents/ids";
 import type { LlmProvider } from "../src/llm";
 import { MockProvider, SYSTEM_PROMPT } from "../src/llm";
+import { BASE_SYSTEM_PROMPT } from "../src/memory/prompt";
 import { pollIntervalMs, shouldStartInlineWorker } from "../src/routines/clock";
 import { CronError, nextCron } from "../src/routines/cron";
 import { RoutineStore } from "../src/routines/store";
-import { modelMessages } from "../src/routines/turn";
+import { modelMessages, runRoutineTurn } from "../src/routines/turn";
 import { runWorker, tick } from "../src/routines/worker";
 import { ConversationStore } from "../src/store";
 import type { LlmMessage, LlmStreamEvent } from "../src/types";
@@ -268,7 +270,7 @@ it("does not send an unanswered failed prompt as the next run's history", async 
   expect(recovered).toEqual({ claimed: 1, succeeded: 1, failed: 0 });
   expect(seen).toEqual([
     [
-      { role: "system", content: SYSTEM_PROMPT },
+      { role: "system", content: BASE_SYSTEM_PROMPT },
       { role: "user", content: "Fail please" },
       { role: "assistant", content: "Routine failed: upstream unavailable" },
       { role: "user", content: "Fail please" },
@@ -282,6 +284,54 @@ it("does not send an unanswered failed prompt as the next run's history", async 
   ).toEqual([
     { role: "system", content: SYSTEM_PROMPT },
     { role: "user", content: "current" },
+  ]);
+});
+
+it("sends a routine turn through the saved summary", async () => {
+  const { store } = await open();
+  const conversation = await store.getOrCreateAgentConversation(LEAD_AGENT_ID, null);
+  await store.addMessage(conversation.id, "user", "secret older note");
+  const covered = await store.addMessage(conversation.id, "assistant", "noted the secret");
+  await store.saveSummary(
+    conversation.id,
+    conversation.agentId,
+    "The grove was already summarized.",
+    covered.id,
+  );
+  const seen: LlmMessage[][] = [];
+  const provider: LlmProvider = {
+    id: "mock",
+    model: null,
+    async *stream(messages: LlmMessage[]): AsyncIterable<LlmStreamEvent> {
+      seen.push(messages.map((message) => ({ ...message })));
+      yield { type: "text", text: "Next step is the ridge." };
+      yield { type: "end", finishReason: "stop" };
+    },
+  };
+
+  const outcome = await runRoutineTurn({
+    store,
+    provider,
+    conversationId: conversation.id,
+    prompt: "What next?",
+  });
+
+  expect(outcome.text).toBe("Next step is the ridge.");
+  const prompt = seen[0] ?? [];
+  const system = prompt.find((message) => message.role === "system")?.content ?? "";
+  expect(system).toContain("<conversation-summary");
+  expect(system).toContain("The grove was already summarized.");
+  expect(
+    prompt.filter((message) => message.role === "user").map((message) => message.content),
+  ).toEqual(["What next?"]);
+  expect(prompt.map((message) => message.content).join("\n")).not.toContain("secret older note");
+  expect(prompt.map((message) => message.content).join("\n")).not.toContain("noted the secret");
+  const stored = await store.getConversation(conversation.id);
+  expect(stored?.messages.map((message) => message.content)).toEqual([
+    "secret older note",
+    "noted the secret",
+    "What next?",
+    "Next step is the ridge.",
   ]);
 });
 
