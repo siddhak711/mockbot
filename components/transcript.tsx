@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { activityStaysInChat } from "../src/chat-activities";
 import { isPinnedToBottom } from "../src/chat-scroll";
-import type { SpriteState } from "../src/sprite";
+import { DEFAULT_SPRITE_COLOR, type SpriteColor, type SpriteState } from "../src/sprite";
 import { showThinkingRow } from "../src/token-stream";
 import type { LivePhase, Message } from "../src/types";
 import type { ToolActivity } from "../src/tools/display";
 import { AssistantStream } from "./assistant-stream";
 import { DownIcon } from "./icons";
-import { Mochi } from "./mochi";
+import { BotSprite, botSpriteLabel } from "./bot-sprite";
 import { ToolActivityCards } from "./tool-activity";
 
 /** The in-flight assistant is the last assistant after the latest user message. */
@@ -51,6 +51,8 @@ export function Transcript({
   onSelectTool,
   onOpenTrace,
   spriteState = "idle",
+  spriteColor = DEFAULT_SPRITE_COLOR,
+  agentName = "Mockbot",
   reconnectFor,
   onReconnect,
 }: {
@@ -58,11 +60,13 @@ export function Transcript({
   streaming?: boolean;
   livePhase?: LivePhase | null;
   spriteState?: SpriteState;
+  spriteColor?: SpriteColor;
   activities?: ToolActivity[];
   decidingId?: string | null;
   onDecide?: (id: string, decision: "approve" | "deny") => void;
   onSelectTool?: (id: string) => void;
   onOpenTrace?: () => void;
+  agentName?: string;
   reconnectFor?: (activity: ToolActivity) => string | null;
   onReconnect?: (activity: ToolActivity) => void;
 }) {
@@ -124,13 +128,18 @@ export function Transcript({
       <div className="transcript" ref={scrollerRef} data-pinned={pinned ? "true" : "false"}>
         {messages.length === 0 ? (
           <div className="transcript-empty">
-            <Mochi state="idle" size={64} label="Mochi, ready" />
-            <h2>Start a conversation</h2>
+            <BotSprite
+              state="idle"
+              color={spriteColor}
+              size={64}
+              label={botSpriteLabel(agentName, "idle")}
+            />
+            <h2>Hello from {agentName}</h2>
             <p>
-              Ask Mockbot to remember a fact. It can use that fact in a later chat. Replies stream
-              as a clean answer. Open the Trace tab for the full raw transcript, including the
-              system prompt and every tool call. Create another agent, then send{" "}
-              <code>delegate to Name: task</code>.
+              {agentName} keeps this conversation. Ask a question, or ask {agentName} to remember a
+              fact. Replies stream as a clean answer. Open the Trace tab for the full raw
+              transcript, including the system prompt and every tool call. From the lead, send{" "}
+              <code>delegate to Name: task</code> and the result lands on that agent's thread.
             </p>
           </div>
         ) : (
@@ -181,7 +190,7 @@ export function Transcript({
             })}
             {pendingThink ? (
               <div className="thinking" aria-live="polite" aria-label="Thinking">
-                <Mochi state={spriteState} size={24} />
+                <BotSprite state={spriteState} color={spriteColor} size={32} />
                 <span className="thinking-label">Thinking</span>
                 <span className="thinking-shimmer" aria-hidden="true" />
                 {onOpenTrace ? (

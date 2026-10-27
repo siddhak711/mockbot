@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { AgentPanel } from "../components/agent-panel";
-import { ConversationList } from "../components/conversation-list";
+import { Sidebar } from "../components/sidebar";
 import { SidePane } from "../components/side-pane";
 import { ThreadActions } from "../components/thread-actions";
 import { ThemeProvider } from "../components/theme";
@@ -12,32 +12,19 @@ afterEach(() => {
 });
 
 it("gives thread actions their labels and clicks", () => {
-  const onRename = vi.fn();
-  const onDelete = vi.fn();
   const onMemory = vi.fn();
   const onShowComputer = vi.fn();
   render(
-    <ThreadActions
-      active={{ id: "c1", title: "Hello" }}
-      streaming={false}
-      computerOpen={false}
-      onRename={onRename}
-      onDelete={onDelete}
-      onMemory={onMemory}
-      onShowComputer={onShowComputer}
-    />,
+    <ThreadActions computerOpen={false} onMemory={onMemory} onShowComputer={onShowComputer} />,
   );
 
-  fireEvent.click(screen.getByRole("button", { name: "Rename" }));
-  fireEvent.click(screen.getByRole("button", { name: "Delete" }));
   fireEvent.click(screen.getByRole("button", { name: "Memory" }));
   fireEvent.click(screen.getByRole("button", { name: "Show computer" }));
 
-  expect(onRename).toHaveBeenCalledOnce();
-  expect(onDelete).toHaveBeenCalledOnce();
   expect(onMemory).toHaveBeenCalledOnce();
   expect(onShowComputer).toHaveBeenCalledOnce();
-  expect(screen.getByRole("button", { name: "Delete" }).className).toContain("danger");
+  expect(screen.queryByRole("button", { name: "Rename" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
 });
 
 it("gives side-panel tabs their labels and clicks", () => {
@@ -69,9 +56,7 @@ it("gives side-panel tabs their labels and clicks", () => {
 it("renders the theme toggle in the sidebar header", () => {
   render(
     <ThemeProvider>
-      <ConversationList
-        conversations={[]}
-        activeId={null}
+      <Sidebar
         agents={[]}
         activeAgentId="agent_default"
         spriteState="idle"
@@ -82,8 +67,6 @@ it("renders the theme toggle in the sidebar header", () => {
         }}
         busy={false}
         open
-        onNew={() => {}}
-        onSelect={() => {}}
         onSelectAgent={() => {}}
         onCreateAgent={async () => null}
         onOpenConnectors={() => {}}
@@ -105,6 +88,8 @@ it("renders the theme toggle in the sidebar header", () => {
   const logout = screen.getByRole("menuitem", { name: "Log out" });
   expect(footer?.contains(logout)).toBe(true);
   expect(logout.closest("form")?.getAttribute("action")).toBeTruthy();
+  expect(screen.queryByRole("menuitem", { name: "Connectors" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Settings" })).toBeNull();
 });
 
 it("opens a new-agent dialog and closes it from Escape, the backdrop, and the X", () => {

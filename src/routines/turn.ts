@@ -1,6 +1,14 @@
 import { SYSTEM_PROMPT, type LlmProvider } from "../llm";
+import {
+  RunLog,
+  captureModelEvent,
+  elapsedMs,
+  emptyModelCapture,
+  ignoreRunLog,
+} from "../runs/events";
 import type { ConversationStore } from "../store";
 import { applyStreamEvent, emptyTrace } from "../trace";
+import { buildModelInput } from "../turn";
 import type { LlmMessage, Role } from "../types";
 
 /**
@@ -26,6 +34,19 @@ export function modelMessages(messages: Array<{ role: Role; content: string }>):
   ];
 }
 
+/** Keep the prepared system prompt, and drop an abandoned user turn from the rest. */
+function routineHistory(prepared: LlmMessage[]): LlmMessage[] {
+  const system = prepared.filter((message) => message.role === "system");
+  const turns: Array<{ role: Role; content: string }> = [];
+  for (const message of prepared) {
+    if (message.role === "user" || message.role === "assistant") {
+      turns.push({ role: message.role, content: message.content });
+    }
+  }
+  const kept = modelMessages(turns).filter((message) => message.role !== "system");
+  return [...system, ...kept];
+}
+
 /**
  * The only place a routine invokes the agent loop.
  * It stores the prompt and the finished reply on the routine's conversation.
@@ -36,22 +57,55 @@ export async function runRoutineTurn(options: {
   provider: LlmProvider;
   conversationId: string;
   prompt: string;
-}): Promise<{ assistantMessageId: string; text: string }> {
-  await options.store.addMessage(options.conversationId, "user", options.prompt);
-  const stored = await options.store.getConversation(options.conversationId);
-  if (!stored) throw new Error("Conversation disappeared before the routine ran");
-  const history = modelMessages(stored.messages);
-  let trace = emptyTrace();
-  for await (const event of options.provider.stream(history)) {
-    trace = applyStreamEvent(trace, event);
+  runId?: string;
+}): Promise<{ assistantMessageId: string; text: string; runId: string }> {
+  const log = new RunLog(options.store.connection, options.runId);
+  await ignoreRunLog(log.mark("run.started", { conversationId: options.conversationId }));
+  try {
+    await options.store.addMessage(options.conversationId, "user", options.prompt);
+    const stored = await options.store.getConversation(options.conversationId);
+    if (!stored) throw new Error("Conversation disappeared before the routine ran");
+    const prepared = await buildModelInput({
+      store: options.store,
+      conversationId: options.conversationId,
+      agentId: stored.conversation.agentId,
+    });
+    if (!prepared) throw new Error("Conversation disappeared before the routine ran");
+    const history = routineHistory(prepared.messages);
+    let trace = emptyTrace();
+    const capture = emptyModelCapture();
+    const started = performance.now();
+    try {
+      for await (const event of options.provider.stream(history)) {
+        captureModelEvent(capture, event);
+        trace = applyStreamEvent(trace, event);
+      }
+    } finally {
+      await ignoreRunLog(
+        log.recordModel({
+          model: options.provider.model,
+          messages: history,
+          capture,
+          ms: elapsedMs(started),
+        }),
+      );
+    }
+    const assistant = await options.store.addMessage(
+      options.conversationId,
+      "assistant",
+      trace.text,
+      trace,
+    );
+    await ignoreRunLog(
+      log.mark("run.finished", { status: "completed", assistantMessageId: assistant.id }),
+    );
+    return { assistantMessageId: assistant.id, text: trace.text, runId: log.id };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Routine run failed";
+    await ignoreRunLog(log.fail(message));
+    await ignoreRunLog(log.mark("run.finished", { status: "error" }));
+    throw error;
   }
-  const assistant = await options.store.addMessage(
-    options.conversationId,
-    "assistant",
-    trace.text,
-    trace,
-  );
-  return { assistantMessageId: assistant.id, text: trace.text };
 }
 
 export function promptForRun(

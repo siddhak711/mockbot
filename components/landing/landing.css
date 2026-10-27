@@ -1,0 +1,1438 @@
+/*
+  Daylight landing. Inter and JetBrains Mono come from the self-hosted
+  @font-face rules in app/globals.css (the same files the app already ships),
+  not from a Google Fonts stylesheet.
+*/
+html:has(.daylight),
+html:has(.daylight) body {
+  height: auto;
+  min-height: 100%;
+  overflow-x: clip;
+  overflow-y: auto;
+  scroll-behavior: smooth;
+  scroll-padding-top: 90px;
+  background: #f4f2ed;
+  color: #151514;
+  color-scheme: light;
+}
+
+.daylight {
+  --bg: #f4f2ed;
+  --bg2: #ece9e2;
+  --ink: #151514;
+  --t2: #4b4945;
+  --t3: #6a6660;
+  --ln: rgba(21, 21, 20, 0.09);
+  --v: #6e4df5;
+  --p1: #dcd3ff;
+  --p2: #cdebd8;
+  --p3: #ffe3c2;
+  --p4: #d3e5ff;
+  --p5: #ffd7cf;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease2: cubic-bezier(0.32, 0.72, 0, 1);
+  background: var(--bg);
+  color: var(--ink);
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  font-feature-settings: "ss01", "cv11";
+  -webkit-font-smoothing: antialiased;
+  min-height: 100%;
+}
+
+.daylight ::selection {
+  background: var(--p1);
+}
+
+.daylight a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.daylight button {
+  font: inherit;
+  color: inherit;
+}
+
+.daylight .sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+.daylight .mono {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+}
+
+.daylight .skip {
+  position: absolute;
+  left: -999px;
+}
+
+.daylight .skip:focus {
+  left: 12px;
+  top: 12px;
+  z-index: 99;
+  background: var(--ink);
+  color: #fff;
+  padding: 8px 12px;
+  border-radius: 8px;
+}
+
+.daylight :focus-visible {
+  outline: 2px solid var(--v);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+
+.daylight .w {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 0 40px;
+}
+
+.daylight nav {
+  position: fixed;
+  z-index: 50;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(1200px, calc(100% - 24px));
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 8px 8px 16px;
+  border-radius: 999px;
+  font-size: 14px;
+  transition:
+    background 0.4s var(--ease),
+    box-shadow 0.4s var(--ease),
+    backdrop-filter 0.4s;
+}
+
+.daylight nav.stuck {
+  background: rgba(244, 242, 237, 0.78);
+  backdrop-filter: blur(16px) saturate(1.4);
+  box-shadow:
+    0 0 0 1px var(--ln),
+    0 10px 30px -18px rgba(0, 0, 0, 0.25);
+}
+
+.daylight nav .b {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  font-weight: 600;
+  font-size: 16px;
+  letter-spacing: -0.02em;
+}
+
+.daylight nav .b .bot {
+  transition: transform 0.5s var(--ease);
+}
+
+.daylight nav .b:hover .bot {
+  transform: rotate(-8deg) translateY(-2px);
+}
+
+.daylight nav .l {
+  display: flex;
+  gap: 4px;
+}
+
+.daylight nav .l a {
+  color: var(--t2);
+  padding: 7px 12px;
+  border-radius: 999px;
+  transition:
+    background 0.2s,
+    color 0.2s;
+}
+
+.daylight nav .l a:hover {
+  background: rgba(21, 21, 20, 0.06);
+  color: var(--ink);
+}
+
+.daylight nav .c {
+  background: var(--ink);
+  color: #fff;
+  padding: 9px 16px;
+  border-radius: 999px;
+  font-weight: 500;
+  transition:
+    transform 0.2s var(--ease),
+    background 0.2s;
+}
+
+.daylight nav .c:hover {
+  background: #2a2927;
+}
+
+.daylight nav .c:active {
+  transform: scale(0.97);
+}
+
+.daylight .hero {
+  padding: 150px 40px 0;
+}
+
+.daylight .eyebrow {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  font:
+    500 12px/1 "JetBrains Mono",
+    ui-monospace,
+    monospace;
+  letter-spacing: 0.04em;
+  color: var(--t2);
+  margin: 0;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.6);
+  box-shadow: 0 0 0 1px var(--ln);
+}
+
+.daylight .eyebrow i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #2fa36b;
+  box-shadow: 0 0 0 3px rgba(47, 163, 107, 0.18);
+  animation: daylight-bl 2.4s var(--ease) infinite;
+}
+
+@keyframes daylight-bl {
+  50% {
+    box-shadow: 0 0 0 6px rgba(47, 163, 107, 0);
+  }
+}
+
+.daylight h1 {
+  font-weight: 500;
+  font-size: clamp(64px, 11.6vw, 164px);
+  line-height: 0.88;
+  letter-spacing: -0.068em;
+  margin: 34px 0 0;
+  margin-left: -0.06em;
+}
+
+.daylight h1 .ln {
+  display: block;
+  white-space: nowrap;
+}
+
+.daylight h1 em {
+  font-style: normal;
+  color: var(--v);
+}
+
+.daylight .perch {
+  position: relative;
+  display: inline-block;
+}
+
+.daylight .perch .hb {
+  position: absolute;
+  width: 0.92em;
+  height: 0.92em;
+  left: 50%;
+  bottom: 0.68em;
+  transform: translateX(-50%);
+  filter: drop-shadow(0 18px 18px rgba(60, 40, 140, 0.18));
+  cursor: pointer;
+  transition: transform 0.6s var(--ease);
+}
+
+.daylight .perch .hb:hover {
+  transform: translateX(-50%) translateY(-10px) rotate(-6deg);
+}
+
+.daylight .hrow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 420px;
+  gap: 64px;
+  align-items: end;
+  margin-top: 60px;
+  padding-top: 28px;
+  border-top: 1px solid var(--ln);
+}
+
+.daylight .lede {
+  font-size: 21px;
+  line-height: 1.48;
+  letter-spacing: -0.012em;
+  color: var(--t2);
+  margin: 0;
+  max-width: 560px;
+  text-wrap: pretty;
+}
+
+.daylight form.wl {
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow:
+    0 0 0 1px var(--ln),
+    0 14px 34px -16px rgba(0, 0, 0, 0.2);
+  transition: box-shadow 0.3s var(--ease);
+}
+
+.daylight form.wl input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  font:
+    16px Inter,
+    system-ui,
+    sans-serif;
+  padding: 0 16px;
+  outline: none;
+  color: var(--ink);
+}
+
+.daylight form.wl input::placeholder {
+  color: var(--t3);
+}
+
+.daylight form.wl button {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: var(--ink);
+  color: #fff;
+  font-weight: 500;
+  font-size: 15px;
+  padding: 13px 18px 13px 20px;
+  cursor: pointer;
+  transition:
+    transform 0.16s var(--ease),
+    background 0.2s;
+}
+
+.daylight form.wl button svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  transition: transform 0.3s var(--ease);
+}
+
+.daylight form.wl button:hover svg {
+  transform: translateX(3px);
+}
+
+.daylight form.wl button:hover {
+  background: #2a2927;
+}
+
+.daylight form.wl button:active {
+  transform: scale(0.97);
+}
+
+.daylight form.wl:focus-within {
+  box-shadow:
+    0 0 0 2px var(--v),
+    0 14px 34px -16px rgba(110, 77, 245, 0.4);
+}
+
+.daylight .msg {
+  font-size: 13px;
+  color: var(--t3);
+  margin: 12px 0 0 18px;
+}
+
+.daylight .msg.err {
+  color: #b4233f;
+}
+
+.daylight .day {
+  margin-top: 120px;
+  padding: 22px 0 30px;
+  background: var(--bg2);
+  border-block: 1px solid var(--ln);
+}
+
+.daylight .dayhead {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--t3);
+  margin-bottom: 18px;
+}
+
+.daylight .mask {
+  overflow: hidden;
+  -webkit-mask: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent);
+  mask: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent);
+}
+
+.daylight .track {
+  display: flex;
+  gap: 14px;
+  width: max-content;
+  padding: 6px 0 10px;
+  animation: daylight-mq 60s linear infinite;
+}
+
+.daylight .mask:hover .track {
+  animation-play-state: paused;
+}
+
+@keyframes daylight-mq {
+  to {
+    transform: translateX(calc(-50% - 7px));
+  }
+}
+
+.daylight .ev {
+  width: 290px;
+  background: #fff !important;
+  border-radius: 22px;
+  padding: 16px 18px 18px;
+  box-shadow: 0 0 0 1px var(--ln);
+  transition:
+    transform 0.4s var(--ease),
+    box-shadow 0.4s var(--ease);
+}
+
+.daylight .ev:hover {
+  transform: translateY(-4px);
+  box-shadow:
+    0 0 0 1px var(--ln),
+    0 18px 30px -18px rgba(0, 0, 0, 0.25);
+}
+
+.daylight .ev header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.daylight .ev .t {
+  font:
+    500 12px "JetBrains Mono",
+    ui-monospace,
+    monospace;
+  color: var(--t3);
+}
+
+.daylight .st {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #efede8;
+  color: var(--t2);
+}
+
+.daylight .st.done {
+  background: var(--p2);
+  color: #1c5a37;
+}
+
+.daylight .st.needs {
+  background: var(--p3);
+  color: #7a4a0e;
+}
+
+.daylight .st.running {
+  background: var(--p4);
+  color: #1f4a85;
+}
+
+.daylight .ev .bot {
+  width: 52px;
+  height: 52px;
+  margin: -6px 0 0 -6px;
+}
+
+.daylight .ev b {
+  display: block;
+  font-size: 17px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  margin-top: 6px;
+}
+
+.daylight .ev p {
+  margin: 4px 0 0;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--t3);
+}
+
+.daylight .ch {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.12fr);
+  gap: 72px;
+  padding: 120px 0;
+  border-bottom: 1px solid var(--ln);
+  align-items: center;
+}
+
+.daylight .num {
+  display: inline-block;
+  font:
+    500 12px "JetBrains Mono",
+    ui-monospace,
+    monospace;
+  color: var(--t3);
+  padding: 5px 9px;
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px var(--ln);
+  margin-bottom: 26px;
+}
+
+.daylight h2 {
+  font-weight: 500;
+  font-size: clamp(40px, 5vw, 66px);
+  line-height: 0.95;
+  letter-spacing: -0.055em;
+  margin: 0;
+}
+
+.daylight .txt p {
+  font-size: 19px;
+  line-height: 1.55;
+  color: var(--t2);
+  margin: 26px 0 0;
+  max-width: 430px;
+  text-wrap: pretty;
+}
+
+.daylight .card {
+  position: relative;
+  border-radius: 30px;
+  padding: 32px;
+  min-height: 440px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  overflow: hidden;
+  transition: transform 0.6s var(--ease);
+}
+
+.daylight .card:hover {
+  transform: translateY(-4px);
+}
+
+.daylight .p1 {
+  background: var(--p1);
+}
+
+.daylight .p2 {
+  background: var(--p2);
+}
+
+.daylight .p3 {
+  background: var(--p3);
+}
+
+.daylight .p4 {
+  background: var(--p4);
+}
+
+.daylight .p5 {
+  background: var(--p5);
+}
+
+.daylight .thread {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.daylight .mm {
+  background: #fff;
+  border-radius: 18px;
+  padding: 14px 16px;
+  font-size: 15px;
+  line-height: 1.45;
+  max-width: 82%;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
+}
+
+.daylight .mm.me {
+  align-self: flex-end;
+  background: var(--ink);
+  color: #fff;
+  border-bottom-right-radius: 6px;
+}
+
+.daylight .mm .who {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+.daylight .steps {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.daylight .steps li {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font:
+    13px "JetBrains Mono",
+    ui-monospace,
+    monospace;
+  color: #2e2660;
+}
+
+.daylight .steps li:before {
+  content: "";
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4.5 8.2l2.3 2.3 4.7-4.9' fill='none' stroke='%236E4DF5' stroke-width='1.8' stroke-linecap='round'/%3E%3C/svg%3E")
+    center/16px;
+  flex: none;
+}
+
+.daylight .card .steps li,
+.daylight .card .reply {
+  opacity: 0;
+  transform: translateY(6px);
+  transition:
+    opacity 0.5s var(--ease),
+    transform 0.5s var(--ease);
+}
+
+.daylight .card.in .steps li {
+  opacity: 1;
+  transform: none;
+  transition-delay: calc(500ms + var(--i) * 380ms);
+}
+
+.daylight .card.in .reply {
+  opacity: 1;
+  transform: none;
+  transition-delay: 2.2s;
+}
+
+.daylight .stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 440px;
+  position: relative;
+  z-index: 1;
+}
+
+.daylight .appr {
+  background: #fff;
+  border-radius: 18px;
+  padding: 16px 16px 16px 18px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
+}
+
+.daylight .appr b {
+  display: block;
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.daylight .appr span {
+  display: block;
+  color: var(--t3);
+  font-size: 13px;
+  margin-top: 4px;
+}
+
+.daylight .bt {
+  display: flex;
+  gap: 6px;
+}
+
+.daylight .bt button {
+  border: 0;
+  cursor: pointer;
+  padding: 8px 13px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  background: #f0eee9;
+  transition:
+    transform 0.16s var(--ease),
+    background 0.2s;
+}
+
+.daylight .bt button:hover {
+  background: #e6e3dc;
+}
+
+.daylight .bt button.y {
+  background: var(--ink);
+  color: #fff;
+}
+
+.daylight .bt button:active {
+  transform: scale(0.95);
+}
+
+.daylight .card .appr:nth-child(2) {
+  margin-left: 36px;
+  opacity: 0.75;
+}
+
+.daylight .peek {
+  position: absolute;
+  right: -12px;
+  bottom: -34px;
+  width: 190px;
+  height: 190px;
+  transition: transform 0.7s var(--ease);
+}
+
+.daylight .card:hover .peek {
+  transform: translateY(-14px) rotate(-4deg);
+}
+
+.daylight .term {
+  background: var(--ink);
+  color: #e6e3db;
+  border-radius: 18px;
+  overflow: hidden;
+}
+
+.daylight .tbar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 11px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.daylight .tbar i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #3a3936;
+}
+
+.daylight .tbar span {
+  margin-left: 8px;
+  font:
+    11px "JetBrains Mono",
+    ui-monospace,
+    monospace;
+  color: #8d8982;
+}
+
+.daylight .term code {
+  display: block;
+  padding: 16px 18px 18px;
+  font:
+    13.5px/1.8 "JetBrains Mono",
+    ui-monospace,
+    monospace;
+}
+
+.daylight .term .p {
+  color: #b9a8ff;
+}
+
+.daylight .term .g {
+  color: #7fd6a6;
+}
+
+.daylight .term .dim {
+  color: #6b6964;
+}
+
+.daylight .caret {
+  display: inline-block;
+  width: 8px;
+  height: 15px;
+  background: #e6e3db;
+  vertical-align: -3px;
+  margin-left: 6px;
+  animation: daylight-cr 1.1s steps(1) infinite;
+}
+
+@keyframes daylight-cr {
+  50% {
+    opacity: 0;
+  }
+}
+
+.daylight .chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.daylight .chips span {
+  background: #fff;
+  border-radius: 999px;
+  padding: 9px 14px;
+  font-size: 14px;
+  font-weight: 500;
+  transition: transform 0.3s var(--ease);
+}
+
+.daylight .chips span:hover {
+  transform: translateY(-2px);
+}
+
+.daylight .chips .add {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px rgba(21, 21, 20, 0.25);
+}
+
+.daylight .mem {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.daylight .mem li {
+  background: #fff;
+  border-radius: 14px;
+  padding: 13px 16px;
+  font-size: 15px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.daylight .mem li span {
+  font:
+    11px "JetBrains Mono",
+    ui-monospace,
+    monospace;
+  color: var(--t3);
+}
+
+.daylight .crewmini {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 22px;
+}
+
+.daylight .crewmini span {
+  font-size: 13px;
+  color: #2d4c78;
+  margin-left: 12px;
+  line-height: 1.4;
+  max-width: 220px;
+}
+
+.daylight .crewmini .bot {
+  transition: transform 0.4s var(--ease);
+}
+
+.daylight .crewmini .bot:hover {
+  transform: translateY(-8px);
+}
+
+.daylight .band {
+  background: #151514;
+  color: #fff;
+  padding: 140px 0 150px;
+}
+
+.daylight .bandhead {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+  gap: 80px;
+  align-items: end;
+}
+
+.daylight .bandhead p {
+  color: #b3b0a9;
+  font-size: 19px;
+  line-height: 1.55;
+  margin: 0;
+  max-width: 460px;
+}
+
+.daylight .soon {
+  display: inline-block;
+  font:
+    500 11px "JetBrains Mono",
+    ui-monospace,
+    monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: var(--p3);
+  color: #151514;
+  padding: 6px 10px;
+  border-radius: 999px;
+  margin-bottom: 26px;
+}
+
+.daylight .rp {
+  margin-top: 64px;
+  background: #1d1d1b;
+  border-radius: 30px;
+  padding: 26px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+}
+
+.daylight .rptop {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #8d8982;
+  margin-bottom: 18px;
+}
+
+.daylight .frames {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.daylight .fr {
+  aspect-ratio: 5/4;
+  border-radius: 16px;
+  background: #272725;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  animation: daylight-fr 12s var(--ease) infinite;
+  animation-delay: calc(var(--i) * 2s);
+}
+
+.daylight .fr span {
+  font-size: 12px;
+  color: #8d8982;
+}
+
+.daylight .fr b {
+  font-weight: 500;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+  color: #e9e6e0;
+}
+
+@keyframes daylight-fr {
+  0%,
+  16% {
+    background: #6e4df5;
+    transform: translateY(-4px);
+  }
+  20%,
+  100% {
+    background: #272725;
+    transform: none;
+  }
+}
+
+.daylight .bar {
+  margin-top: 22px;
+  height: 4px;
+  border-radius: 9px;
+  background: #2e2e2b;
+  position: relative;
+}
+
+.daylight .bar .fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 9px;
+  background: #fff;
+  animation: daylight-pl 12s linear infinite;
+}
+
+.daylight .bar .head {
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 5px rgba(255, 255, 255, 0.12);
+  animation: daylight-hd 12s linear infinite;
+}
+
+@keyframes daylight-pl {
+  from {
+    width: 0;
+  }
+  to {
+    width: 100%;
+  }
+}
+
+@keyframes daylight-hd {
+  from {
+    left: 0;
+  }
+  to {
+    left: 100%;
+  }
+}
+
+.daylight .nextsec {
+  padding: 150px 40px 0;
+}
+
+.daylight .secthead {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.daylight .next {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 56px;
+}
+
+.daylight .nx {
+  border-radius: 24px;
+  padding: 22px;
+  min-height: 260px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  transition: transform 0.5s var(--ease);
+}
+
+.daylight .nx:hover {
+  transform: translateY(-6px) rotate(-0.6deg);
+}
+
+.daylight .nx svg {
+  width: 30px;
+  height: 30px;
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.daylight .nx span {
+  font-size: 11px;
+  color: rgba(21, 21, 20, 0.5);
+}
+
+.daylight .nx b {
+  display: block;
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: -0.035em;
+  margin-top: 6px;
+}
+
+.daylight .nx p {
+  font-size: 14px;
+  line-height: 1.45;
+  margin: 8px 0 0;
+  color: rgba(21, 21, 20, 0.7);
+}
+
+.daylight .faq {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+  gap: 80px;
+  padding: 150px 40px;
+}
+
+.daylight details {
+  border-top: 1px solid var(--ln);
+}
+
+.daylight details:last-child {
+  border-bottom: 1px solid var(--ln);
+}
+
+.daylight summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  padding: 22px 0;
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: -0.015em;
+  cursor: pointer;
+  list-style: none;
+}
+
+.daylight summary::-webkit-details-marker {
+  display: none;
+}
+
+.daylight summary i {
+  position: relative;
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+.daylight summary i:before,
+.daylight summary i:after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 6px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--t3);
+  transition: transform 0.35s var(--ease);
+}
+
+.daylight summary i:after {
+  transform: rotate(90deg);
+}
+
+.daylight details[open] summary i:after {
+  transform: rotate(0);
+}
+
+.daylight details p {
+  color: var(--t2);
+  font-size: 16px;
+  line-height: 1.6;
+  margin: -6px 0 24px;
+  max-width: 560px;
+}
+
+.daylight .end {
+  padding: 130px 40px 110px;
+  border-top: 1px solid var(--ln);
+}
+
+.daylight .crew {
+  display: flex;
+  gap: 6px;
+  margin-bottom: -10px;
+}
+
+.daylight .crew .bot {
+  transition: transform 0.5s var(--ease);
+}
+
+.daylight .crew .bot:hover {
+  transform: translateY(-14px) rotate(-5deg);
+}
+
+.daylight .end h2 {
+  font-size: clamp(60px, 10.4vw, 150px);
+  line-height: 0.86;
+  letter-spacing: -0.068em;
+}
+
+.daylight .endrow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 420px;
+  gap: 64px;
+  align-items: end;
+  margin-top: 52px;
+}
+
+.daylight .endrow p:not(.msg) {
+  font-size: 19px;
+  line-height: 1.55;
+  color: var(--t2);
+  max-width: 440px;
+  margin: 0;
+}
+
+.daylight footer {
+  border-top: 1px solid var(--ln);
+  padding: 26px 40px 40px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  color: var(--t3);
+}
+
+.daylight footer div {
+  display: flex;
+  gap: 22px;
+}
+
+.daylight footer a:hover {
+  color: var(--ink);
+}
+
+.daylight .fb {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.daylight [data-r] {
+  opacity: 0;
+  transform: translateY(12px);
+  filter: blur(6px);
+  transition:
+    opacity 0.8s var(--ease),
+    transform 0.8s var(--ease),
+    filter 0.8s var(--ease);
+  transition-delay: var(--d, 0ms);
+}
+
+.daylight [data-r].in {
+  opacity: 1;
+  transform: none;
+  filter: none;
+}
+
+.daylight .card[data-r].in:hover {
+  transform: translateY(-4px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .daylight *,
+  .daylight *:before,
+  .daylight *:after {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .daylight [data-r],
+  .daylight .card .steps li,
+  .daylight .card .reply {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+
+@media (max-width: 1080px) {
+  .daylight .ch,
+  .daylight .bandhead,
+  .daylight .faq {
+    grid-template-columns: 1fr;
+    gap: 40px;
+  }
+
+  .daylight .ch {
+    padding: 110px 0;
+  }
+
+  .daylight .next {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .daylight .hrow,
+  .daylight .endrow {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 28px;
+  }
+
+  .daylight .hrow > div,
+  .daylight .endrow > div {
+    max-width: 480px;
+  }
+
+  .daylight .txt p {
+    max-width: 560px;
+  }
+}
+
+@media (max-width: 680px) {
+  .daylight .w,
+  .daylight .hero,
+  .daylight .nextsec,
+  .daylight .faq,
+  .daylight .end,
+  .daylight footer {
+    padding-left: 20px;
+    padding-right: 20px;
+  }
+
+  .daylight nav .l {
+    display: none;
+  }
+
+  .daylight .hero {
+    padding-top: 120px;
+  }
+
+  .daylight h1 {
+    font-size: 13.4vw;
+    margin-top: 52px;
+  }
+
+  .daylight .hrow {
+    margin-top: 40px;
+  }
+
+  .daylight .lede {
+    font-size: 18px;
+  }
+
+  .daylight .day {
+    margin-top: 80px;
+  }
+
+  .daylight .ev {
+    width: 236px;
+  }
+
+  .daylight .ch {
+    padding: 80px 0;
+  }
+
+  .daylight .card {
+    padding: 20px;
+    min-height: 0;
+    border-radius: 24px;
+  }
+
+  .daylight .mm {
+    max-width: 92%;
+  }
+
+  .daylight .appr {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .daylight .card .appr:nth-child(2) {
+    margin-left: 0;
+  }
+
+  .daylight .peek {
+    width: 120px;
+    height: 120px;
+    position: relative;
+    right: auto;
+    bottom: auto;
+    align-self: flex-end;
+    margin: -10px -6px -40px 0;
+  }
+
+  .daylight .frames {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .daylight .band {
+    padding: 90px 0;
+  }
+
+  .daylight .next {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .daylight .nx {
+    min-height: 210px;
+  }
+
+  .daylight .nx:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .daylight .nextsec {
+    padding-top: 90px;
+  }
+
+  .daylight .faq {
+    padding: 90px 20px;
+  }
+
+  .daylight .end {
+    padding: 90px 20px 70px;
+  }
+
+  .daylight .crew .bot {
+    width: 56px;
+    height: 56px;
+  }
+
+  .daylight footer {
+    flex-direction: column;
+    gap: 14px;
+    align-items: flex-start;
+  }
+
+  .daylight .crewmini {
+    flex-wrap: wrap;
+  }
+
+  .daylight .crewmini span {
+    margin: 10px 0 0;
+    max-width: none;
+    flex-basis: 100%;
+  }
+
+  .daylight form.wl input {
+    padding: 0 10px;
+  }
+}
+
+.daylight .ch h2 {
+  font-size: clamp(40px, 4.3vw, 58px);
+}
+
+.daylight .clabel {
+  position: absolute;
+  top: 22px;
+  left: 28px;
+  font:
+    500 11px "JetBrains Mono",
+    ui-monospace,
+    monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(21, 21, 20, 0.45);
+}
+
+.daylight .card {
+  padding-top: 64px;
+}
+
+.daylight .mm {
+  font-size: 16px;
+}
+
+.daylight .steps li {
+  font-size: 14px;
+}
+
+@media (max-width: 680px) {
+  .daylight .card {
+    padding-top: 52px;
+  }
+
+  .daylight .clabel {
+    left: 20px;
+    top: 18px;
+  }
+}

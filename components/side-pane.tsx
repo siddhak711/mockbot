@@ -24,6 +24,7 @@ export function SidePane({
   onSelect,
   snapshot = null,
   status = "ready",
+  unavailableReason = null,
   messages = [],
 }: {
   tab: SideTab;
@@ -38,6 +39,7 @@ export function SidePane({
   onSelect?: (id: string) => void;
   snapshot?: ComputerSnapshot | null;
   status?: "loading" | "ready" | "error";
+  unavailableReason?: string | null;
   messages?: Message[];
 }) {
   const memoryLabel = memories && memories.length > 0 ? `Memory ${memories.length}` : "Memory";
@@ -104,6 +106,7 @@ export function SidePane({
           onSelect={onSelect}
           snapshot={snapshot}
           status={status}
+          unavailableReason={unavailableReason}
         />
       )}
     </aside>

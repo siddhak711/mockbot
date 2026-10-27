@@ -1,4 +1,5 @@
 import { afterEach, expect, it } from "vitest";
+import { POST as createAgent } from "../app/api/agents/route";
 import { POST } from "../app/api/chat/route";
 import { POST as postApproval } from "../app/api/tools/approvals/route";
 import { buildMockReply, MockProvider, selectProvider, type LlmProvider } from "../src/llm";
@@ -14,8 +15,12 @@ afterEach(async () => {
   await resetAppContext();
 });
 
-it("streams a mock reply when no API key is configured", async () => {
-  const provider = selectProvider({ MOCK_STREAM_DELAY_MS: "0", MOCK_CHUNK_SIZE: "16" });
+it("streams a labeled mock reply when the mock provider is opted in", async () => {
+  const provider = selectProvider({
+    LLM_PROVIDER: "mock",
+    MOCK_STREAM_DELAY_MS: "0",
+    MOCK_CHUNK_SIZE: "16",
+  });
   expect(provider.id).toBe("mock");
   const store = await ConversationStore.open();
   setAppContext({ store, provider });
@@ -150,7 +155,7 @@ it("releases the refresh lock before the event stream finishes", async () => {
 });
 
 it("finishes a second conversation while the first waits on approval", async () => {
-  const tools = createDefaultTools({});
+  const tools = createDefaultTools(process.env);
   tools.register({
     name: "send_note",
     description: "Send a note. Requires approval.",
@@ -173,11 +178,28 @@ it("finishes a second conversation while the first waits on approval", async () 
   const pending = await readUntil(waiting, "approval_required");
   expect(pending.events.some((event) => event.data.name === "send_note")).toBe(true);
 
-  const other = await POST(
+  const blocked = await POST(
     new Request("http://localhost/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: "Say hello" }),
+    }),
+  );
+  expect(blocked.status).toBe(409);
+
+  const created = await createAgent(
+    new Request("http://localhost/api/agents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Researcher", instructions: "Look things up." }),
+    }),
+  );
+  const agentId = ((await created.json()) as { agent: { id: string } }).agent.id;
+  const other = await POST(
+    new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Say hello", agentId }),
     }),
   );
   const finished = await readSse(other);

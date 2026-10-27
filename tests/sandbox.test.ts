@@ -1,7 +1,8 @@
+import { Image } from "@daytonaio/sdk";
 import { mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { GET, POST } from "../app/api/computer/route";
 import { resetAppContext, setAppContext } from "../src/context";
 import { withAgentMock } from "../src/agents/mock-script";
@@ -9,8 +10,8 @@ import { MockProvider } from "../src/llm";
 import { commandTimeoutMs, resolveWorkspacePath, toSandboxPath } from "../src/sandbox/limits";
 import { openComputer } from "../src/sandbox/open";
 import { planComputerTurn } from "../src/sandbox/plan";
-import type { ExecOutcome, SandboxRuntime } from "../src/sandbox/runtime";
-import { ComputerSupervisor } from "../src/sandbox/supervisor";
+import type { ExecOutcome, SandboxEntry, SandboxRuntime } from "../src/sandbox/runtime";
+import { ComputerSupervisor, DIFF_MAX_BYTES, DIFF_MAX_FILES } from "../src/sandbox/supervisor";
 import { SandboxStore } from "../src/sandbox/store";
 import { createComputerTools } from "../src/sandbox/tools";
 import { SandboxTurnProvider } from "../src/sandbox/turn";
@@ -22,6 +23,13 @@ import {
   type RemoteSandbox,
   type RemoteSandboxFleet,
 } from "../src/sandbox/daytona";
+import {
+  DAYTONA_IMAGE_BUILD_TIMEOUT_SEC,
+  SANDBOX_APT_PACKAGES,
+  SANDBOX_BASE_IMAGE,
+  daytonaCreateOptions,
+  sandboxToolCheckCommand,
+} from "../src/sandbox/toolchain";
 import { readSse } from "./helpers";
 
 describe("sandbox", { concurrent: false }, () => {
@@ -92,8 +100,7 @@ describe("sandbox", { concurrent: false }, () => {
   });
 
   it("creates a file, reads it back, and runs a command that prints it", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const supervisor = await openComputer({ env: {}, dataDir: "memory://" });
+    const supervisor = await openComputer({ env: { MOCK_SANDBOX: "1" }, dataDir: "memory://" });
     const write = await supervisor.invoke("agent", "write", {
       path: "hello.txt",
       content: "hello from the sandbox",
@@ -106,10 +113,6 @@ describe("sandbox", { concurrent: false }, () => {
     expect(read.result.content).toContain("hello from the sandbox");
     expect(read.result.content.startsWith('{"provider":"mock"}\n')).toBe(true);
     expect(exec.result.content.startsWith('{"provider":"mock"}\n')).toBe(true);
-    expect(warn).toHaveBeenCalledWith(
-      "sandbox is using a mock implementation because DAYTONA_API_KEY is not set.",
-    );
-    warn.mockRestore();
     expect(exec.result.isError).toBeUndefined();
     expect(exec.run.command).toBe("cat hello.txt");
     expect(exec.run.stdout).toBe("hello from the sandbox");
@@ -132,7 +135,7 @@ describe("sandbox", { concurrent: false }, () => {
     process.env.HOST_ENV_CANARY = canary;
 
     const supervisor = await openComputer({
-      env: { HOST_ENV_CANARY: canary },
+      env: { MOCK_SANDBOX: "1", HOST_ENV_CANARY: canary },
       dataDir: "memory://",
     });
     try {
@@ -179,7 +182,7 @@ describe("sandbox", { concurrent: false }, () => {
 
   it("kills a command that exceeds its time limit and reports a failed tool result", async () => {
     const supervisor = await openComputer({
-      env: { SANDBOX_COMMAND_TIMEOUT_MS: "40" },
+      env: { MOCK_SANDBOX: "1", SANDBOX_COMMAND_TIMEOUT_MS: "40" },
       dataDir: "memory://",
     });
     const started = Date.now();
@@ -215,12 +218,33 @@ describe("sandbox", { concurrent: false }, () => {
         DAYTONA_TARGET: "us",
       }),
     ).toEqual({ apiKey: secret, apiUrl: "https://example.test/api", target: "us" });
-    expect(daytonaCreateParams("agent")).toEqual({
-      language: "python",
-      labels: { app: "mockbot", agentId: "agent" },
-    });
-    expect(daytonaCreateParams("agent")).not.toHaveProperty("envVars");
-    expect(daytonaCreateParams("agent")).not.toHaveProperty("secrets");
+    const params = daytonaCreateParams("agent");
+    expect(params.language).toBe("python");
+    expect(params.labels).toEqual({ app: "mockbot", agentId: "agent" });
+    expect(params).not.toHaveProperty("envVars");
+    expect(params).not.toHaveProperty("secrets");
+    expect(params.image).toBeInstanceOf(Image);
+    const dockerfile = params.image.dockerfile;
+    expect(dockerfile.startsWith(`FROM ${SANDBOX_BASE_IMAGE}\n`)).toBe(true);
+    expect(dockerfile).toContain("apt-get install -y --no-install-recommends");
+    for (const pkg of SANDBOX_APT_PACKAGES) expect(dockerfile).toContain(pkg);
+    const check = sandboxToolCheckCommand();
+    expect(dockerfile).toContain(check);
+    expect(dockerfile.indexOf("apt-get install")).toBeLessThan(
+      dockerfile.indexOf("grep --version"),
+    );
+    expect(check).toContain("command -v ls");
+    expect(check).toContain("command -v cat");
+    expect(check).toContain("command -v wc");
+    expect(check).toContain("command -v head");
+    expect(check).toContain("command -v tail");
+    expect(check).toContain("command -v sed");
+    expect(check).toContain("node --version");
+    expect(check).toContain("npm --version");
+    expect(check).toContain("python3 --version");
+    expect(check).toContain("git --version");
+    expect(daytonaCreateOptions()).toEqual({ timeout: DAYTONA_IMAGE_BUILD_TIMEOUT_SEC });
+    expect(DAYTONA_IMAGE_BUILD_TIMEOUT_SEC).toBe(0);
 
     const source = readFileSync(join("src", "sandbox", "daytona.ts"), "utf8");
     expect(source).not.toContain("child_process");
@@ -371,6 +395,92 @@ describe("sandbox", { concurrent: false }, () => {
     await supervisor.close();
   });
 
+  it("records files a command creates or edits", async () => {
+    const fleet = new FakeFleet();
+    const store = await SandboxStore.open("memory://");
+    const runtime = new DaytonaRuntime(fleet, store, "secret");
+    const supervisor = new ComputerSupervisor(store, runtime, 1_000);
+    await supervisor.invoke("agent", "write", { path: "keep.txt", content: "same" });
+    await supervisor.invoke("agent", "write", { path: "note.txt", content: "old" });
+
+    const revised = await supervisor.invoke("agent", "exec", { command: "revise" });
+    expect(revised.run.changedFiles).toEqual(["created.txt", "note.txt"]);
+
+    const reread = await supervisor.invoke("agent", "exec", { command: "revise" });
+    expect(reread.run.changedFiles).toEqual([]);
+
+    const printed = await supervisor.invoke("agent", "exec", { command: "echo hi" });
+    expect(printed.run.changedFiles).toEqual([]);
+    await supervisor.close();
+  });
+
+  it("does not diff node_modules or .git, and records nothing when the tree is over the cap", async () => {
+    const fleet = new FakeFleet();
+    const store = await SandboxStore.open("memory://");
+    const runtime = new DaytonaRuntime(fleet, store, "secret");
+    const supervisor = new ComputerSupervisor(store, runtime, 1_000);
+    await supervisor.invoke("agent", "write", { path: "app.txt", content: "old" });
+    await supervisor.invoke("agent", "write", {
+      path: "node_modules/pkg/index.js",
+      content: "module",
+    });
+    await supervisor.invoke("agent", "write", { path: ".git/config", content: "git" });
+    fleet.reads.length = 0;
+
+    const edited = await supervisor.invoke("agent", "exec", { command: "echo hi" });
+    expect(edited.run.changedFiles).toEqual([]);
+    expect(fleet.reads.some((path) => path.includes("node_modules"))).toBe(false);
+    expect(fleet.reads.some((path) => path.includes(".git"))).toBe(false);
+    expect(fleet.reads.some((path) => path.endsWith("app.txt"))).toBe(true);
+    await supervisor.close();
+
+    const capped = await SandboxStore.open("memory://");
+    await capped.ensureComputer("agent", "daytona");
+    await capped.setSandboxId("agent", "sbx-cap");
+    const wide = new CappedRuntime(DIFF_MAX_FILES + 1, 1);
+    const wideSupervisor = new ComputerSupervisor(capped, wide, 1_000);
+    const tooMany = await wideSupervisor.invoke("agent", "exec", { command: "echo hi" });
+    expect(tooMany.run.changedFiles).toEqual([]);
+    expect(wide.reads).toBe(0);
+
+    const heavyStore = await SandboxStore.open("memory://");
+    await heavyStore.ensureComputer("agent", "daytona");
+    await heavyStore.setSandboxId("agent", "sbx-heavy");
+    const heavy = new CappedRuntime(1, DIFF_MAX_BYTES + 1);
+    const heavySupervisor = new ComputerSupervisor(heavyStore, heavy, 1_000);
+    const tooBig = await heavySupervisor.invoke("agent", "exec", { command: "echo hi" });
+    expect(tooBig.run.changedFiles).toEqual([]);
+    expect(heavy.reads).toBe(0);
+    await wideSupervisor.close();
+    await heavySupervisor.close();
+  });
+
+  it("does not treat a file as changed when its first snapshot read fails", async () => {
+    const store = await SandboxStore.open("memory://");
+    await store.ensureComputer("agent", "daytona");
+    await store.setSandboxId("agent", "sbx-flaky");
+    const runtime = new FlakyReadRuntime();
+    const supervisor = new ComputerSupervisor(store, runtime, 1_000);
+    const exec = await supervisor.invoke("agent", "exec", { command: "echo hi" });
+    expect(runtime.reads).toBe(2);
+    expect(exec.run.changedFiles).toEqual([]);
+    await supervisor.close();
+  });
+
+  it("aborts the file diff after a command when the signal fires", async () => {
+    const store = await SandboxStore.open("memory://");
+    await store.ensureComputer("agent", "daytona");
+    await store.setSandboxId("agent", "sbx-abort");
+    const controller = new AbortController();
+    const runtime = new AbortAfterExecRuntime(controller);
+    const supervisor = new ComputerSupervisor(store, runtime, 1_000);
+    await expect(
+      supervisor.invoke("agent", "exec", { command: "echo hi" }, controller.signal),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(await store.listRuns("agent")).toEqual([]);
+    await supervisor.close();
+  });
+
   it("lists nested Daytona files in the snapshot", async () => {
     const fleet = new FakeFleet();
     const store = await SandboxStore.open("memory://");
@@ -386,7 +496,7 @@ describe("sandbox", { concurrent: false }, () => {
   });
 
   it("streams the sandbox tools through chat and the computer API", async () => {
-    const supervisor = await openComputer({ env: {}, dataDir: "memory://" });
+    const supervisor = await openComputer({ env: { MOCK_SANDBOX: "1" }, dataDir: "memory://" });
     const store = await ConversationStore.open();
     setAppContext({
       store,
@@ -447,7 +557,7 @@ describe("sandbox", { concurrent: false }, () => {
   });
 
   it("leaves an ordinary mock reply alone", async () => {
-    const supervisor = await openComputer({ env: {}, dataDir: "memory://" });
+    const supervisor = await openComputer({ env: { MOCK_SANDBOX: "1" }, dataDir: "memory://" });
     const store = await ConversationStore.open();
     const provider = new SandboxTurnProvider({
       inner: new MockProvider({ delayMs: 0, chunkSize: 80, reply: () => "Still a mock reply" }),
@@ -600,11 +710,114 @@ describe("sandbox", { concurrent: false }, () => {
     }
   }
 
+  class CappedRuntime implements SandboxRuntime {
+    readonly kind = "daytona" as const;
+    reads = 0;
+
+    constructor(
+      private readonly count: number,
+      private readonly size: number,
+    ) {}
+
+    list(): Promise<{ ok: true; entries: SandboxEntry[] }> {
+      const entries: SandboxEntry[] = Array.from({ length: this.count }, (_, index) => ({
+        name: `file-${index}.txt`,
+        kind: "file",
+        size: this.size,
+        modifiedAt: "2026-10-26T00:00:00.000Z",
+      }));
+      return Promise.resolve({ ok: true, entries });
+    }
+
+    read(): Promise<{ ok: true; content: string }> {
+      this.reads += 1;
+      return Promise.resolve({ ok: true, content: "x" });
+    }
+
+    write(): Promise<{ ok: true }> {
+      return Promise.resolve({ ok: true });
+    }
+
+    prepare(): Promise<void> {
+      return Promise.resolve();
+    }
+
+    exec(): Promise<ExecOutcome> {
+      return Promise.resolve({ stdout: "hi\n", stderr: "", exitCode: 0, timedOut: false });
+    }
+  }
+
+  class FlakyReadRuntime implements SandboxRuntime {
+    readonly kind = "daytona" as const;
+    reads = 0;
+
+    list(): Promise<{ ok: true; entries: SandboxEntry[] }> {
+      return Promise.resolve({ ok: true, entries: [{ name: "keep.txt", kind: "file" }] });
+    }
+
+    read(): Promise<{ ok: true; content: string } | { ok: false; error: string }> {
+      this.reads += 1;
+      if (this.reads === 1) return Promise.resolve({ ok: false, error: "flaky" });
+      return Promise.resolve({ ok: true, content: "same" });
+    }
+
+    write(): Promise<{ ok: true }> {
+      return Promise.resolve({ ok: true });
+    }
+
+    prepare(): Promise<void> {
+      return Promise.resolve();
+    }
+
+    exec(): Promise<ExecOutcome> {
+      return Promise.resolve({ stdout: "hi\n", stderr: "", exitCode: 0, timedOut: false });
+    }
+  }
+
+  class AbortAfterExecRuntime implements SandboxRuntime {
+    readonly kind = "daytona" as const;
+    reads = 0;
+
+    constructor(private readonly controller: AbortController) {}
+
+    list(): Promise<{ ok: true; entries: SandboxEntry[] }> {
+      return Promise.resolve({ ok: true, entries: [{ name: "a.txt", kind: "file" }] });
+    }
+
+    read(
+      _agentId: string,
+      _path: string,
+      signal?: AbortSignal,
+    ): Promise<{ ok: true; content: string }> {
+      this.reads += 1;
+      if (this.reads > 1 && signal) {
+        this.controller.abort();
+        return Promise.reject(
+          Object.assign(new Error("The operation was aborted"), { name: "AbortError" }),
+        );
+      }
+      return Promise.resolve({ ok: true, content: "same" });
+    }
+
+    write(): Promise<{ ok: true }> {
+      return Promise.resolve({ ok: true });
+    }
+
+    prepare(): Promise<void> {
+      return Promise.resolve();
+    }
+
+    exec(): Promise<ExecOutcome> {
+      return Promise.resolve({ stdout: "hi\n", stderr: "", exitCode: 0, timedOut: false });
+    }
+  }
+
   class FakeFleet implements RemoteSandboxFleet {
     readonly creates: Array<{ id: string; agentId: string; envVars?: unknown }> = [];
     readonly execs: Array<{ command: string; cwd: string; timeoutSec: number }> = [];
     readonly starts: string[] = [];
     readonly reconnects: string[] = [];
+    readonly reads: string[] = [];
     bootMs = 0;
     failNextStart = false;
     readonly #sandboxes = new Map<string, Map<string, string>>();
@@ -637,6 +850,7 @@ describe("sandbox", { concurrent: false }, () => {
       const files = this.#sandboxes.get(id);
       if (!files) throw new Error("missing sandbox");
       const execs = this.execs;
+      const reads = this.reads;
       return {
         id,
         ensureRunning: async () => {
@@ -667,6 +881,7 @@ describe("sandbox", { concurrent: false }, () => {
           };
         },
         async read(path: string) {
+          reads.push(path);
           const content = files.get(path);
           if (content === undefined) return { ok: false as const, error: `No such file: ${path}` };
           return { ok: true as const, content };
@@ -677,6 +892,11 @@ describe("sandbox", { concurrent: false }, () => {
         exec: async (command: string, cwd: string, timeoutSec: number) => {
           if (!this.#running.has(id)) throw new Error("Sandbox is stopped");
           execs.push({ command, cwd, timeoutSec });
+          if (command === "revise") {
+            files.set(`${cwd}/note.txt`, "new");
+            files.set(`${cwd}/created.txt`, "fresh");
+            return { stdout: "ok\n", stderr: "", exitCode: 0, timedOut: false };
+          }
           if (command.startsWith("echo ")) {
             return { stdout: `${command.slice(5)}\n`, stderr: "", exitCode: 0, timedOut: false };
           }

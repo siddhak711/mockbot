@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { signInWithGoogle } from "../src/auth/actions";
-import { Mochi } from "./mochi";
+import { BotSprite } from "./bot-sprite";
 import { ThemeToggle } from "./theme";
 
 const ERRORS: Record<string, string> = {
@@ -89,7 +89,7 @@ export function LoginScreen({
         <ThemeToggle />
       </div>
       <section className="auth-card">
-        <Mochi state="idle" size={56} label="Mochi" />
+        <BotSprite state="idle" size={56} label="Mockbot" />
         <h1>{signUp ? "Create your account" : "Welcome back"}</h1>
         <p className="auth-lead">
           {signUp

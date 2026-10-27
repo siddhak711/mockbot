@@ -34,7 +34,9 @@ export function MemoryPanel({
       ) : mode === "error" ? null : mode === "empty" ? (
         <div className="computer-empty">
           <h3>No memories yet</h3>
-          <p>Ask Mockbot to remember a fact. It can use that fact in a later chat.</p>
+          <p>
+            Ask Mockbot to remember a fact. It can use that fact on a later turn of this thread.
+          </p>
         </div>
       ) : (
         <div className="memory-scroll">

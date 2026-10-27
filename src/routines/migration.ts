@@ -75,4 +75,36 @@ CREATE INDEX IF NOT EXISTS routines_due_idx
 CREATE INDEX IF NOT EXISTS routines_event_idx
   ON routines (event_name)
   WHERE trigger_kind = 'event';
+
+ALTER TABLE routines ADD COLUMN IF NOT EXISTS user_id TEXT REFERENCES users(id) ON DELETE CASCADE;
+ALTER TABLE routines ADD COLUMN IF NOT EXISTS agent_id TEXT;
+
+CREATE INDEX IF NOT EXISTS routines_user_idx ON routines (user_id, created_at DESC);
+
+-- Routines created before ownership stay with the earliest account's lead.
+DO $$
+BEGIN
+  IF to_regclass('public.users') IS NOT NULL AND to_regclass('public.agents') IS NOT NULL THEN
+    UPDATE routines AS routine
+    SET user_id = owner.id,
+        agent_id = owner.lead_id,
+        updated_at = NOW()
+    FROM (
+      SELECT users.id AS id,
+             (
+               SELECT agents.id
+               FROM agents
+               WHERE agents.user_id = users.id
+                 AND agents.is_lead = TRUE
+               ORDER BY agents.created_at ASC, agents.id ASC
+               LIMIT 1
+             ) AS lead_id
+      FROM users
+      ORDER BY users.created_at ASC, users.id ASC
+      LIMIT 1
+    ) AS owner
+    WHERE routine.user_id IS NULL
+      AND owner.lead_id IS NOT NULL;
+  END IF;
+END $$;
 `;
