@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import type { ConnectorRecord } from "../src/connectors";
 import { CommandPalette } from "./command-palette";
 import { Composer } from "./composer";
@@ -9,6 +9,7 @@ import { MenuIcon } from "./icons";
 import { Sidebar } from "./sidebar";
 import { ThreadActions } from "./thread-actions";
 import { BotSprite, botSpriteLabel } from "./bot-sprite";
+import { PANE_WIDTH_DEFAULT, widthForContentTab, type ComputerContentTab } from "./computer-pane";
 import { SidePane, type SideTab } from "./side-pane";
 import { Transcript } from "./transcript";
 import { useRunSprite } from "./use-run-sprite";
@@ -81,6 +82,8 @@ export function Workspace({
     database: "local",
   });
   const [computerOpen, setComputerOpen] = useState(true);
+  const [computerPopped, setComputerPopped] = useState(false);
+  const [paneWidth, setPaneWidth] = useState(PANE_WIDTH_DEFAULT);
   const [sideTab, setSideTab] = useState<SideTab>("computer");
   const [memories, setMemories] = useState<Memory[] | null>(null);
   const [memoryError, setMemoryError] = useState<string | null>(null);
@@ -146,13 +149,7 @@ export function Workspace({
       setActiveAgentId(conversation.agentId);
       setMessages(thread);
       releaseApprovalLock();
-      const nextActivities = activitiesFromMessages(thread);
-      setActivities(nextActivities);
-      setSelectedToolId((current) =>
-        current && nextActivities.some((item) => item.id === current)
-          ? current
-          : (nextActivities[nextActivities.length - 1]?.id ?? null),
-      );
+      setActivities(activitiesFromMessages(thread));
       const url = new URL(window.location.href);
       if (query === "agent") {
         url.searchParams.set("agent", conversation.agentId);
@@ -704,6 +701,14 @@ export function Workspace({
   }
 
   const computerStatus = computerReady ? (computer ? "ready" : "error") : "loading";
+  const computerDocked = computerOpen && !computerPopped;
+  function chooseComputerTab(tab: ComputerContentTab) {
+    setPaneWidth((current) => widthForContentTab(current, tab));
+  }
+  function hideComputer() {
+    setComputerPopped(false);
+    setComputerOpen(false);
+  }
   const speakingId = active?.agentId ?? activeAgentId;
   const speaking = agents.find((agent) => agent.id === speakingId) ?? null;
   const spriteColor = spriteColorForAgent(speaking);
@@ -730,15 +735,15 @@ export function Workspace({
 
   return (
     <div
-      className={
-        computerOpen
-          ? sidebarCollapsed
-            ? "app with-computer sidebar-collapsed"
-            : "app with-computer"
-          : sidebarCollapsed
-            ? "app sidebar-collapsed"
-            : "app"
-      }
+      className={[
+        "app",
+        computerDocked ? "with-computer" : "",
+        computerPopped ? "computer-popped" : "",
+        sidebarCollapsed ? "sidebar-collapsed" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      style={{ "--rightpane": `${paneWidth}px` } as CSSProperties}
     >
       <Sidebar
         agents={agents}
@@ -891,6 +896,8 @@ export function Workspace({
             snapshot={computer}
             status={computerStatus}
             messages={messages}
+            onPop={() => setComputerPopped(true)}
+            onComputerTab={chooseComputerTab}
           />
         </div>
       </main>
@@ -898,7 +905,7 @@ export function Workspace({
         <SidePane
           tab={sideTab}
           onTab={setSideTab}
-          onHide={() => setComputerOpen(false)}
+          onHide={hideComputer}
           memories={memories}
           memoryError={memoryError}
           agentId={speakingId}
@@ -907,6 +914,11 @@ export function Workspace({
           snapshot={computer}
           status={computerStatus}
           messages={messages}
+          popped={computerPopped}
+          onPop={() => setComputerPopped((open) => !open)}
+          paneWidth={paneWidth}
+          onPaneWidth={setPaneWidth}
+          onComputerTab={chooseComputerTab}
         />
       ) : null}
       <ConnectorsPanel
