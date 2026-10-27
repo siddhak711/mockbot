@@ -90,6 +90,10 @@ export class ComputerSupervisor {
         await runtime.prepare(id, signal);
         return runtime.exec(id, command, timeoutMs, signal);
       },
+      sandboxId: async () => {
+        const computer = await this.store.getComputer(id);
+        return computer?.sandboxId ?? null;
+      },
     };
   }
 

@@ -9,10 +9,15 @@ import {
 } from "./limits";
 import type { BrowseOutcome, BrowseStep, BrowserDriver } from "./types";
 
-/** The two sandbox operations the browser needs. Paths are relative to the workspace. */
+/** The sandbox operations the browser needs. Paths are relative to the workspace. */
 export type BrowserHost = {
   write(path: string, content: string): Promise<{ ok: true } | { ok: false; error: string }>;
   exec(command: string, timeoutMs: number, signal?: AbortSignal): Promise<ExecOutcome>;
+  /**
+   * Daytona sandbox id for this host. A new id means the machine was replaced
+   * and a previous install must not be reused.
+   */
+  sandboxId?: () => Promise<string | null>;
 };
 
 export const DAEMON_PATH = ".mockbot/browserd.cjs";
@@ -25,6 +30,10 @@ export const DEFAULT_BROWSER_PORT = 9417;
  */
 export class SandboxBrowser implements BrowserDriver {
   #installed: Promise<void> | null = null;
+  /** Sandbox id the cached install belongs to. Null when the host has no id. */
+  #installedFor: string | null = null;
+  /** Serializes install decisions so two browse calls share one installer. */
+  #gate: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly host: BrowserHost,
@@ -85,15 +94,43 @@ export class SandboxBrowser implements BrowserDriver {
    * One installer at a time. Aborting the caller stops the wait only.
    * Daytona leaves the remote command running after the local exec rejects, so
    * forgetting this promise would start a second installer over the first.
+   * A changed sandbox id drops that cache: the new machine does not have the install.
    */
   #ensureInstalled(signal?: AbortSignal): Promise<void> {
     if (!this.options.install) return Promise.resolve();
     throwIfAborted(signal);
-    this.#installed ??= this.#install().catch((error: unknown) => {
-      this.#installed = null;
+    const run = this.#gate.then(() => this.#syncInstall());
+    this.#gate = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return withSignal(run, signal);
+  }
+
+  async #sandboxId(): Promise<string | null> {
+    if (!this.host.sandboxId) return null;
+    const id = await this.host.sandboxId();
+    return id || null;
+  }
+
+  async #syncInstall(): Promise<void> {
+    const sandboxId = await this.#sandboxId();
+    if (this.#installed && this.#installedFor === sandboxId) {
+      await this.#installed;
+      return;
+    }
+    const slot = this.#install().then(async () => {
+      this.#installedFor = (await this.#sandboxId()) ?? sandboxId;
+    });
+    const tracked = slot.catch((error: unknown) => {
+      if (this.#installed === tracked) {
+        this.#installed = null;
+        this.#installedFor = null;
+      }
       throw error;
     });
-    return withSignal(this.#installed, signal);
+    this.#installed = tracked;
+    await tracked;
   }
 
   async #install(): Promise<void> {

@@ -151,6 +151,25 @@ it("runs one installer for overlapping browse calls", async () => {
   expect(tracked.installs()).toBe(1);
 });
 
+it("reinstalls when the sandbox id changes", async () => {
+  let sandboxId = "sandbox-old";
+  const tracked = hostTrackingInstalls(async () => ({
+    stdout: "",
+    stderr: "",
+    exitCode: 0,
+    timedOut: false,
+  }));
+  tracked.host.sandboxId = async () => sandboxId;
+  const browser = browserWith(tracked.host);
+  await expect(browser.perform(openStep())).resolves.toMatchObject({ ok: true });
+  await expect(browser.perform(openStep())).resolves.toMatchObject({ ok: true });
+  expect(tracked.installs()).toBe(1);
+
+  sandboxId = "sandbox-new";
+  await expect(browser.perform(openStep())).resolves.toMatchObject({ ok: true });
+  expect(tracked.installs()).toBe(2);
+});
+
 it("starts another installer only after the in-flight install has failed", async () => {
   const tracked = hostTrackingInstalls(async () => ({
     stdout: "",
