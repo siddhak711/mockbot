@@ -123,6 +123,17 @@ npm run dev
 
 You can put the same variables in `.env.local`. Names are listed in `.env.example`.
 
+## Model router
+
+Each model call goes through `pickModel`. The choice is a set of rules. There is no classifier model.
+
+| Turn                                                                                                  | Tier   | Model id                                                                                              |
+| ----------------------------------------------------------------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------- |
+| Chat, or a simple tool call (`web_search`, calendar, memory, `tool_search`, and other non-code tools) | cheap  | `MODEL_TIER_CHEAP`, or `LLM_MODEL` unless the base URL is OpenRouter (`deepseek/deepseek-v4.1-flash`) |
+| A plan, a code task (`write`, `exec`, or a coding request), or a retry after a failed tool            | strong | `MODEL_TIER_STRONG`, or `LLM_MODEL` unless the base URL is OpenRouter (`moonshotai/kimi-k3.1-pro`)    |
+
+An explicit `MODEL_TIER_*` value has to be an open-weights id. A closed id refuses to load. When those variables are unset and `LLM_BASE_URL` is not OpenRouter, both tiers send `LLM_MODEL`, so another OpenAI-compatible server is not given an OpenRouter id. Prices (`MODEL_TIER_*_USD_PER_MTOK`) are list prices used to log the cost of the call. A fallback id is not billed at the open-weights list price unless those price variables are set. Each request sends `max_tokens` from `MODEL_TIER_CHEAP_MAX_TOKENS` (default 4096) or `MODEL_TIER_STRONG_MAX_TOKENS` (default 8192), so OpenRouter does not reserve the model's full completion window. The chosen tier, model id, and cost are written to the server log and to the saved turn, and to `run_events` when that table exists. The table lookup is cached per connection. Until the run-replay log lands, the logger no-ops instead of failing the turn.
+
 ## Tools
 
 The server keeps a tool registry. Each tool has a name, a JSON schema, and an invoke function, in the same shape as an MCP tool. A turn exposes at most 15 tools to the model. `tool_search` is always one of them and finds the rest by name or description. With a key missing, a tool returns an error that names it. `MOCK_WEB=1`, `MOCK_GITHUB=1`, and `MOCK_CALENDAR=1` return labeled mock data instead and do not touch the network. Those flags are refused in production builds (`NODE_ENV=production` or `VERCEL_ENV=production`). The live mock provider answers an ordinary message without inventing a tool call. A message that asks for the sandbox computer asks the registry to run the computer tools. Any other model that requests tools still runs them through the registry. Tests can opt the mock provider into a multi-step demo that searches the catalog and then calls another tool.

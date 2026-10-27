@@ -81,6 +81,8 @@ export function applyStreamEvent(trace: MessageTrace, event: LlmStreamEvent): Me
   switch (event.type) {
     case "start":
       return { ...trace, started: true, role: "assistant" };
+    case "route":
+      return trace;
     case "reasoning":
       return {
         ...trace,
@@ -274,6 +276,7 @@ export function parseTrace(value: unknown): MessageTrace | null {
         return parsed ? [parsed] : [];
       })
     : [];
+  const route = parseRoute(raw.route);
   return {
     started: Boolean(raw.started),
     role: raw.role === "assistant" ? "assistant" : null,
@@ -285,5 +288,20 @@ export function parseTrace(value: unknown): MessageTrace | null {
     system: typeof raw.system === "string" ? raw.system : "",
     prefill: typeof raw.prefill === "string" ? raw.prefill : "",
     segments: parseSegments(raw.segments),
+    ...(route ? { route } : {}),
+  };
+}
+
+function parseRoute(value: unknown): MessageTrace["route"] | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as { tier?: unknown; reason?: unknown; model?: unknown };
+  if (raw.tier !== "cheap" && raw.tier !== "strong") return undefined;
+  const reasons = ["chat", "tool", "plan", "code", "retry"] as const;
+  if (!reasons.includes(raw.reason as (typeof reasons)[number])) return undefined;
+  if (typeof raw.model !== "string" || raw.model.length === 0) return undefined;
+  return {
+    tier: raw.tier,
+    reason: raw.reason as (typeof reasons)[number],
+    model: raw.model,
   };
 }
