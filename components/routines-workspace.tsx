@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { formatRunTime } from "../src/routines/format";
 import type { Routine, RoutineRun, RoutineStatus } from "../src/routines/types";
 import type { SignedInUser } from "../src/auth/user";
@@ -31,8 +31,19 @@ function statusLabel(status: RoutineStatus | RoutineRun["status"]): string {
   return "Active";
 }
 
+/** Routines run on the agent's one thread, so the link opens that agent. Null means the lead. */
+export function routineAgentLink(routine: Pick<Routine, "agentId">): string {
+  return routine.agentId ? `/?agent=${encodeURIComponent(routine.agentId)}` : "/";
+}
+
+export const ROUTINES_LOAD_ERROR = "Could not load routines.";
+
 export function RoutinesWorkspace({ user }: { user: SignedInUser }) {
-  const [routines, setRoutines] = useState<RoutineWithRuns[]>([]);
+  // null until the first list arrives, so "No routines yet" never shows while loading.
+  const [routines, setRoutines] = useState<RoutineWithRuns[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const inFlight = useRef(false);
+  const mounted = useRef(true);
   const [navOpen, setNavOpen] = useState(false);
   const [name, setName] = useState("");
   const [prompt, setPrompt] = useState("");
@@ -45,25 +56,29 @@ export function RoutinesWorkspace({ user }: { user: SignedInUser }) {
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const response = await fetch("/api/routines");
-    if (!response.ok) return;
-    const data = (await response.json()) as { routines: RoutineWithRuns[] };
-    setRoutines(data.routines);
+    // A slow response must not stack another request behind it every second.
+    if (inFlight.current) return;
+    inFlight.current = true;
+    try {
+      const response = await fetch("/api/routines");
+      if (!response.ok) throw new Error(ROUTINES_LOAD_ERROR);
+      const data = (await response.json()) as { routines: RoutineWithRuns[] };
+      if (!mounted.current) return;
+      setRoutines(data.routines);
+      setLoadError(null);
+    } catch {
+      if (mounted.current) setLoadError(ROUTINES_LOAD_ERROR);
+    } finally {
+      inFlight.current = false;
+    }
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const response = await fetch("/api/routines");
-      if (!response.ok || cancelled) return;
-      const data = (await response.json()) as { routines: RoutineWithRuns[] };
-      if (!cancelled) setRoutines(data.routines);
-    })();
-    const timer = setInterval(() => {
-      if (!cancelled) void load();
-    }, 1000);
+    mounted.current = true;
+    void load();
+    const timer = setInterval(() => void load(), 1000);
     return () => {
-      cancelled = true;
+      mounted.current = false;
       clearInterval(timer);
     };
   }, [load]);
@@ -277,7 +292,22 @@ export function RoutinesWorkspace({ user }: { user: SignedInUser }) {
               </p>
             ) : null}
 
-            {routines.length === 0 ? (
+            {loadError ? (
+              <p className="error" role="alert">
+                {loadError}{" "}
+                <button type="button" className="ghost-text" onClick={() => void load()}>
+                  Retry
+                </button>
+              </p>
+            ) : null}
+
+            {routines === null ? (
+              loadError ? null : (
+                <p className="empty" aria-busy="true">
+                  Loading routines
+                </p>
+              )
+            ) : routines.length === 0 ? (
               <p className="empty">No routines yet</p>
             ) : (
               <ul className="routine-list">
@@ -330,11 +360,9 @@ export function RoutinesWorkspace({ user }: { user: SignedInUser }) {
                           Resume
                         </button>
                       )}
-                      {routine.conversationId ? (
-                        <a className="ghost-text" href={`/?c=${routine.conversationId}`}>
-                          Open conversation
-                        </a>
-                      ) : null}
+                      <a className="ghost-text" href={routineAgentLink(routine)}>
+                        Open agent
+                      </a>
                     </div>
                     <h3>Runs</h3>
                     {routine.runs.length === 0 ? (
