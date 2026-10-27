@@ -14,6 +14,13 @@ Reviewers flag a pull request whose screenshots or recordings contradict those i
 
 <!-- Paste the command and its output. Explain every hit. -->
 
+## Tool credentials in production
+
+- [ ] This pull request does not add or change a tool.
+- [ ] This pull request adds or changes a tool. Each tool's credential source is listed below, and production provides each one. A tool without a production credential fails visibly.
+
+<!-- Per tool: name, credential source (env var or per-user OAuth), proof. Env vars: paste `vercel env ls --environment production` names only, never values. OAuth: screenshot or recording of the OAuth path working live. GitHub uses per-user OAuth in production; GITHUB_TOKEN is local dev only. -->
+
 ## What changed
 
 ## Proof

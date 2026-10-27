@@ -42,6 +42,13 @@ Every retry of failed work must change something: the failure evidence, the work
 2. Attempt 3: a fresh context.
 3. After attempt 3: change the plan.
 
+## 6. Tool credentials in production
+
+- Every tool declares its credential source: an env var, or per-user OAuth.
+- A pull request that adds or changes a tool lists each tool's credential source and confirms that production provides it. For env vars, paste `vercel env ls --environment production` names only, never values. For OAuth, show the OAuth path working live.
+- A tool whose credential production does not provide must fail visibly. It never falls back to mock data (see section 4).
+- GitHub: production uses per-user GitHub OAuth. `GITHUB_TOKEN` is for local development only and is not a production credential.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 ## This is NOT the Next.js you know

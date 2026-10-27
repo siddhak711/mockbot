@@ -26,6 +26,10 @@ No mock, stub, or fake provider may be reachable outside tests. A missing creden
 
 Every retry of failed work must change something: the failure evidence, the worker, a fresh context, or the plan. Attempt 2 is the same worker with the failure evidence, attempt 3 is a fresh context, and after that the plan changes. See [AGENTS.md](AGENTS.md) section 5.
 
+## Tool credentials in production
+
+Every tool declares its credential source (env var or per-user OAuth). A pull request that adds or changes a tool lists those sources and confirms production provides each one: `vercel env ls --environment production` names only for env vars, or the OAuth path shown working live. A tool with no credential in production must fail visibly. Production uses per-user GitHub OAuth; `GITHUB_TOKEN` is for local development only. See [AGENTS.md](AGENTS.md) section 6.
+
 ## Checks
 
 Requires Node.js 22 or newer.
