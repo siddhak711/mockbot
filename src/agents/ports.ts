@@ -13,14 +13,23 @@ export class NoteMemory implements AgentMemoryPort {
   }
 }
 
+/**
+ * Child runs have no real computer or connector bridge yet. These ports fail with
+ * a clear reason instead of returning made-up content.
+ */
+export const COMPUTER_NOT_WIRED =
+  "use_computer is not available: child runs are not connected to a sandbox computer yet.";
+export const CONNECTOR_NOT_WIRED =
+  "use_connector is not available: child runs are not connected to connectors yet.";
+
 export const defaultComputer: ComputerPort = {
-  async read(computerId: string, path: string): Promise<string> {
-    return `Granted computer ${computerId} (${path}).`;
+  async read(): Promise<string> {
+    throw new Error(COMPUTER_NOT_WIRED);
   },
 };
 
 export const defaultConnector: ConnectorPort = {
-  async call(connectorId: string, tool: string): Promise<string> {
-    return `Granted connector ${connectorId} tool ${tool}.`;
+  async call(): Promise<string> {
+    throw new Error(CONNECTOR_NOT_WIRED);
   },
 };

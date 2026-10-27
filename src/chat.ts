@@ -10,6 +10,7 @@ import { encodeSse, ssePadding } from "./sse";
 import { titleFromMessage, type ConversationStore } from "./store";
 import type { LlmProvider } from "./llm";
 import { streamDecision } from "./model-router";
+import type { ModelRouteEvent } from "./run-events";
 import { requiresApproval, type ApprovalGate } from "./tools/approval";
 import { runTool, type ToolRegistry } from "./tools/registry";
 import {
@@ -19,6 +20,14 @@ import {
   STOPPED_TOOL_OUTPUT,
 } from "./tools/display";
 import type { ToolContext } from "./tools/types";
+import {
+  RunLog,
+  captureModelEvent,
+  cloneMessages,
+  elapsedMs,
+  emptyModelCapture,
+  ignoreRunLog,
+} from "./runs/events";
 import { buildModelInput } from "./turn";
 import { applyStreamEvent, emptyTrace, hasVisibleStream, modelPromptParts } from "./trace";
 import type { LlmStreamEvent, LlmToolCall, MessageTrace } from "./types";
@@ -180,6 +189,7 @@ export async function streamChatTurn(options: {
   const memoryDeps = prepared.deps;
 
   const { store, provider, approvals, signal } = options;
+  const runLog = new RunLog(store.connection);
   const tools = toolsForSpeaker(options.tools, speaker, {
     directory: agents,
     store,
@@ -189,6 +199,7 @@ export async function streamChatTurn(options: {
     connector,
     parentAgentId: speaker.id,
     userId: options.userId,
+    runLog,
   });
   const delegateTool = isLeadAgent(speaker) ? tools.get("delegate") : undefined;
   const conversationSnapshot = conversation;
@@ -298,12 +309,15 @@ export async function streamChatTurn(options: {
         }
       };
 
+      let runStatus = "completed";
       try {
         controller.enqueue(ssePadding());
+        await ignoreRunLog(runLog.mark("run.started", { conversationId: conversationSnapshot.id }));
         enqueue("meta", {
           conversationId: conversationSnapshot.id,
           title: conversationSnapshot.title,
           userMessageId: user.id,
+          runId: runLog.id,
         });
         enqueue("prompt", { system: trace.system ?? "", prefill: trace.prefill ?? "" });
 
@@ -326,10 +340,18 @@ export async function streamChatTurn(options: {
           if (signal?.aborted) abortRound();
           else signal?.addEventListener("abort", abortRound, { once: true });
 
+          const modelInput = cloneMessages(history);
+          const capture = emptyModelCapture();
+          const modelStarted = performance.now();
+          // The router reports its tier and cost here once this model call ends.
+          const routeLog: { event?: ModelRouteEvent } = {};
           const modelEvents = provider.stream(history, {
             signal: providerSignal,
             tools: exposed,
             conversationId: conversationSnapshot.id,
+            onRoute: (event) => {
+              routeLog.event = event;
+            },
           });
           const streamed = streamDecision(modelEvents);
           if (streamed) route = streamed;
@@ -350,12 +372,14 @@ export async function streamChatTurn(options: {
               })
             : modelEvents;
 
+          runLog.holdWrites();
           try {
             for await (const event of events) {
               if (event.type === "route") {
                 route = { tier: event.tier, reason: event.reason, model: event.model };
                 continue;
               }
+              captureModelEvent(capture, event);
               if (signal?.aborted || userStopped) break;
               if (!sawStart && event.type !== "start") {
                 sawStart = true;
@@ -385,6 +409,20 @@ export async function streamChatTurn(options: {
             }
           } finally {
             signal?.removeEventListener("abort", abortRound);
+            const deferred = runLog.drainHeld();
+            try {
+              await ignoreRunLog(
+                runLog.recordModel({
+                  model: route?.model ?? provider.model,
+                  messages: modelInput,
+                  capture,
+                  ms: elapsedMs(modelStarted),
+                }),
+              );
+              if (routeLog.event) await ignoreRunLog(runLog.recordModelRoute(routeLog.event));
+            } finally {
+              await ignoreRunLog(runLog.appendHeld(deferred));
+            }
           }
           if (signal?.aborted || userStopped) break;
 
@@ -426,6 +464,7 @@ export async function streamChatTurn(options: {
           if (signal?.aborted || userStopped) break;
         }
 
+        if (signal?.aborted || userStopped) runStatus = "stopped";
         if (!signal?.aborted && !userStopped && sawStart && !roundEnded) {
           await publish(applyStreamEvent(trace, { type: "end", finishReason: "stop" }), {
             type: "end",
@@ -439,23 +478,47 @@ export async function streamChatTurn(options: {
           enqueue("done", {
             conversationId: conversationSnapshot.id,
             assistantMessageId: assistantId,
+            runId: runLog.id,
           });
         }
       } catch (error) {
         await persist(partial, trace);
         if (isAbort(error, signal)) {
+          runStatus = "stopped";
           await stopOpenCalls();
         } else {
+          runStatus = "error";
           await stopOpenCalls();
           const text = error instanceof Error ? error.message : "The model request failed";
+          await ignoreRunLog(runLog.fail(text));
           enqueue("error", { message: text });
         }
       } finally {
-        await persist(partial, trace);
-        close();
+        try {
+          await persist(partial, trace);
+          await ignoreRunLog(runLog.mark("run.finished", { status: runStatus }));
+        } finally {
+          close();
+        }
       }
 
       async function executeCall(call: PendingCall): Promise<string | null> {
+        const toolStarted = performance.now();
+        try {
+          return await runCall(call);
+        } finally {
+          await ignoreRunLog(
+            runLog.recordTool({
+              name: call.name || "tool",
+              input: call.arguments,
+              output: call.output ?? "",
+              ms: elapsedMs(toolStarted),
+            }),
+          );
+        }
+      }
+
+      async function runCall(call: PendingCall): Promise<string | null> {
         call.status = "running";
         await saveCall(call);
         enqueue("tool_start", {

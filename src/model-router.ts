@@ -455,6 +455,7 @@ export class RoutingProvider implements LlmProvider {
           ...(options.conversationId ? { conversationId: options.conversationId } : {}),
         };
         record(event);
+        options.onRoute?.(event);
         console.info(
           `model route tier=${event.tier} reason=${event.reason} model=${event.model} costUsd=${event.costUsd}`,
         );

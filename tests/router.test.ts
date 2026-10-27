@@ -263,6 +263,21 @@ it("records the chosen tier on the log line and on the saved turn", async () => 
       reason: "chat",
       model: DEFAULT_ROUTER_CONFIG.cheap.id,
     });
+    const events = await store.connection.query<{ type: string; input: string | null }>(
+      `SELECT type, input FROM run_events ORDER BY run_id, seq`,
+    );
+    const parsed = events.rows.map((row) => ({
+      type: row.type,
+      input: row.input ? (JSON.parse(row.input) as Record<string, unknown>) : null,
+    }));
+    expect(parsed.find((row) => row.type === "model")?.input).toMatchObject({
+      model: DEFAULT_ROUTER_CONFIG.cheap.id,
+    });
+    expect(parsed.find((row) => row.input?.name === "model.route")?.input).toMatchObject({
+      tier: "cheap",
+      reason: "chat",
+      model: DEFAULT_ROUTER_CONFIG.cheap.id,
+    });
   } finally {
     info.mockRestore();
   }
@@ -461,6 +476,28 @@ it("spends less on a sample multi-turn run than an all-strong baseline", async (
 
 it("logs the tier and cost to run_events, and no-ops when the table is absent", async () => {
   const store = await ConversationStore.open();
+  // Migration 011_run_events creates the run-replay table (run_id, seq, ...).
+  // That shape has required columns this helper cannot fill, so it no-ops there;
+  // chat records the route on that table through RunLog.recordModelRoute.
+  clearRunEventSchemaCache();
+  expect(
+    await logModelRoute(
+      {
+        id: "route_migrated",
+        kind: "model.route",
+        tier: "cheap",
+        reason: "chat",
+        model: DEFAULT_ROUTER_CONFIG.cheap.id,
+        costUsd: 0,
+        inputTokens: 1,
+        outputTokens: 1,
+      },
+      store.connection,
+    ),
+  ).toBe("noop");
+  await store.connection.exec(`DROP TABLE run_events`);
+  clearRunEventSchemaCache();
+  clearRouteLogs();
   const counted = countSchemaQueries(store.connection);
   const event = {
     id: "route_test",
@@ -533,6 +570,7 @@ it("logs the tier and cost to run_events, and no-ops when the table is absent", 
 
   const other = await ConversationStore.open();
   await other.connection.exec(`
+    DROP TABLE run_events;
     CREATE TABLE run_events (
       id TEXT PRIMARY KEY,
       kind TEXT NOT NULL,

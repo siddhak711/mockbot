@@ -20,7 +20,7 @@ import { releaseDecision, settleDecision, stopDecision } from "../src/decision-l
 import { applyMemoryRefresh, memoriesAfterAgentSwitch } from "../src/memory/panel-state";
 import { SseParser } from "../src/sse";
 import { applyClientEvent, emptyTrace, phaseFromEvent, streamedWeight } from "../src/trace";
-import { fetchComputerSnapshot } from "../src/sandbox/refresh";
+import { ComputerUnavailableError, fetchComputerSnapshot } from "../src/sandbox/refresh";
 import type { ComputerSnapshot } from "../src/sandbox/types";
 import type { RuntimeStatus } from "../src/token-stream";
 import {
@@ -85,6 +85,8 @@ export function Workspace({
   const [memories, setMemories] = useState<Memory[] | null>(null);
   const [memoryError, setMemoryError] = useState<string | null>(null);
   const [computer, setComputer] = useState<ComputerSnapshot | null>(null);
+  // Why the server has no sandbox, from its 503 body.
+  const [computerError, setComputerError] = useState<string | null>(null);
   const [computerReady, setComputerReady] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -103,6 +105,7 @@ export function Workspace({
   const [composerDraft, setComposerDraft] = useState("");
   const [selectedToolId, setSelectedToolId] = useState<string | null>(null);
   const [decidingId, setDecidingId] = useState<string | null>(null);
+  const [replayIds, setReplayIds] = useState<Record<string, string>>({});
   const abortRef = useRef<AbortController | null>(null);
   const computerRequest = useRef(0);
   const agentLoadRequest = useRef(0);
@@ -240,8 +243,12 @@ export function Workspace({
       );
       if (!snapshot || request !== computerRequest.current) return;
       setComputer(snapshot);
-    } catch {
+      setComputerError(null);
+    } catch (error) {
       // Keep the last snapshot. The pane stays usable if a refresh fails.
+      if (error instanceof ComputerUnavailableError && request === computerRequest.current) {
+        setComputerError(error.message || null);
+      }
     } finally {
       if (request === computerRequest.current) setComputerReady(true);
     }
@@ -528,6 +535,10 @@ export function Workspace({
                 item.id === localUserId ? { ...item, conversationId: id } : item,
               ),
             );
+            if (typeof payload.runId === "string" && payload.runId) {
+              const replayRunId = payload.runId;
+              setReplayIds((prev) => ({ ...prev, [id]: replayRunId }));
+            }
           } else if (
             event.event === "prompt" ||
             event.event === "start" ||
@@ -832,6 +843,11 @@ export function Workspace({
             />
             <span className="thread-title">{speaking?.name ?? "Mockbot"}</span>
           </h1>
+          {active && replayIds[active.id] ? (
+            <a className="ghost-text" href={`/runs/${replayIds[active.id]}`}>
+              Replay
+            </a>
+          ) : null}
           <ThreadActions
             computerOpen={computerOpen}
             onMemory={showMemory}
@@ -897,6 +913,7 @@ export function Workspace({
             onSelect={setSelectedToolId}
             snapshot={computer}
             status={computerStatus}
+            unavailableReason={computerError}
             messages={messages}
           />
         </div>
@@ -915,6 +932,7 @@ export function Workspace({
           onSelect={setSelectedToolId}
           snapshot={computer}
           status={computerStatus}
+          unavailableReason={computerError}
           messages={messages}
         />
       ) : null}

@@ -5,9 +5,9 @@ import type { AgentMemoryPort, ComputerPort, ConnectorPort } from "./agents/type
 import { selectProvider, type LlmProvider } from "./llm";
 import { loadRouterConfig, RoutingProvider } from "./model-router";
 import { RoutineStore } from "./routines/store";
-import { openComputer } from "./sandbox/open";
+import { openComputer, sandboxUnavailableReason } from "./sandbox/open";
 import type { ComputerSupervisor } from "./sandbox/supervisor";
-import { createComputerTools } from "./sandbox/tools";
+import { createComputerTools, createUnavailableComputerTools } from "./sandbox/tools";
 import { SandboxTurnProvider } from "./sandbox/turn";
 import { ConversationStore } from "./store";
 import { ApprovalGate } from "./tools/approval";
@@ -20,6 +20,8 @@ export type AppContext = {
   tools: ToolRegistry;
   approvals: ApprovalGate;
   sandbox?: ComputerSupervisor;
+  /** Why the sandbox did not open, shown in the computer pane and tool results. */
+  sandboxError?: string;
   routines?: RoutineStore;
   agents?: AgentDirectory;
   memory?: AgentMemoryPort;
@@ -53,27 +55,36 @@ export function registerComputerTools(registry: ToolRegistry, sandbox: ComputerS
   }
 }
 
+export function registerUnavailableComputerTools(registry: ToolRegistry, reason: string): void {
+  for (const tool of createUnavailableComputerTools(reason)) {
+    if (!registry.get(tool.name)) registry.register(tool);
+  }
+}
+
 export function setAppContext(context: {
   store: ConversationStore;
   provider: LlmProvider;
   tools?: ToolRegistry;
   approvals?: ApprovalGate;
   sandbox?: ComputerSupervisor;
+  sandboxError?: string;
   routines?: RoutineStore;
   agents?: AgentDirectory;
   memory?: AgentMemoryPort;
   computer?: ComputerPort;
   connector?: ConnectorPort;
 }): void {
-  const tools = context.tools ?? createDefaultTools({});
+  const tools = context.tools ?? createDefaultTools(process.env);
   if (!context.tools) registerMemoryTools(tools, context.store);
   if (context.sandbox) registerComputerTools(tools, context.sandbox);
+  else if (context.sandboxError) registerUnavailableComputerTools(tools, context.sandboxError);
   current = {
     store: context.store,
     provider: context.provider,
     tools,
     approvals: context.approvals ?? new ApprovalGate(),
     sandbox: context.sandbox,
+    sandboxError: context.sandboxError,
     routines: context.routines,
     agents: context.agents,
     memory: context.memory,
@@ -128,11 +139,13 @@ export async function getAppContext(): Promise<AppContext> {
 async function openApp(): Promise<AppContext> {
   const store = await ConversationStore.connect(process.env);
   let sandbox: ComputerSupervisor | undefined;
+  const sandboxError = sandboxUnavailableReason(process.env) ?? undefined;
   try {
-    sandbox = await openComputer({ env: process.env });
+    if (!sandboxError) sandbox = await openComputer({ env: process.env });
     const tools = createDefaultTools(process.env);
     registerMemoryTools(tools, store);
-    registerComputerTools(tools, sandbox);
+    if (sandbox) registerComputerTools(tools, sandbox);
+    else registerUnavailableComputerTools(tools, sandboxError ?? "The sandbox is not available.");
     const agents = await AgentDirectory.attach(store);
     const inner = new RoutingProvider({
       inner: withAgentMock(selectProvider(process.env)),
@@ -142,6 +155,7 @@ async function openApp(): Promise<AppContext> {
     return {
       store,
       sandbox,
+      sandboxError,
       tools,
       approvals: new ApprovalGate(),
       agents,

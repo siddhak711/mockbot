@@ -1,10 +1,12 @@
 import { planMockTurn } from "./memory/mock-turn";
+import { isProductionBuild, mockEnabled } from "./mock-gate";
 import { SYSTEM_PROMPT } from "./memory/prompt";
 import type { LlmMessage, LlmStreamEvent, ProviderId } from "./types";
 
 export { SYSTEM_PROMPT };
-import { readOpenAiEvents } from "./openai-events";
+import { readModelUsage, readOpenAiEvents } from "./openai-events";
 import { SseParser } from "./sse";
+import type { ModelRouteEvent } from "./run-events";
 import type { ToolDefinition } from "./tools/types";
 
 const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
@@ -25,6 +27,8 @@ export type StreamOptions = {
   retryAfterFailure?: boolean;
   /** Completion cap for this request. The router sets it from the chosen tier. */
   maxTokens?: number;
+  /** Called once with the router's tier and cost when this request ends. */
+  onRoute?: (event: ModelRouteEvent) => void;
 };
 
 export interface LlmProvider {
@@ -559,6 +563,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
         body: JSON.stringify({
           model: model || this.model,
           stream: true,
+          stream_options: { include_usage: true },
           messages: messages.map(wireMessage),
           ...(typeof maxTokens === "number" ? { max_tokens: maxTokens } : {}),
           ...(tools.length > 0 ? { tools: wireTools(tools), tool_choice: "auto" } : {}),
@@ -584,14 +589,21 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     const parser = new SseParser();
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
-    let ended = false;
+    let finishReason: string | null = null;
+    let sawEnd = false;
+    let usage: { inputTokens: number; outputTokens: number } | undefined;
+    const endEvent = () => ({
+      type: "end" as const,
+      finishReason: sawEnd ? finishReason : "stop",
+      ...(usage ? { usage } : {}),
+    });
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       for (const message of parser.push(decoder.decode(value, { stream: true }))) {
         const payload = message.data.trim();
         if (payload === "[DONE]") {
-          if (!ended) yield { type: "end", finishReason: "stop" };
+          yield endEvent();
           return;
         }
         let parsed: unknown;
@@ -602,13 +614,19 @@ export class OpenAiCompatibleProvider implements LlmProvider {
         }
         const failure = readError(parsed);
         if (failure) throw new Error(this.#redact(failure));
+        const nextUsage = readModelUsage(parsed);
+        if (nextUsage) usage = nextUsage;
         for (const event of readOpenAiEvents(parsed)) {
-          if (event.type === "end") ended = true;
+          if (event.type === "end") {
+            sawEnd = true;
+            finishReason = event.finishReason;
+            continue;
+          }
           yield event;
         }
       }
     }
-    if (!ended) yield { type: "end", finishReason: "stop" };
+    yield endEvent();
   }
 
   #redact(text: string): string {
@@ -629,32 +647,61 @@ function httpBaseUrl(value: string | undefined): string | undefined {
 }
 
 export function selectProvider(env: Record<string, string | undefined> = process.env): LlmProvider {
-  const name = (env.LLM_PROVIDER ?? "mock").trim().toLowerCase() || "mock";
+  const name = env.LLM_PROVIDER?.trim().toLowerCase() ?? "";
   const mock = () =>
     new MockProvider({
       delayMs: numberFrom(env.MOCK_STREAM_DELAY_MS, 60),
       chunkSize: numberFrom(env.MOCK_CHUNK_SIZE, 8),
     });
-  if (name === "mock") return mock();
+  try {
+    if (name === "mock" || (!name && mockEnabled(env, "LLM"))) {
+      if (isProductionBuild(env)) {
+        return new UnconfiguredProvider(
+          "LLM_PROVIDER=mock is not allowed in a production build. Set LLM_PROVIDER=openai and LLM_API_KEY.",
+        );
+      }
+      return mock();
+    }
+  } catch (error) {
+    return new UnconfiguredProvider(error instanceof Error ? error.message : String(error));
+  }
+  if (!name) {
+    return new UnconfiguredProvider(
+      "No model is configured: LLM_PROVIDER is not set. Set LLM_PROVIDER=openai and LLM_API_KEY, or LLM_PROVIDER=mock (or MOCK_LLM=1) for a labeled mock outside production.",
+    );
+  }
   const apiKey = env.LLM_API_KEY?.trim() ?? "";
   if (!apiKey) {
-    throw new Error(
+    return new UnconfiguredProvider(
       name === "openai"
-        ? "LLM_API_KEY is required when LLM_PROVIDER=openai"
-        : `Unknown LLM_PROVIDER "${name}". Expected "mock" or "openai".`,
+        ? "LLM_API_KEY is required when LLM_PROVIDER=openai."
+        : `Unknown LLM_PROVIDER "${name}". Expected "openai", or "mock" outside production.`,
     );
   }
   const configured = env.LLM_BASE_URL?.trim();
   const baseUrl = httpBaseUrl(configured);
   if (configured && !baseUrl) {
-    console.warn(
-      "LLM is using a mock implementation because LLM_BASE_URL is not a valid http(s) URL.",
-    );
-    return mock();
+    return new UnconfiguredProvider("LLM_BASE_URL is not a valid http(s) URL.");
   }
   return new OpenAiCompatibleProvider({
     apiKey,
     baseUrl: baseUrl || DEFAULT_OPENAI_BASE_URL,
     model: env.LLM_MODEL?.trim() || DEFAULT_OPENAI_MODEL,
   });
+}
+
+/**
+ * Stands in when the model is missing or misconfigured. Every turn fails with
+ * the reason, so the chat shows an error instead of a quiet mock reply.
+ */
+export class UnconfiguredProvider implements LlmProvider {
+  readonly id = "unconfigured" as const;
+  readonly model = null;
+
+  constructor(readonly reason: string) {}
+
+  // eslint-disable-next-line require-yield
+  async *stream(): AsyncIterable<LlmStreamEvent> {
+    throw new Error(this.reason);
+  }
 }

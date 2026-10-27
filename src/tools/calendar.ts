@@ -1,5 +1,5 @@
 import { asRecord, jsonResult, present, readJson, toolFetchInit } from "./http";
-import { warnMockFallback } from "./mock-fallback";
+import { missingCredential, mockEnabled } from "../mock-gate";
 import type { FetchLike, ToolDefinition } from "./types";
 
 const EVENTS_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
@@ -68,7 +68,7 @@ export function calendarTool(
   return {
     name: "google_calendar",
     description:
-      "List events on the primary Google Calendar, or create an event. Creating an event that invites attendees waits for approval. OAuth is not connected yet; without an access token the tool returns mock data.",
+      "List events on the primary Google Calendar, or create an event. Creating an event that invites attendees waits for approval. OAuth is not connected yet; without an access token the tool returns an error.",
     approval: calendarNeedsApproval,
     inputSchema: {
       type: "object",
@@ -125,7 +125,16 @@ export function calendarTool(
     async invoke(args, context) {
       const token = present(env.GOOGLE_CALENDAR_ACCESS_TOKEN);
       if (!token) {
-        warnMockFallback("google_calendar", "GOOGLE_CALENDAR_ACCESS_TOKEN");
+        if (!mockEnabled(env, "CALENDAR")) {
+          return {
+            content: missingCredential(
+              "google_calendar",
+              "GOOGLE_CALENDAR_ACCESS_TOKEN",
+              "CALENDAR",
+            ),
+            isError: true,
+          };
+        }
         if (args.action === "list") {
           return {
             content: jsonResult({
