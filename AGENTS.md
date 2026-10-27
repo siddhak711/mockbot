@@ -54,6 +54,14 @@ Every retry of failed work must change something: the failure evidence, the work
 - A tool whose credential production does not provide must fail visibly. It never falls back to mock data (see section 4).
 - GitHub: production uses per-user GitHub OAuth. `GITHUB_TOKEN` is for local development only and is not a production credential. Until per-user GitHub OAuth exists in production, the GitHub tool must fail visibly in production with the message `GitHub not connected`.
 
+## 7. A fix comes with a local link
+
+When an agent tells Siddha that something is fixed, the same message includes a local link where he can test the fix himself.
+
+- Run the fixed branch on a local dev server first: a separate worktree with its own `.env.local` and data directory, on a free port.
+- Give the exact page to open, such as `http://localhost:3011/connectors/add`, and the steps to try there.
+- If the fix cannot be tested locally, for example because it needs a production-only credential, say so plainly and name the closest place he can test it.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 ## This is NOT the Next.js you know
