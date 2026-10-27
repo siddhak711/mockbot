@@ -106,6 +106,8 @@ export function Workspace({
   const [replayIds, setReplayIds] = useState<Record<string, string>>({});
   const abortRef = useRef<AbortController | null>(null);
   const computerRequest = useRef(0);
+  // Each agent has its own computer. Null until agents load, which shows the lead's.
+  const computerAgentRef = useRef<string | null>(null);
   const agentLoadRequest = useRef(0);
   const activeIdRef = useRef<string | null>(null);
   const memoryAgentRef = useRef(LEAD_AGENT_ID);
@@ -238,6 +240,7 @@ export function Workspace({
         (input) => fetch(input),
         request,
         () => computerRequest.current,
+        computerAgentRef.current,
       );
       if (!snapshot || request !== computerRequest.current) return;
       setComputer(snapshot);
@@ -664,7 +667,7 @@ export function Workspace({
         const response = await fetch("/api/tools/approvals", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id, decision }),
+          body: JSON.stringify({ id, decision, conversationId: activeIdRef.current }),
         });
         if (response.ok) {
           setActivities((prev) =>
@@ -707,7 +710,11 @@ export function Workspace({
       void fetch("/api/tools/approvals", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: activity.id, decision: "stop" }),
+        body: JSON.stringify({
+          id: activity.id,
+          decision: "stop",
+          conversationId: activeIdRef.current,
+        }),
       });
     }
   }
@@ -736,6 +743,12 @@ export function Workspace({
     }
     void refreshMemories();
   }, [agentsLoaded, speakingId, refreshMemories, clearMemoriesForSwitch]);
+
+  useEffect(() => {
+    if (!agentsLoaded || computerAgentRef.current === speakingId) return;
+    computerAgentRef.current = speakingId;
+    void refreshComputer();
+  }, [agentsLoaded, speakingId, refreshComputer]);
 
   return (
     <div
