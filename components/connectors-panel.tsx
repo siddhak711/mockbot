@@ -20,6 +20,7 @@ import {
   applyBulk,
   detectInput,
   INVALID_TARGET_MESSAGE,
+  PASTED_OAUTH_UNSUPPORTED_MESSAGE,
   type ListedTool,
   type ToolRisk,
 } from "../src/connectors/policy";
@@ -572,7 +573,7 @@ export function ConnectorsPanel({
           setMode("auth-failed");
           return;
         }
-        openOauthPopup(body.authorizeUrl, name, true, existingId, popup);
+        openOauthPopup(body.authorizeUrl, name, existingId, popup);
       } catch {
         if (!popup.closed) popup.close();
         setWaiting(false);
@@ -581,33 +582,28 @@ export function ConnectorsPanel({
       }
       return;
     }
-    openOauthPopup(`/connectors/oauth?name=${encodeURIComponent(name)}`, name, false, existingId);
+    // Pasted servers have no real sign-in flow yet. Say so instead of
+    // pretending a sign-in happened.
+    setWaiting(false);
+    setAuthError(PASTED_OAUTH_UNSUPPORTED_MESSAGE);
+    setMode("auth-failed");
   }
 
-  function openOauthPopup(
-    url: string,
-    name: string,
-    catalog: boolean,
-    existingId: string | null,
-    existing?: Window,
-  ) {
-    const popup = existing ?? window.open(url, "mockbot-oauth", "popup,width=520,height=720");
-    if (!popup || popup.closed) {
+  function openOauthPopup(url: string, name: string, existingId: string | null, popup: Window) {
+    if (popup.closed) {
       setWaiting(false);
       setAuthError(`Allow the ${name} sign-in window, then try again.`);
       setMode("auth-failed");
       return;
     }
-    if (existing) {
-      try {
-        existing.location.href = url;
-      } catch {
-        if (!existing.closed) existing.close();
-        setWaiting(false);
-        setAuthError(`Could not start ${name} sign-in.`);
-        setMode("auth-failed");
-        return;
-      }
+    try {
+      popup.location.href = url;
+    } catch {
+      if (!popup.closed) popup.close();
+      setWaiting(false);
+      setAuthError(`Could not start ${name} sign-in.`);
+      setMode("auth-failed");
+      return;
     }
     setWaiting(true);
     let settled = false;
@@ -626,23 +622,15 @@ export function ConnectorsPanel({
         setMode("auth-failed");
         return;
       }
-      if (catalog) {
-        oauthExisting.current.clear();
-        void onChanged().then(() => {
-          if (existingId) {
-            setToast(`${name} reconnected`);
-            setMode("list");
-            return;
-          }
-          showDone(connectorId || "", name);
-        });
-        return;
-      }
-      if (existingId) {
-        void markReconnected(existingId, name);
-        return;
-      }
-      void connectPastedOauth();
+      oauthExisting.current.clear();
+      void onChanged().then(() => {
+        if (existingId) {
+          setToast(`${name} reconnected`);
+          setMode("list");
+          return;
+        }
+        showDone(connectorId || "", name);
+      });
     };
     const onMessage = (event: MessageEvent) => {
       if (event.origin !== window.location.origin) return;
@@ -662,54 +650,6 @@ export function ConnectorsPanel({
       if (!popup.closed) return;
       window.setTimeout(() => finish(false), 300);
     }, 400);
-  }
-
-  async function markReconnected(id: string, name: string) {
-    const response = await fetch(`/api/connectors/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reconnected: true }),
-    });
-    const failed = (await response.json().catch(() => null)) as {
-      error?: unknown;
-      message?: unknown;
-    } | null;
-    if (!response.ok) {
-      setAuthError(serverProvidedError(failed) ?? "Could not reconnect.");
-      setMode("auth-failed");
-      return;
-    }
-    oauthExisting.current.clear();
-    await onChanged();
-    setToast(`${name} reconnected`);
-    setMode("list");
-  }
-
-  async function connectPastedOauth() {
-    if (!draft) return;
-    oauthExisting.current.clear();
-    const response = await fetch("/api/connectors", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: draft.name,
-        transport: draft.transport,
-        target: draft.target,
-        oauth: true,
-      }),
-    });
-    const body = (await response.json().catch(() => null)) as {
-      error?: unknown;
-      message?: unknown;
-      connector?: ConnectorRecord;
-    } | null;
-    if (!response.ok || !body?.connector) {
-      setAuthError(serverProvidedError(body) ?? `Could not connect ${draft.name}.`);
-      setMode("auth-failed");
-      return;
-    }
-    await onChanged();
-    showDone(body.connector.id, body.connector.name);
   }
 
   async function disconnect(connector: ConnectorRecord) {
@@ -755,7 +695,15 @@ export function ConnectorsPanel({
       await onChanged();
       setToast(`${connector.name} reconnected`);
       setMode("list");
+      return;
     }
+    const failed = (await response.json().catch(() => null)) as {
+      error?: unknown;
+      message?: unknown;
+    } | null;
+    setLocalTools(toolsFrom(connector));
+    setToolError(serverProvidedError(failed) ?? "Could not reconnect.");
+    setMode("manage");
   }
 
   function onGridKey(event: ReactKeyboardEvent, count: number) {
