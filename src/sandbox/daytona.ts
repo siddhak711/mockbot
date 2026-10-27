@@ -73,6 +73,11 @@ export class DaytonaRuntime implements SandboxRuntime {
   readonly kind = "daytona" as const;
   readonly #handles = new Map<string, RemoteSandbox>();
   readonly #opening = new Map<string, Promise<RemoteSandbox | null>>();
+  /**
+   * Serializes handle recovery per agent. Aborting a caller rejects only that
+   * waiter; this chain stays until the in-flight delete-and-create finishes.
+   */
+  readonly #tail = new Map<string, Promise<void>>();
 
   constructor(
     private readonly fleet: RemoteSandboxFleet,
@@ -82,9 +87,12 @@ export class DaytonaRuntime implements SandboxRuntime {
 
   async list(agentId: string, path: string) {
     try {
-      const handle = await this.#handle(agentId, false);
-      if (!handle) return { ok: true as const, entries: [] };
-      const ready = await this.#running(agentId, handle);
+      const ready = await this.#exclusive(agentId, async () => {
+        const handle = await this.#handle(agentId, false);
+        if (!handle) return null;
+        return this.#running(agentId, handle);
+      });
+      if (!ready) return { ok: true as const, entries: [] };
       return await ready.list(toSandboxPath(path));
     } catch (error) {
       return { ok: false as const, error: redact(errorText(error), this.secret) };
@@ -140,10 +148,31 @@ export class DaytonaRuntime implements SandboxRuntime {
     }
   }
 
-  async #require(agentId: string): Promise<RemoteSandbox> {
+  #require(agentId: string): Promise<RemoteSandbox> {
+    return this.#exclusive(agentId, () => this.#requireUnlocked(agentId));
+  }
+
+  async #requireUnlocked(agentId: string): Promise<RemoteSandbox> {
     const handle = await this.#handle(agentId, true);
     if (!handle) throw new Error("Sandbox is unavailable");
     return this.#running(agentId, handle);
+  }
+
+  /**
+   * One recovery at a time for this agent. The next caller waits on the same
+   * chain, including when an earlier caller has already aborted.
+   */
+  #exclusive<T>(agentId: string, work: () => Promise<T>): Promise<T> {
+    const previous = this.#tail.get(agentId) ?? Promise.resolve();
+    const run = previous.then(work, work);
+    this.#tail.set(
+      agentId,
+      run.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return run;
   }
 
   async #running(agentId: string, handle: RemoteSandbox): Promise<RemoteSandbox> {

@@ -410,6 +410,32 @@ describe("sandbox", { concurrent: false }, () => {
     expect((await store.getComputer("agent"))?.sandboxId).toBe(id);
   });
 
+  it("creates one replacement sandbox when an abort overlaps a retry", async () => {
+    const fleet = new FakeFleet();
+    const store = await SandboxStore.open("memory://");
+    const runtime = new DaytonaRuntime(fleet, store, "secret");
+    await runtime.prepare("agent");
+    const id = fleet.creates[0]?.id ?? "";
+    fleet.drop(id);
+    fleet.bootMs = 150;
+
+    const controller = new AbortController();
+    const aborted = runtime.prepare("agent", controller.signal);
+    const started = Date.now();
+    while (fleet.createEntered < 2) {
+      if (Date.now() - started > 2_000) throw new Error("replacement create did not start");
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    controller.abort();
+    const retried = runtime.prepare("agent");
+
+    await expect(aborted).rejects.toMatchObject({ name: "AbortError" });
+    await retried;
+    expect(fleet.createEntered).toBe(2);
+    expect(fleet.creates).toHaveLength(2);
+    expect((await store.getComputer("agent"))?.sandboxId).toBe(fleet.creates[1]?.id);
+  });
+
   it("cancels prepare and exec when the abort signal fires", async () => {
     const store = await SandboxStore.open("memory://");
     const runtime = new GateRuntime();
@@ -864,6 +890,8 @@ describe("sandbox", { concurrent: false }, () => {
 
   class FakeFleet implements RemoteSandboxFleet {
     readonly creates: Array<{ id: string; agentId: string; envVars?: unknown }> = [];
+    /** Increments when create begins, before the boot delay. */
+    createEntered = 0;
     readonly execs: Array<{ command: string; cwd: string; timeoutSec: number }> = [];
     readonly starts: string[] = [];
     readonly reconnects: string[] = [];
@@ -886,6 +914,7 @@ describe("sandbox", { concurrent: false }, () => {
     }
 
     async create(agentId: string): Promise<RemoteSandbox> {
+      this.createEntered += 1;
       if (this.bootMs > 0) await new Promise((resolve) => setTimeout(resolve, this.bootMs));
       const id = `sbx-${this.creates.length + 1}`;
       this.creates.push({ id, agentId });
