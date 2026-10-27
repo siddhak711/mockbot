@@ -25,6 +25,7 @@ export async function POST(request: Request): Promise<Response> {
     conversationId?: unknown;
     agentId?: unknown;
     plan?: unknown;
+    detach?: unknown;
   };
   return withUserTools(
     { store, tools, userId: actor.user.id, signal: request.signal },
@@ -44,6 +45,8 @@ export async function POST(request: Request): Promise<Response> {
           typeof record.conversationId === "string" ? record.conversationId : undefined,
         agentId: typeof record.agentId === "string" ? record.agentId : undefined,
         signal: request.signal,
+        // The web page sends detach so a reload doesn't stop the reply. It stops a turn with /api/chat/stop.
+        detach: record.detach === true,
         agents,
         memory: context.memory,
         computer: context.computer,
