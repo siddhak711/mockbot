@@ -3,8 +3,9 @@ import { once } from "node:events";
 import { afterEach, expect, it, vi } from "vitest";
 import { POST as createAgent } from "../app/api/agents/route";
 import { POST } from "../app/api/chat/route";
+import { streamChatTurn } from "../src/chat";
 import { resetAppContext, setAppContext } from "../src/context";
-import { MockProvider, selectProvider } from "../src/llm";
+import { MockProvider, selectProvider, type LlmProvider } from "../src/llm";
 import {
   DEFAULT_ROUTER_CONFIG,
   describeTurn,
@@ -15,6 +16,7 @@ import {
   RoutingProvider,
   runRoutedSample,
   SAMPLE_TURNS,
+  streamDecision,
   type RouterTurn,
 } from "../src/model-router";
 import {
@@ -29,6 +31,7 @@ import { ConversationStore } from "../src/store";
 import { emptyTrace } from "../src/trace";
 import { buildModelInput } from "../src/turn";
 import { createDefaultTools } from "../src/tools/builtins";
+import { ApprovalGate } from "../src/tools/approval";
 import { readSse } from "./helpers";
 
 afterEach(async () => {
@@ -362,10 +365,11 @@ it("keeps both tiers on LLM_MODEL when tiers are unset and the base URL is not O
     inner: new MockProvider({ delayMs: 0, chunkSize: 80 }),
     config,
   });
-  for await (const _event of provider.stream([{ role: "user", content: "Hello there" }])) {
+  const streamed = provider.stream([{ role: "user", content: "Hello there" }]);
+  expect(streamDecision(streamed)).toMatchObject({ tier: "cheap", model: "gpt-4o-mini" });
+  for await (const _event of streamed) {
     // The fallback id has to be accepted by the constructor and sent as the model.
   }
-  expect(provider.lastDecision).toMatchObject({ tier: "cheap", model: "gpt-4o-mini" });
   expect(
     () =>
       new RoutingProvider({
@@ -623,11 +627,83 @@ it("keeps routing when the sandbox provider wraps the router", async () => {
     config: DEFAULT_ROUTER_CONFIG,
   });
   const sandbox = new SandboxTurnProvider({ inner: routed, delayMs: 0 });
-  for await (const _event of sandbox.stream([{ role: "user", content: "Hello there" }])) {
+  const streamed = sandbox.stream([{ role: "user", content: "Hello there" }]);
+  expect(streamDecision(streamed)).toMatchObject({ tier: "cheap", reason: "chat" });
+  for await (const _event of streamed) {
     // Consume the mock reply.
   }
-  expect(routed.lastDecision).toMatchObject({ tier: "cheap", reason: "chat" });
   expect(recentRouteLogs()[0]?.tier).toBe("cheap");
+});
+
+it("keeps concurrent requests on their own tiers", async () => {
+  let entered = 0;
+  let release = () => {};
+  const bothEntered = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const gate: LlmProvider = {
+    id: "mock",
+    model: null,
+    async *stream(messages, input) {
+      entered += 1;
+      if (entered >= 2) release();
+      else await bothEntered;
+      yield* new MockProvider({ delayMs: 0, chunkSize: 80 }).stream(messages, input);
+    },
+  };
+  const store = await ConversationStore.open();
+  const provider = new SandboxTurnProvider({
+    inner: new RoutingProvider({ inner: gate, config: DEFAULT_ROUTER_CONFIG }),
+    delayMs: 0,
+  });
+  const tools = createDefaultTools({});
+  const approvals = new ApprovalGate();
+  setAppContext({ store, provider, tools, approvals });
+  const created = await createAgent(
+    new Request("http://localhost/api/agents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Coder", instructions: "You write code." }),
+    }),
+  );
+  expect(created.status).toBe(201);
+  const coderId = ((await created.json()) as { agent: { id: string } }).agent.id;
+  const [cheap, strong] = await Promise.all([
+    streamChatTurn({
+      store,
+      provider,
+      tools,
+      approvals,
+      message: "Hello there",
+    }),
+    streamChatTurn({
+      store,
+      provider,
+      tools,
+      approvals,
+      message: "Implement the parser in TypeScript",
+      agentId: coderId,
+    }),
+  ]);
+  await Promise.all([readSse(cheap), readSse(strong)]);
+
+  const routes = new Map<string, { tier?: string; reason?: string }>();
+  for (const item of await store.listConversations()) {
+    const loaded = await store.getConversation(item.id);
+    const user = loaded?.messages.find((message) => message.role === "user");
+    const assistant = loaded?.messages.find((message) => message.role === "assistant");
+    if (user) routes.set(user.content, assistant?.trace?.route ?? {});
+  }
+  expect(routes.get("Hello there")).toMatchObject({
+    tier: "cheap",
+    reason: "chat",
+    model: DEFAULT_ROUTER_CONFIG.cheap.id,
+  });
+  expect(routes.get("Implement the parser in TypeScript")).toMatchObject({
+    tier: "strong",
+    reason: "code",
+    model: DEFAULT_ROUTER_CONFIG.strong.id,
+  });
 });
 
 function countSchemaQueries(inner: Sql): { db: Sql; schemaQueries: number } {

@@ -9,6 +9,7 @@ import { findSecrets } from "./memory/scrub";
 import { encodeSse, ssePadding } from "./sse";
 import { titleFromMessage, type ConversationStore } from "./store";
 import type { LlmProvider } from "./llm";
+import { streamDecision } from "./model-router";
 import { requiresApproval, type ApprovalGate } from "./tools/approval";
 import { runTool, type ToolRegistry } from "./tools/registry";
 import {
@@ -328,7 +329,8 @@ export async function streamChatTurn(options: {
             tools: exposed,
             conversationId: conversationSnapshot.id,
           });
-          let capturedRoute = false;
+          const streamed = streamDecision(modelEvents);
+          if (streamed) route = streamed;
           const events = delegateTool
             ? runWithDelegate(modelEvents, async (call) => {
                 let args: Record<string, unknown>;
@@ -348,13 +350,6 @@ export async function streamChatTurn(options: {
 
           try {
             for await (const event of events) {
-              if (!capturedRoute) {
-                const decision = providerDecision(provider);
-                if (decision) {
-                  route = decision;
-                  capturedRoute = true;
-                }
-              }
               if (signal?.aborted || userStopped) break;
               if (!sawStart && event.type !== "start") {
                 sawStart = true;
@@ -609,19 +604,6 @@ function toLlmToolCall(call: PendingCall): LlmToolCall {
     type: "function",
     function: { name: call.name, arguments: call.arguments || "{}" },
   };
-}
-
-function providerDecision(provider: LlmProvider): MessageTrace["route"] | undefined {
-  const routed = provider as LlmProvider & {
-    lastDecision?: {
-      tier: "cheap" | "strong";
-      reason: "chat" | "tool" | "plan" | "code" | "retry";
-      model: string;
-    } | null;
-  };
-  const decision = routed.lastDecision;
-  if (!decision?.model) return undefined;
-  return { tier: decision.tier, reason: decision.reason, model: decision.model };
 }
 
 function stampRoute(current: MessageTrace, route: MessageTrace["route"]): MessageTrace {

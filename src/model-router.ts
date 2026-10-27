@@ -384,7 +384,6 @@ export class RoutingProvider implements LlmProvider {
   readonly #inner: LlmProvider;
   readonly #config: RouterConfig;
   readonly #db: Sql | null;
-  lastDecision: RouteDecision | null = null;
   lastEvent: ModelRouteEvent | null = null;
 
   constructor(options: { inner: LlmProvider; config?: RouterConfig; db?: Sql | null }) {
@@ -407,51 +406,68 @@ export class RoutingProvider implements LlmProvider {
     return this.#config;
   }
 
-  async *stream(
+  /**
+   * The decision is attached to this call's iterable. Concurrent requests each
+   * get their own object, so one turn cannot stamp the other's tier.
+   */
+  stream(
     messages: LlmMessage[],
     input?: StreamOptions | AbortSignal,
-  ): AsyncIterable<LlmStreamEvent> {
+  ): AsyncIterable<LlmStreamEvent> & { decision: RouteDecision } {
     const options = streamOptions(input);
     const turn = describeTurn(messages, { retryAfterFailure: options.retryAfterFailure });
     const decision = pickModel(turn, this.#config);
-    // Chat reads this field after the generator starts. A nested stream replaces
-    // it, so the caller copies the value before it consumes events that can delegate.
-    this.lastDecision = decision;
-    let outputTokens = 0;
-    try {
-      for await (const event of this.#inner.stream(messages, {
-        ...options,
-        model: decision.model,
-        maxTokens: this.#config[decision.tier].maxTokens,
-      })) {
-        outputTokens += outputTokensFrom(event);
-        yield event;
-      }
-    } finally {
-      const usage = { inputTokens: inputTokensFrom(messages), outputTokens };
-      const event: ModelRouteEvent = {
-        id: `route_${crypto.randomUUID()}`,
-        kind: "model.route",
-        tier: decision.tier,
-        reason: decision.reason,
-        model: decision.model,
-        costUsd: costUsd(this.#config[decision.tier], usage),
-        inputTokens: usage.inputTokens,
-        outputTokens: usage.outputTokens,
-        ...(options.conversationId ? { conversationId: options.conversationId } : {}),
-      };
+    const inner = this.#inner;
+    const config = this.#config;
+    const db = this.#db;
+    const record = (event: ModelRouteEvent) => {
       this.lastEvent = event;
-      console.info(
-        `model route tier=${event.tier} reason=${event.reason} model=${event.model} costUsd=${event.costUsd}`,
-      );
+    };
+    async function* generate(): AsyncIterable<LlmStreamEvent> {
+      let outputTokens = 0;
       try {
-        await logModelRoute(event, this.#db);
-      } catch {
-        // The helper already swallows storage errors. This keeps a turn alive
-        // if the logger itself is missing.
+        for await (const event of inner.stream(messages, {
+          ...options,
+          model: decision.model,
+          maxTokens: config[decision.tier].maxTokens,
+        })) {
+          outputTokens += outputTokensFrom(event);
+          yield event;
+        }
+      } finally {
+        const usage = { inputTokens: inputTokensFrom(messages), outputTokens };
+        const event: ModelRouteEvent = {
+          id: `route_${crypto.randomUUID()}`,
+          kind: "model.route",
+          tier: decision.tier,
+          reason: decision.reason,
+          model: decision.model,
+          costUsd: costUsd(config[decision.tier], usage),
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          ...(options.conversationId ? { conversationId: options.conversationId } : {}),
+        };
+        record(event);
+        console.info(
+          `model route tier=${event.tier} reason=${event.reason} model=${event.model} costUsd=${event.costUsd}`,
+        );
+        try {
+          await logModelRoute(event, db);
+        } catch {
+          // The helper already swallows storage errors. This keeps a turn alive
+          // if the logger itself is missing.
+        }
       }
     }
+    return Object.assign(generate(), { decision });
   }
+}
+
+export function streamDecision(stream: AsyncIterable<LlmStreamEvent>): RouteDecision | undefined {
+  const decision = (stream as AsyncIterable<LlmStreamEvent> & { decision?: RouteDecision })
+    .decision;
+  if (!decision?.model) return undefined;
+  return decision;
 }
 
 function decide(tier: ModelTier, reason: RouteReason, config: RouterConfig): RouteDecision {

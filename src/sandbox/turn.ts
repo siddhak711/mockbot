@@ -20,23 +20,7 @@ export class SandboxTurnProvider implements LlmProvider {
     return this.#inner.model;
   }
 
-  /** Decision from the wrapped router, when this turn actually called it. */
-  get lastDecision(): {
-    tier: "cheap" | "strong";
-    reason: "chat" | "tool" | "plan" | "code" | "retry";
-    model: string;
-  } | null {
-    const inner = this.#inner as LlmProvider & {
-      lastDecision?: {
-        tier: "cheap" | "strong";
-        reason: "chat" | "tool" | "plan" | "code" | "retry";
-        model: string;
-      } | null;
-    };
-    return inner.lastDecision ?? null;
-  }
-
-  async *stream(
+  stream(
     messages: LlmMessage[],
     input?: StreamOptions | AbortSignal,
   ): AsyncIterable<LlmStreamEvent> {
@@ -46,34 +30,40 @@ export class SandboxTurnProvider implements LlmProvider {
     const plan =
       this.#inner.id === "mock" && ownsComputerTurn(messages, text) ? planComputerTurn(text) : null;
     if (!plan) {
-      yield* this.#inner.stream(messages, input);
-      return;
-    }
-    // This turn never reaches the router. Drop a decision left by an earlier call
-    // so the scripted reply is not stamped with that tier.
-    const inner = this.#inner as { lastDecision?: unknown };
-    if ("lastDecision" in inner) inner.lastDecision = null;
-
-    const next = plan[toolResultsSinceUser(messages)];
-    if (!next) {
-      for (const piece of chunk(summarize(plan), 48)) {
-        await sleep(this.#delayMs, signal);
-        if (signal?.aborted) return;
-        yield { type: "text", text: piece };
+      const inner = this.#inner.stream(messages, input) as AsyncIterable<LlmStreamEvent> & {
+        decision?: unknown;
+      };
+      async function* forward(): AsyncIterable<LlmStreamEvent> {
+        yield* inner;
       }
-      if (signal?.aborted) return;
-      yield { type: "end", finishReason: "stop" };
-      return;
+      return inner.decision ? Object.assign(forward(), { decision: inner.decision }) : forward();
     }
 
-    const id = `call_${next.name}_${toolResultsSinceUser(messages)}`;
-    if (signal?.aborted) return;
-    yield { type: "tool_call", index: 0, id, name: next.name };
-    await sleep(this.#delayMs, signal);
-    if (signal?.aborted) return;
-    yield { type: "tool_call", index: 0, arguments: JSON.stringify(next.args) };
-    if (signal?.aborted) return;
-    yield { type: "end", finishReason: "tool_calls" };
+    const delayMs = this.#delayMs;
+    const actions = plan;
+    async function* scripted(): AsyncIterable<LlmStreamEvent> {
+      const next = actions[toolResultsSinceUser(messages)];
+      if (!next) {
+        for (const piece of chunk(summarize(actions), 48)) {
+          await sleep(delayMs, signal);
+          if (signal?.aborted) return;
+          yield { type: "text", text: piece };
+        }
+        if (signal?.aborted) return;
+        yield { type: "end", finishReason: "stop" };
+        return;
+      }
+
+      const id = `call_${next.name}_${toolResultsSinceUser(messages)}`;
+      if (signal?.aborted) return;
+      yield { type: "tool_call", index: 0, id, name: next.name };
+      await sleep(delayMs, signal);
+      if (signal?.aborted) return;
+      yield { type: "tool_call", index: 0, arguments: JSON.stringify(next.args) };
+      if (signal?.aborted) return;
+      yield { type: "end", finishReason: "tool_calls" };
+    }
+    return scripted();
   }
 }
 
