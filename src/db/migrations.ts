@@ -303,14 +303,238 @@ CREATE UNIQUE INDEX IF NOT EXISTS connectors_catalog_id_idx
   WHERE catalog_id IS NOT NULL;
 `,
   },
-  // 010_ask_user. Main already uses 007_composio_connections and 008_connector_catalog.
-  // 009 is claimed by #32, so this id is 010 to keep schema_migrations unique.
+  {
+    id: "009_one_thread_per_agent",
+    sql: `
+DROP TABLE IF EXISTS _conversation_merge_007;
+DROP TABLE IF EXISTS _summary_merge_007;
+DROP TABLE IF EXISTS _conversation_merge_009;
+
+CREATE TABLE _conversation_merge_009 (
+  id TEXT PRIMARY KEY,
+  keep_id TEXT NOT NULL
+);
+
+INSERT INTO _conversation_merge_009 (id, keep_id)
+SELECT id,
+       FIRST_VALUE(id) OVER (
+         PARTITION BY user_id, agent_id
+         ORDER BY created_at ASC, id ASC
+       )
+FROM conversations;
+
+UPDATE messages AS message
+SET conversation_id = merge.keep_id
+FROM _conversation_merge_009 AS merge
+WHERE message.conversation_id = merge.id
+  AND merge.id <> merge.keep_id;
+
+DROP TABLE IF EXISTS _message_seq_009;
+
+CREATE TABLE _message_seq_009 (
+  id TEXT PRIMARY KEY,
+  seq BIGINT NOT NULL
+);
+
+INSERT INTO _message_seq_009 (id, seq)
+SELECT id, seq FROM messages;
+
+UPDATE messages SET seq = -seq WHERE seq > 0;
+
+WITH ordered AS (
+  SELECT message.id,
+         ROW_NUMBER() OVER (
+           ORDER BY message.created_at ASC, saved.seq ASC, message.id ASC
+         ) AS new_seq
+  FROM messages AS message
+  JOIN _message_seq_009 AS saved ON saved.id = message.id
+)
+UPDATE messages AS message
+SET seq = ordered.new_seq
+FROM ordered
+WHERE message.id = ordered.id;
+
+SELECT setval(
+  pg_get_serial_sequence('messages', 'seq'),
+  GREATEST(COALESCE((SELECT MAX(seq) FROM messages), 1), 1),
+  (SELECT COUNT(*) FROM messages) > 0
+);
+
+UPDATE tool_calls AS tool_call
+SET conversation_id = merge.keep_id
+FROM _conversation_merge_009 AS merge
+WHERE tool_call.conversation_id = merge.id
+  AND merge.id <> merge.keep_id;
+
+DROP TABLE IF EXISTS _tool_seq_009;
+
+CREATE TABLE _tool_seq_009 (
+  id TEXT PRIMARY KEY,
+  seq BIGINT NOT NULL
+);
+
+INSERT INTO _tool_seq_009 (id, seq)
+SELECT id, seq FROM tool_calls;
+
+UPDATE tool_calls SET seq = -seq WHERE seq > 0;
+
+WITH ordered AS (
+  SELECT tool_call.id,
+         ROW_NUMBER() OVER (
+           ORDER BY tool_call.created_at ASC, saved.seq ASC, tool_call.id ASC
+         ) AS new_seq
+  FROM tool_calls AS tool_call
+  JOIN _tool_seq_009 AS saved ON saved.id = tool_call.id
+)
+UPDATE tool_calls AS tool_call
+SET seq = ordered.new_seq
+FROM ordered
+WHERE tool_call.id = ordered.id;
+
+SELECT setval(
+  pg_get_serial_sequence('tool_calls', 'seq'),
+  GREATEST(COALESCE((SELECT MAX(seq) FROM tool_calls), 1), 1),
+  (SELECT COUNT(*) FROM tool_calls) > 0
+);
+
+CREATE TABLE IF NOT EXISTS _summary_merge_009 (
+  conversation_id TEXT PRIMARY KEY,
+  keep_id TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  upto_msg TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL
+);
+
+INSERT INTO _summary_merge_009 (conversation_id, keep_id, summary, upto_msg, created_at)
+SELECT summary.conversation_id,
+       merge.keep_id,
+       summary.summary,
+       summary.upto_msg,
+       conversation.created_at
+FROM conversation_summaries AS summary
+JOIN conversations AS conversation ON conversation.id = summary.conversation_id
+JOIN _conversation_merge_009 AS merge ON merge.id = summary.conversation_id
+WHERE NOT EXISTS (SELECT 1 FROM _summary_merge_009);
+
+INSERT INTO conversation_summaries (conversation_id, summary, upto_msg, updated_at)
+SELECT keep_id,
+       string_agg(summary, (chr(10) || chr(10)) ORDER BY created_at ASC, conversation_id ASC),
+       (ARRAY_AGG(upto_msg ORDER BY created_at DESC, conversation_id DESC))[1],
+       NOW()
+FROM _summary_merge_009
+GROUP BY keep_id
+ON CONFLICT (conversation_id) DO UPDATE SET
+  summary = EXCLUDED.summary,
+  upto_msg = EXCLUDED.upto_msg,
+  updated_at = NOW();
+
+DELETE FROM conversation_summaries AS summary
+USING _conversation_merge_009 AS merge
+WHERE summary.conversation_id = merge.id
+  AND merge.id <> merge.keep_id;
+
+DO $$
+BEGIN
+  IF to_regclass('public.routines') IS NOT NULL THEN
+    UPDATE routines AS routine
+    SET conversation_id = merge.keep_id
+    FROM _conversation_merge_009 AS merge
+    WHERE routine.conversation_id = merge.id
+      AND merge.id <> merge.keep_id;
+  END IF;
+  IF to_regclass('public.routine_runs') IS NOT NULL THEN
+    UPDATE routine_runs AS run
+    SET conversation_id = merge.keep_id
+    FROM _conversation_merge_009 AS merge
+    WHERE run.conversation_id = merge.id
+      AND merge.id <> merge.keep_id;
+  END IF;
+END $$;
+
+DELETE FROM conversations AS conversation
+USING _conversation_merge_009 AS merge
+WHERE conversation.id = merge.id
+  AND merge.id <> merge.keep_id;
+
+DROP TABLE _conversation_merge_009;
+
+DROP TABLE IF EXISTS _summary_merge_009;
+
+DROP TABLE IF EXISTS _message_seq_009;
+
+DROP TABLE IF EXISTS _tool_seq_009;
+
+DROP INDEX IF EXISTS conversations_user_agent_key;
+
+CREATE UNIQUE INDEX conversations_user_agent_key
+  ON conversations (user_id, agent_id) NULLS NOT DISTINCT;
+`,
+  },
+  // 010_ask_user sits between 009_one_thread_per_agent and 011_run_events.
+  // Main reserved 010 for this pull request.
   {
     id: "010_ask_user",
     sql: `
 ALTER TABLE tool_calls DROP CONSTRAINT IF EXISTS tool_calls_status_check;
 ALTER TABLE tool_calls ADD CONSTRAINT tool_calls_status_check
   CHECK (status IN ('running', 'approval', 'ask', 'done', 'denied', 'error'));
+`,
+  },
+  // 011_run_events stays after 009_one_thread_per_agent. PR #37 claims
+  // 010_ask_user, so this id is 011. A preview already applied this table as
+  // 007_run_events. That SQL has the same columns, check, and primary key, so
+  // every statement below is a no-op on that table. The stray schema_migrations
+  // row is removed.
+  {
+    id: "011_run_events",
+    sql: `
+CREATE TABLE IF NOT EXISTS run_events (
+  run_id TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  type TEXT NOT NULL CHECK (type IN ('model', 'tool', 'event', 'error')),
+  input TEXT,
+  output TEXT,
+  tokens INTEGER,
+  cost_usd DOUBLE PRECISION,
+  ms INTEGER,
+  PRIMARY KEY (run_id, seq)
+);
+
+ALTER TABLE run_events ADD COLUMN IF NOT EXISTS run_id TEXT;
+ALTER TABLE run_events ADD COLUMN IF NOT EXISTS seq INTEGER;
+ALTER TABLE run_events ADD COLUMN IF NOT EXISTS type TEXT;
+ALTER TABLE run_events ADD COLUMN IF NOT EXISTS input TEXT;
+ALTER TABLE run_events ADD COLUMN IF NOT EXISTS output TEXT;
+ALTER TABLE run_events ADD COLUMN IF NOT EXISTS tokens INTEGER;
+ALTER TABLE run_events ADD COLUMN IF NOT EXISTS cost_usd DOUBLE PRECISION;
+ALTER TABLE run_events ADD COLUMN IF NOT EXISTS ms INTEGER;
+
+CREATE UNIQUE INDEX IF NOT EXISTS run_events_pkey ON run_events (run_id, seq);
+
+DO $run_events_constraints$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.run_events'::regclass
+      AND conname = 'run_events_type_check'
+  ) THEN
+    ALTER TABLE run_events
+      ADD CONSTRAINT run_events_type_check
+      CHECK (type IN ('model', 'tool', 'event', 'error'));
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.run_events'::regclass
+      AND contype = 'p'
+  ) THEN
+    ALTER TABLE run_events
+      ADD CONSTRAINT run_events_pkey PRIMARY KEY (run_id, seq);
+  END IF;
+END
+$run_events_constraints$;
+
+DELETE FROM schema_migrations WHERE id = '007_run_events';
 `,
   },
 ];

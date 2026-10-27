@@ -3,7 +3,7 @@ import { SYSTEM_PROMPT } from "./memory/prompt";
 import type { LlmMessage, LlmStreamEvent, ProviderId } from "./types";
 
 export { SYSTEM_PROMPT };
-import { readOpenAiEvents } from "./openai-events";
+import { readModelUsage, readOpenAiEvents } from "./openai-events";
 import { SseParser } from "./sse";
 import type { ToolDefinition } from "./tools/types";
 
@@ -49,7 +49,7 @@ export function buildMockReply(userText: string): string {
     "",
     "### Still here after a refresh",
     "",
-    "- The conversation list and this transcript are stored locally.",
+    "- This agent's thread is stored locally.",
     "- Use the Stop generating button to keep a partial answer.",
     "- Set `LLM_PROVIDER=openai` when you want a live model.",
     "",
@@ -539,6 +539,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
         body: JSON.stringify({
           model: this.model,
           stream: true,
+          stream_options: { include_usage: true },
           messages: messages.map(wireMessage),
           ...(tools.length > 0 ? { tools: wireTools(tools), tool_choice: "auto" } : {}),
         }),
@@ -563,14 +564,21 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     const parser = new SseParser();
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
-    let ended = false;
+    let finishReason: string | null = null;
+    let sawEnd = false;
+    let usage: { inputTokens: number; outputTokens: number } | undefined;
+    const endEvent = () => ({
+      type: "end" as const,
+      finishReason: sawEnd ? finishReason : "stop",
+      ...(usage ? { usage } : {}),
+    });
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       for (const message of parser.push(decoder.decode(value, { stream: true }))) {
         const payload = message.data.trim();
         if (payload === "[DONE]") {
-          if (!ended) yield { type: "end", finishReason: "stop" };
+          yield endEvent();
           return;
         }
         let parsed: unknown;
@@ -581,13 +589,19 @@ export class OpenAiCompatibleProvider implements LlmProvider {
         }
         const failure = readError(parsed);
         if (failure) throw new Error(this.#redact(failure));
+        const nextUsage = readModelUsage(parsed);
+        if (nextUsage) usage = nextUsage;
         for (const event of readOpenAiEvents(parsed)) {
-          if (event.type === "end") ended = true;
+          if (event.type === "end") {
+            sawEnd = true;
+            finishReason = event.finishReason;
+            continue;
+          }
           yield event;
         }
       }
     }
-    if (!ended) yield { type: "end", finishReason: "stop" };
+    yield endEvent();
   }
 
   #redact(text: string): string {

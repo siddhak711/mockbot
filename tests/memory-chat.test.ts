@@ -96,7 +96,7 @@ it("includes memory tool rules for a custom agent", async () => {
   expect(sectionText(system, "profile-memories")).toContain("42");
 });
 
-it("shows a remembered fact in the next conversation's system prompt trace", async () => {
+it("shows a remembered fact on the same agent's next turn", async () => {
   const prompts: LlmMessage[][] = [];
   const store = await ConversationStore.open();
   setAppContext({
@@ -133,9 +133,9 @@ it("shows a remembered fact in the next conversation's system prompt trace", asy
     .filter((message) => message.role === "user")
     .map((message) => message.content);
   expect(sectionText(system, "profile-memories")).toContain("blue");
-  expect(users).toEqual(["What is my favorite color?"]);
+  expect(users).toEqual(["Remember that my favorite color is blue", "What is my favorite color?"]);
   expect(users.join("\n")).not.toContain("profile-memories");
-  expect(users.join("\n")).not.toContain("my favorite color is blue");
+  expect(users[1]).toBe("What is my favorite color?");
 });
 
 it("does not retrieve a deleted memory or a different agent's memory", async () => {

@@ -1,9 +1,14 @@
 import { afterEach, expect, it } from "vitest";
 import { POST as createAgent } from "../app/api/agents/route";
 import { POST } from "../app/api/chat/route";
+import { AgentDirectory } from "../src/agents/directory";
+import { performDelegation } from "../src/agents/delegate";
 import { LEAD_AGENT_ID } from "../src/agents/ids";
 import { withAgentMock } from "../src/agents/mock-script";
+import { defaultComputer, defaultConnector, NoteMemory } from "../src/agents/ports";
+import { RunLog, listRunEvents } from "../src/runs/events";
 import type { AgentMemoryPort, ComputerPort, ConnectorPort } from "../src/agents/types";
+import type { LlmMessage } from "../src/types";
 import { resetAppContext, setAppContext } from "../src/context";
 import { buildMockReply, MockProvider } from "../src/llm";
 import { ConversationStore } from "../src/store";
@@ -631,4 +636,93 @@ it("refuses an ungranted connector from the live delegate phrase", async () => {
     }),
   );
   expect(deltas(await readSse(followUp))).toBe(buildMockReply("Say hello"));
+});
+
+it("sends a delegated turn through the summary instead of the covered history", async () => {
+  const seen: LlmMessage[][] = [];
+  const store = await ConversationStore.open();
+  const directory = await AgentDirectory.attach(store);
+  const researcher = await directory.create({
+    name: "Researcher",
+    instructions: "You read notes and nothing else.",
+  });
+  const conversation = await store.getOrCreateAgentConversation(researcher.id, null);
+  await store.addMessage(conversation.id, "user", "secret older note");
+  const covered = await store.addMessage(conversation.id, "assistant", "noted the secret");
+  await store.saveSummary(
+    conversation.id,
+    researcher.id,
+    "The grove was already summarized.",
+    covered.id,
+  );
+  const provider = new MockProvider({
+    delayMs: 0,
+    chunkSize: 40,
+    onMessages: (messages) => {
+      seen.push(messages);
+    },
+    reply: () => "Next step is the ridge.",
+  });
+
+  const outcome = await performDelegation(
+    { agent: "Researcher", task: "What next?" },
+    {
+      directory,
+      store,
+      provider,
+      memory: new NoteMemory(directory),
+      computer: defaultComputer,
+      connector: defaultConnector,
+      parentAgentId: LEAD_AGENT_ID,
+    },
+  );
+
+  expect(outcome.isError).toBe(false);
+  expect(outcome.content).toContain("Next step is the ridge.");
+  const child = seen[0] ?? [];
+  const system = child.find((message) => message.role === "system")?.content ?? "";
+  expect(system).toContain("delegation: child");
+  expect(system).toContain("<conversation-summary");
+  expect(system).toContain("The grove was already summarized.");
+  expect(
+    child.filter((message) => message.role === "user").map((message) => message.content),
+  ).toEqual(["What next?"]);
+  expect(child.map((message) => message.content).join("\n")).not.toContain("secret older note");
+  expect(child.map((message) => message.content).join("\n")).not.toContain("noted the secret");
+
+  const stored = await store.getConversation(conversation.id);
+  expect(stored?.messages.map((message) => message.content)).toEqual([
+    "secret older note",
+    "noted the secret",
+    "What next?",
+    "Next step is the ridge.",
+  ]);
+});
+
+it("records a stopped handoff as stopped", async () => {
+  const store = await ConversationStore.open();
+  const directory = await AgentDirectory.attach(store);
+  const log = new RunLog(store.connection, "run_stopped_delegate");
+  await expect(
+    performDelegation(
+      { agent: "Researcher", task: "Stop this" },
+      {
+        directory,
+        store,
+        provider: new MockProvider({ delayMs: 0 }),
+        memory: new NoteMemory(directory),
+        computer: defaultComputer,
+        connector: defaultConnector,
+        parentAgentId: LEAD_AGENT_ID,
+        signal: AbortSignal.abort(),
+        runLog: log,
+      },
+    ),
+  ).rejects.toThrow(/aborted/);
+
+  const rows = await listRunEvents(store.connection, "run_stopped_delegate");
+  const delegate = rows.find((row) => row.type === "tool");
+  expect(delegate?.output).toBe("Delegation stopped.");
+  expect(delegate?.output).not.toContain("failed");
+  expect(rows.some((row) => row.type === "error")).toBe(false);
 });

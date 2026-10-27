@@ -1,6 +1,6 @@
 # Mockbot
 
-Mockbot is a personal agent workspace. Start a conversation, watch the full reply stream, and come back to the same transcript. The transcript keeps the start token, reasoning, tool calls, the answer, and the finish reason. Tool cards stream into the transcript and the Computer pane, and a refresh keeps them with the turn. More than one agent can exist. Each agent has its own instructions, memory note, and grants. The lead can hand a subtask to another agent.
+Mockbot is a personal agent workspace. The sidebar lists agents. Each person and agent share one persistent thread: send a message, watch the full reply stream, and come back to that same transcript. The transcript keeps the start token, reasoning, tool calls, the answer, and the finish reason. Tool cards stream into the transcript and the Computer pane, and a refresh keeps them with the turn. More than one agent can exist. Each agent has its own instructions, memory note, and grants. The lead can hand a subtask to another agent, which appends to that agent's thread.
 
 The later milestones are in [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -18,15 +18,15 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). A visitor who is not signed in sees the Daylight landing page and can join the waitlist in the browser. The waitlist does not call a server. Sign in at [http://localhost:3000/login](http://localhost:3000/login) to open the workspace on the same address. With no API key, chat uses the built-in mock provider. Each mock turn streams a start token, a short reasoning trace, the answer, and an end token (`finish stop`). The live mock does not invent a connector tool call. Asking it to remember a fact calls `memory_write`. A message that asks for a handoff calls `delegate`. Tool-call cards still render when a stream includes them. Conversations and memories are stored in embedded Postgres (PGlite) under `.data/pglite`. A refresh restores the conversation list, titles, memories, and every streamed phase. The token-by-token animation is live only. Stopping a turn keeps the partial reasoning and answer that have already been saved.
+Open [http://localhost:3000](http://localhost:3000). A visitor who is not signed in sees the Daylight landing page and can join the waitlist in the browser. The waitlist does not call a server. Sign in at [http://localhost:3000/login](http://localhost:3000/login) to open the workspace on the same address. With no API key, chat uses the built-in mock provider. Each mock turn streams a start token, a short reasoning trace, the answer, and an end token (`finish stop`). The live mock does not invent a connector tool call. Asking it to remember a fact calls `memory_write`. A message that asks for a handoff calls `delegate`. Tool-call cards still render when a stream includes them. The agent's thread and memories are stored in embedded Postgres (PGlite) under `.data/pglite`. A refresh restores that thread, memories, and every streamed phase. The token-by-token animation is live only. Stopping a turn keeps the partial reasoning and answer that have already been saved.
 
-The first agent is Mockbot, seeded with the original assistant prompt. Create another agent in the sidebar (name, instructions, an optional memory note, and optional computer or connector ids). Select an agent to start a chat as that agent. From Mockbot, send:
+The first agent is Mockbot, seeded with the original assistant prompt. Create another agent in the sidebar (name, instructions, an optional memory note, and optional computer or connector ids). Select an agent to open that agent's thread. From Mockbot, send:
 
 ```text
 delegate to Researcher: What is the grove code?
 ```
 
-The lead transcript shows the `delegate` call and the child result. Only Mockbot can delegate, and it cannot delegate to itself. The child conversation is in the same list, labeled with the child agent. The child uses its own memory note and can read a computer only when that computer id was granted. A connector or computer it was not granted is refused, and the lead conversation stays usable. A task that says `use connector <id>` asks for that connector.
+The lead transcript shows the `delegate` call and the child result. Only Mockbot can delegate, and it cannot delegate to itself. The child result is appended to the child agent's one thread. Open that agent in the sidebar to read it. The child uses its own memory note and can read a computer only when that computer id was granted. A connector or computer it was not granted is refused, and the lead conversation stays usable. A task that says `use connector <id>` asks for that connector.
 
 `npm run build` then `npm start` runs the production server. Production and Vercel require `DATABASE_URL`. Use the pooled Neon connection string from the Vercel Marketplace Neon integration (`-pooler` in the host). Mockbot uses Neon's HTTP serverless driver there. It does not open PGlite, a `/tmp` database, or a blob snapshot in production. A hosted runtime without `DATABASE_URL` refuses to start.
 
@@ -79,7 +79,7 @@ Signing in with Google does not attach to an email/password user with the same a
 
 ## Memory
 
-Ask the agent to remember a fact, for example "Remember that my favorite color is blue". The mock provider calls `memory_write`. Open a new conversation and ask for the fact again. Profile memories are injected into the system prompt, and matching facts are recalled the same way. They are not inserted as a fake user message.
+Ask the agent to remember a fact, for example "Remember that my favorite color is blue". The mock provider calls `memory_write`. Ask for the fact again in this same thread. Profile memories are injected into the system prompt, and matching facts are recalled the same way. They are not inserted as a fake user message.
 
 The Memory button opens a panel that lists each live memory, the source snippet, and older versions. Edit and delete there. A delete is a soft delete, and a deleted memory is not retrieved again. The model can also call `memory_update`, `memory_delete`, and `memory_search`.
 
@@ -287,10 +287,8 @@ The same form is on the Routines page.
 - `POST /api/connectors` with `{ "name", "transport": "http" | "stdio", "target", "secretRef": "optional" }` checks that the server lists tools, then stores the connector.
 - `PATCH /api/connectors/:id` with `{ "enabled": true | false }` enables or disables it.
 - `DELETE /api/connectors/:id` removes it.
-- `GET /api/conversations` lists conversations.
-- `GET /api/conversations/:id` reads one conversation, its messages, and the tool calls stored on each assistant turn.
-- `PATCH /api/conversations/:id` with `{ "title": "..." }` renames it.
-- `DELETE /api/conversations/:id` deletes it.
+- `GET /api/agents/:id/conversation` reads that agent's one thread, its messages, and the tool calls stored on each assistant turn. The thread is created if this user does not have one yet.
+- `GET /api/conversations/:id` reads a thread by id. Threads are not listed, renamed, or deleted.
 - `GET /api/memories` lists this agent's memories, including history.
 - `PATCH /api/memories/:id` with `{ "content": "...", "kind": "profile" }` records a correction.
 - `DELETE /api/memories/:id` soft-deletes a memory.
@@ -298,7 +296,7 @@ The same form is on the Routines page.
 - `POST /api/computer` with `{ "tool": "list" | "read" | "write" | "exec", ... }` runs one computer tool. `write` takes `path` and `content`. `exec` takes `command`. The response is the tool result and the stored run. The Daytona key is not included.
 - `GET /api/agents` lists agents and their grants.
 - `POST /api/agents` with `{ "name", "instructions", "memoryNote?", "computerId?", "connectorId?" }` creates an agent. Optional ids are grants for a computer or a connector.
-- `POST /api/chat` accepts an optional `agentId` when starting a conversation. On a Mockbot conversation, a message that begins `delegate to <name>: <task>` makes the mock provider call the `delegate` tool. The tool opens a child conversation for that agent and returns the result on the parent turn. Delegating to Mockbot is refused. Other agents do not get the delegate tool.
+- `POST /api/chat` accepts `agentId` and appends to that agent's thread instead of opening another one. On a Mockbot conversation, a message that begins `delegate to <name>: <task>` makes the mock provider call the `delegate` tool. The tool appends the task to that agent's thread and returns the result on the parent turn. Delegating to Mockbot is refused. Other agents do not get the delegate tool.
 - `GET /api/routines` lists routines and their latest runs.
 - `POST /api/routines` with `{ "name", "prompt", "cron" }` or `{ "name", "prompt", "eventName" }` creates one. A cron routine includes `nextRunAt`.
 - `PATCH /api/routines/:id` with `{ "status": "paused" }` or `{ "status": "active" }` pauses or resumes it.
