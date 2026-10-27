@@ -188,3 +188,31 @@ it("ignores Escape and backdrop dismissal while create is pending", async () => 
   finish(null);
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 });
+
+it("unlocks the new-agent dialog and shows the error when create throws", async () => {
+  const onCreate = vi.fn(async (): Promise<string | null> => {
+    throw new TypeError("Failed to fetch");
+  });
+  render(
+    <>
+      <button type="button">Send</button>
+      <AgentPanel
+        agents={[]}
+        activeAgentId="agent_default"
+        spriteState="idle"
+        busy={false}
+        onSelect={() => {}}
+        onCreate={onCreate}
+      />
+    </>,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "New agent" }));
+  fireEvent.click(screen.getByRole("button", { name: "Create agent" }));
+  expect((await screen.findByRole("alert")).textContent).toBe("Failed to fetch");
+  expect(screen.getByRole("button", { name: "Create agent" }).hasAttribute("disabled")).toBe(false);
+
+  fireEvent.keyDown(document, { key: "Escape" });
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByRole("button", { name: "Send" }).closest("[inert]")).toBeNull();
+});

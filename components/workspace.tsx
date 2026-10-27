@@ -359,16 +359,21 @@ export function Workspace({
   }
 
   async function createAgent(draft: AgentDraft): Promise<string | null> {
-    const response = await fetch("/api/agents", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(draft),
-    });
-    if (!response.ok) {
-      const body = (await response.json().catch(() => null)) as { error?: string } | null;
-      return body?.error ?? "Could not create agent";
+    try {
+      const response = await fetch("/api/agents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(draft),
+      });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: string } | null;
+        return body?.error ?? "Could not create agent";
+      }
+    } catch {
+      return "Could not create agent. Check your connection and try again.";
     }
-    await refreshAgents();
+    // The agent exists now. A failed list refresh must not report a failed create.
+    await refreshAgents().catch(() => undefined);
     return null;
   }
 

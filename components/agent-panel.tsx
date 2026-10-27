@@ -109,15 +109,22 @@ export function AgentPanel({
     pendingRef.current = true;
     setPending(true);
     setError(null);
-    const message = await onCreate({
-      name,
-      instructions,
-      memoryNote,
-      computerId,
-      connectorId,
-    });
-    pendingRef.current = false;
-    setPending(false);
+    let message: string | null;
+    try {
+      message = await onCreate({
+        name,
+        instructions,
+        memoryNote,
+        computerId,
+        connectorId,
+      });
+    } catch (failure) {
+      message =
+        failure instanceof Error && failure.message ? failure.message : "Could not create agent";
+    } finally {
+      pendingRef.current = false;
+      setPending(false);
+    }
     if (message) {
       setError(message);
       return;
