@@ -9,7 +9,7 @@ import { connectorForActivity, serverProvidedError } from "../components/connect
 import { searchCatalog } from "../src/connectors/catalog";
 import { probeConnector } from "../src/connectors/probe";
 import { ReconnectAttempt } from "../src/connectors/reconnect";
-import type { ConnectorRecord, ConnectorToolSetting } from "../src/connectors";
+import { joinCommand, type ConnectorRecord, type ConnectorToolSetting } from "../src/connectors";
 import {
   applyBulk,
   classifyToolRisk,
@@ -612,7 +612,7 @@ it("passes a saved stdio api key to the child as MCP_PROBE_KEY", async () => {
     jsonRequest({
       name: "Local",
       transport: "stdio",
-      target: `${process.execPath} ${script}`,
+      target: joinCommand([process.execPath, script]),
       apiKey: "stdio-secret",
       tools: { env_probe: { enabled: true, approval: "auto" } },
     }),

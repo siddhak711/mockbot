@@ -156,12 +156,29 @@ export function parseEnabled(
   return { ok: true, enabled: (body as { enabled: boolean }).enabled };
 }
 
+// Tokens split on whitespace; a double-quoted token may hold spaces, so paths
+// like "/Users/me/Claude Code/server.mjs" survive.
+const QUOTED_TOKEN = /^[A-Za-z0-9._+/:@ -]+$/;
+
 export function splitCommand(target: string): { command: string; args: string[] } | null {
-  const parts = target.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0 || parts.some((part) => !COMMAND_TOKEN.test(part))) return null;
+  const parts: string[] = [];
+  for (const match of target.trim().matchAll(/"([^"]*)"|(\S+)/g)) {
+    const [, quoted, bare] = match;
+    if (quoted !== undefined) {
+      if (!quoted.trim() || !QUOTED_TOKEN.test(quoted)) return null;
+      parts.push(quoted);
+    } else if (bare !== undefined) {
+      if (!COMMAND_TOKEN.test(bare)) return null;
+      parts.push(bare);
+    }
+  }
   const [command, ...args] = parts;
   if (!command) return null;
   return { command, args };
+}
+
+export function joinCommand(parts: string[]): string {
+  return parts.map((part) => (/\s/.test(part) ? `"${part}"` : part)).join(" ");
 }
 
 export function httpTargetError(target: string): string | null {

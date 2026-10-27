@@ -1,4 +1,4 @@
-import { httpTargetError, splitCommand } from "../connectors";
+import { httpTargetError, joinCommand, splitCommand } from "../connectors";
 
 export type ToolRisk = "read" | "write" | "destructive";
 export type ToolApprovalMode = "ask" | "auto";
@@ -231,7 +231,7 @@ function commandFrom(server: ServerShape): string | null {
   const args = Array.isArray(server.args)
     ? server.args.filter((item): item is string => typeof item === "string")
     : [];
-  return [server.command.trim(), ...args].join(" ");
+  return joinCommand([server.command.trim(), ...args]);
 }
 
 export function unreachableMessage(host: string, timedOut: boolean): string {

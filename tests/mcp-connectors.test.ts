@@ -9,7 +9,12 @@ import {
 } from "../app/api/connectors/[id]/route";
 import { GET as getConnectors, POST as createConnector } from "../app/api/connectors/route";
 import { GET as readConversation } from "../app/api/conversations/[id]/route";
-import { parseConnectorInput, type ConnectorRecord } from "../src/connectors";
+import {
+  joinCommand,
+  parseConnectorInput,
+  splitCommand,
+  type ConnectorRecord,
+} from "../src/connectors";
 import { resetAppContext, setAppContext } from "../src/context";
 import { MockProvider, streamOptions, type LlmProvider } from "../src/llm";
 import { previewMcpTools, refreshMcpTools } from "../src/mcp/sync";
@@ -433,7 +438,7 @@ it("passes only the referenced secret into a stdio server", async () => {
   await addConnector({
     name: "Demo",
     transport: "stdio",
-    target: `${process.execPath} ${script}`,
+    target: joinCommand([process.execPath, script]),
     secretRef: "MCP_DEMO_TOKEN",
   });
   const events = await readSse(await chat("Probe"));
@@ -632,4 +637,16 @@ it("does not save a connector when the request is aborted while another connecto
     await slow.close();
     await fast.close();
   }
+});
+
+it("keeps a quoted stdio path with spaces as one argument", () => {
+  const target = joinCommand(["/usr/bin/node", "/Users/me/Claude Code/server.mjs", "--port", "3"]);
+  expect(target).toBe('/usr/bin/node "/Users/me/Claude Code/server.mjs" --port 3');
+  expect(splitCommand(target)).toEqual({
+    command: "/usr/bin/node",
+    args: ["/Users/me/Claude Code/server.mjs", "--port", "3"],
+  });
+  expect(splitCommand('node "unclosed')).toBeNull();
+  expect(splitCommand('node "a;rm -rf"')).toBeNull();
+  expect(splitCommand('""')).toBeNull();
 });
