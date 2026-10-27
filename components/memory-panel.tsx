@@ -73,33 +73,42 @@ function MemoryCard({
     if (!content || busy) return;
     setBusy(true);
     setError(null);
-    const response = await fetch(memoryPath(memory.id, agentId), {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content, kind }),
-    });
-    if (!response.ok) {
-      const body = (await response.json().catch(() => null)) as { error?: string } | null;
-      setError(body?.error ?? "Could not update memory");
+    try {
+      const response = await fetch(memoryPath(memory.id, agentId), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content, kind }),
+      });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: string } | null;
+        setError(body?.error ?? "Could not update memory");
+        return;
+      }
+      setEditing(false);
+      await onChanged();
+    } catch {
+      setError("Could not update memory. Check your connection and try again.");
+    } finally {
       setBusy(false);
-      return;
     }
-    setEditing(false);
-    setBusy(false);
-    await onChanged();
   }
 
   async function remove() {
     if (busy) return;
     setBusy(true);
     setError(null);
-    const response = await fetch(memoryPath(memory.id, agentId), { method: "DELETE" });
-    if (!response.ok) {
-      setError("Could not delete memory");
+    try {
+      const response = await fetch(memoryPath(memory.id, agentId), { method: "DELETE" });
+      if (!response.ok) {
+        setError("Could not delete memory");
+        return;
+      }
+      await onChanged();
+    } catch {
+      setError("Could not delete memory. Check your connection and try again.");
+    } finally {
       setBusy(false);
-      return;
     }
-    await onChanged();
   }
 
   return (
