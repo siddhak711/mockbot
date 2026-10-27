@@ -1,5 +1,6 @@
 import { throwIfAborted, withSignal } from "../sandbox/abort";
 import type { ExecOutcome } from "../sandbox/runtime";
+import type { BrowserSessionSource, RemoteBrowserSession } from "./browserbase";
 import { BROWSERD_SOURCE } from "./browserd-source";
 import { browserInstallCommand, browserInstallScript, type BrowserPaths } from "./install";
 import {
@@ -30,8 +31,9 @@ export const INSTALL_PATH = ".mockbot/install-browser.sh";
 export const DEFAULT_BROWSER_PORT = 9417;
 
 /**
- * Drives the headless browser daemon inside a sandbox. Every action is one exec
- * of `node browserd.cjs send`, so the host never runs a browser itself.
+ * Drives the browser daemon inside a sandbox. Every action is one exec of
+ * `node browserd.cjs send`. The daemon connects over CDP to a remote browser
+ * session the app created; the sandbox gets only that session's connect URL.
  */
 export class SandboxBrowser implements BrowserDriver {
   #installed: Promise<void> | null = null;
@@ -44,8 +46,10 @@ export class SandboxBrowser implements BrowserDriver {
     private readonly host: BrowserHost,
     private readonly options: {
       paths: BrowserPaths;
-      /** Install Node, Playwright, and Chromium on first use. Off when they are already there. */
+      /** Install Node and playwright-core on first use. Off when they are already there. */
       install: boolean;
+      /** Remote browser sessions, created by the app. */
+      sessions: BrowserSessionSource;
       port?: number;
     },
   ) {}
@@ -56,12 +60,41 @@ export class SandboxBrowser implements BrowserDriver {
     } catch (error) {
       return { ok: false, error: errorText(error, "The sandbox browser could not be installed.") };
     }
-    return this.#send({ ...step, startTimeoutMs: BROWSER_START_TIMEOUT_MS }, signal);
+    let outcome = await this.#withSession(step, signal);
+    // A session that ended early, such as at its time limit, is replaced once.
+    if (!outcome.ok && outcome.sessionEnded && !signal?.aborted) {
+      outcome = await this.#withSession(step, signal);
+    }
+    if (signal?.aborted) await this.close().catch(() => undefined);
+    return outcome;
   }
 
-  /** Stops the daemon. Safe to call when it is not running. */
+  /** Stops the daemon and releases the remote session. Safe when neither is running. */
   async close(): Promise<void> {
-    await this.#send({ action: "close", timeoutMs: 1_000, startTimeoutMs: 0 });
+    try {
+      await this.#send({ action: "close", timeoutMs: 1_000, startTimeoutMs: 0 });
+    } finally {
+      await this.options.sessions.close();
+    }
+  }
+
+  async #withSession(step: BrowseStep, signal?: AbortSignal): Promise<BrowseOutcome> {
+    let session: RemoteBrowserSession;
+    try {
+      session = await this.options.sessions.acquire(signal);
+    } catch (error) {
+      return { ok: false, error: errorText(error, "The remote browser session did not start.") };
+    }
+    const outcome = await this.#send(
+      {
+        ...step,
+        startTimeoutMs: BROWSER_START_TIMEOUT_MS,
+        session: { id: session.id, connectUrl: session.connectUrl },
+      },
+      signal,
+    );
+    if (!outcome.ok && outcome.sessionEnded) await this.options.sessions.invalidate(session.id);
+    return outcome;
   }
 
   async #send(step: Record<string, unknown>, signal?: AbortSignal): Promise<BrowseOutcome> {
@@ -87,12 +120,10 @@ export class SandboxBrowser implements BrowserDriver {
 
   #env(): string {
     const { paths, port } = this.options;
-    const pairs = [
+    return [
       `NODE_PATH=${quote(paths.nodePath)}`,
       `MOCKBOT_BROWSER_PORT=${port ?? DEFAULT_BROWSER_PORT}`,
-    ];
-    if (paths.browsersPath) pairs.push(`PLAYWRIGHT_BROWSERS_PATH=${quote(paths.browsersPath)}`);
-    return pairs.join(" ");
+    ].join(" ");
   }
 
   /**

@@ -11,32 +11,28 @@ export type BrowserPaths = {
   node: string;
   /** Directory that holds playwright-core, passed as NODE_PATH. */
   nodePath: string;
-  /** PLAYWRIGHT_BROWSERS_PATH, when Chromium lives outside the default cache. */
-  browsersPath?: string;
 };
 
 export const SANDBOX_BROWSER_PATHS: BrowserPaths = {
   node: `${BROWSER_DIR}/node/bin/node`,
   nodePath: `${BROWSER_DIR}/lib/node_modules`,
-  browsersPath: `${BROWSER_DIR}/browsers`,
 };
 
-/** Written only after Node, playwright-core, and Chromium have all finished installing. */
+/** Written only after Node and playwright-core have both finished installing. */
 export const INSTALL_COMPLETE_NAME = ".install-complete";
 
 /**
- * Idempotent installer for Node, playwright-core, and headless Chromium.
+ * Idempotent installer for Node and playwright-core. The browser itself runs
+ * remotely on Browserbase, so no Chromium is installed in the sandbox.
  * python3 downloads Node because the slim image has no curl.
  *
- * A `browsers` directory is not success: Playwright creates it before Chromium
- * is downloaded. The script exits early only when the completion stamp matches
- * this Playwright version and a browser binary is present.
+ * The script exits early only when the completion stamp matches this
+ * Playwright version.
  */
 export function browserInstallScript(): string {
   const dir = BROWSER_DIR;
   const node = BROWSER_NODE_VERSION;
   const ready = installReady('"$DIR"');
-  const browser = chromiumReady('"$DIR"');
   return [
     "set -eu",
     `DIR=${dir}`,
@@ -48,8 +44,6 @@ export function browserInstallScript(): string {
     `rm -rf "$DIR/node" && mv "$DIR/node-v${node}-linux-$ARCH" "$DIR/node"`,
     `export PATH="$DIR/node/bin:$PATH"`,
     `npm install --prefix "$DIR/lib" --no-save --no-audit --no-fund playwright-core@${PLAYWRIGHT_VERSION}`,
-    `PLAYWRIGHT_BROWSERS_PATH="$DIR/browsers" "$DIR/node/bin/node" "$DIR/lib/node_modules/playwright-core/cli.js" install --with-deps --only-shell chromium`,
-    `if ! ${browser}; then echo "Chromium install did not finish" >&2; exit 1; fi`,
     `printf '%s\\n' '${PLAYWRIGHT_VERSION}' > "$DIR/${INSTALL_COMPLETE_NAME}"`,
     "",
   ].join("\n");
@@ -61,11 +55,7 @@ export function browserInstallReadyCommand(dir: string): string {
 }
 
 function installReady(dirExpr: string): string {
-  return `[ "$(cat ${dirExpr}/${INSTALL_COMPLETE_NAME} 2>/dev/null)" = "${PLAYWRIGHT_VERSION}" ] && [ -x ${dirExpr}/node/bin/node ] && [ -f ${dirExpr}/lib/node_modules/playwright-core/package.json ] && ${chromiumReady(dirExpr)}`;
-}
-
-function chromiumReady(dirExpr: string): string {
-  return `find ${dirExpr}/browsers -type f \\( -name chrome-headless-shell -o -name chrome -o -name chromium \\) 2>/dev/null | grep -q .`;
+  return `[ "$(cat ${dirExpr}/${INSTALL_COMPLETE_NAME} 2>/dev/null)" = "${PLAYWRIGHT_VERSION}" ] && [ -x ${dirExpr}/node/bin/node ] && [ -f ${dirExpr}/lib/node_modules/playwright-core/package.json ]`;
 }
 
 function shellQuote(value: string): string {

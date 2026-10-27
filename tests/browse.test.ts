@@ -4,9 +4,11 @@ import { createServer, type Server } from "node:http";
 import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { chromium, type Browser as CdpBrowser } from "playwright-core";
 import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
 import { POST as postChat } from "../app/api/chat/route";
 import { POST as postApproval } from "../app/api/tools/approvals/route";
+import type { BrowserSessionSource, RemoteBrowserSession } from "../src/browser/browserbase";
 import { PLAYWRIGHT_VERSION, browserInstallScript } from "../src/browser/install";
 import { MAX_BROWSE_ACTIONS } from "../src/browser/limits";
 import { SandboxBrowser, type BrowserHost } from "../src/browser/sandbox-browser";
@@ -32,6 +34,26 @@ const posts: Array<{ path: string; body: string }> = [];
 
 let workspace = "";
 let browser: SandboxBrowser;
+let remote: CdpBrowser;
+let sessions: LocalSessions;
+
+/**
+ * Stands in for Browserbase: a local Chromium that accepts CDP connections,
+ * handed out as one long-lived session.
+ */
+class LocalSessions implements BrowserSessionSource {
+  acquired = 0;
+  closed = 0;
+  constructor(private readonly connectUrl: string) {}
+  async acquire(): Promise<RemoteBrowserSession> {
+    this.acquired += 1;
+    return { id: "local-session", connectUrl: this.connectUrl, expiresAt: Date.now() + 3_600_000 };
+  }
+  async invalidate(): Promise<void> {}
+  async close(): Promise<void> {
+    this.closed += 1;
+  }
+}
 
 /**
  * Stands in for the Daytona sandbox: same write and exec contract, run on the
@@ -110,16 +132,22 @@ beforeAll(async () => {
   if (!address || typeof address === "string") throw new Error("No fixture port");
   baseUrl = `http://127.0.0.1:${address.port}`;
 
+  const cdpPort = await freePort();
+  remote = await chromium.launch({ args: [`--remote-debugging-port=${cdpPort}`] });
+  sessions = new LocalSessions(`http://127.0.0.1:${cdpPort}`);
+
   workspace = await mkdtemp(join(tmpdir(), "mockbot-browse-"));
   browser = new SandboxBrowser(localHost(workspace), {
     paths: { node: process.execPath, nodePath: REPO_MODULES },
     install: false,
+    sessions,
     port: await freePort(),
   });
 }, 30_000);
 
 afterAll(async () => {
   await browser?.close();
+  await remote?.close();
   fixture?.close();
   if (workspace) await rm(workspace, { recursive: true, force: true });
 });
