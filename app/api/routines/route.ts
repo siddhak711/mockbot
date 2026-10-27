@@ -23,7 +23,7 @@ export async function GET(request?: Request): Promise<Response> {
   if (!actor.ok) return actor.response;
   const { routines } = await getAppContext();
   if (!routines) return Response.json({ error: "Routines are not available" }, { status: 500 });
-  const listed = await routines.list();
+  const listed = await routines.list(actor.scoped ? actor.user.id : undefined);
   const withRuns: Array<Routine & { runs: RoutineRun[] }> = await Promise.all(
     listed.map(async (routine) => ({ ...routine, runs: await routines.listRuns(routine.id) })),
   );
@@ -38,8 +38,21 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: "Expected JSON body" }, { status: 400 });
   }
   const record = body as { name?: unknown; prompt?: unknown; cron?: unknown; eventName?: unknown };
-  const { routines } = await getAppContext();
+  const { routines, store } = await getAppContext();
   if (!routines) return Response.json({ error: "Routines are not available" }, { status: 500 });
+  const userId = actor.scoped ? actor.user.id : null;
+  let agentId: string | null = null;
+  if (userId) {
+    const lead = await store.connection.query<{ id: string }>(
+      `SELECT id
+       FROM agents
+       WHERE user_id = $1 AND is_lead = TRUE
+       ORDER BY created_at ASC, id ASC
+       LIMIT 1`,
+      [userId],
+    );
+    agentId = lead.rows[0]?.id ?? null;
+  }
   try {
     const routine = await routines.create({
       name: text(record.name),
@@ -47,6 +60,8 @@ export async function POST(request: Request): Promise<Response> {
       cron: typeof record.cron === "string" ? record.cron : undefined,
       eventName: typeof record.eventName === "string" ? record.eventName : undefined,
       now: new Date(),
+      userId,
+      agentId,
     });
     return Response.json({ routine }, { status: 201 });
   } catch (error) {

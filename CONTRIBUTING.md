@@ -14,6 +14,10 @@ Every pull request description must include:
 2. The tests that were run, with their results and output.
 3. A screenshot or screen recording that proves the change works.
 
+## Spec check
+
+Pull requests that change the UI or the data model must say which product-model invariants in [AGENTS.md](AGENTS.md) they touch and how the change keeps them. Reviewers flag a pull request whose screenshots or recordings contradict those invariants.
+
 ## Checks
 
 Requires Node.js 22 or newer.

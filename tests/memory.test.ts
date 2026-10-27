@@ -308,6 +308,7 @@ it("applies migrations once and refuses embedded postgres in production", async 
       "006_auth",
       "007_composio_connections",
       "008_connector_catalog",
+      "009_one_thread_per_agent",
       "011_run_events",
     ]);
     expect(first.driver).toBe("pglite");
@@ -323,6 +324,7 @@ it("applies migrations once and refuses embedded postgres in production", async 
       "006_auth",
       "007_composio_connections",
       "008_connector_catalog",
+      "009_one_thread_per_agent",
       "011_run_events",
     ]);
   } finally {

@@ -34,22 +34,24 @@ it("stores a conversation, its title, and every message", async () => {
   ]);
 });
 
-it("renames and deletes a conversation", async () => {
+it("returns the same conversation id for the same agent", async () => {
   const store = await openStore();
-  const kept = await store.createConversation("Keep");
-  const doomed = await store.createConversation("Remove me");
-  await store.addMessage(doomed.id, "user", "bye");
+  const first = await store.getOrCreateAgentConversation("agent_default", null);
+  const second = await store.getOrCreateAgentConversation("agent_default", null);
+  expect(second.id).toBe(first.id);
 
-  const renamed = await store.renameConversation(kept.id, "Renamed");
-  expect(renamed?.title).toBe("Renamed");
-  expect(await store.deleteConversation(doomed.id)).toBe(true);
-
-  const listed = await store.listConversations();
-  expect(listed.map((item) => item.id)).toEqual([kept.id]);
-  expect(listed[0]?.title).toBe("Renamed");
-  expect(await store.getConversation(doomed.id)).toBeNull();
-  expect(await store.renameConversation("missing", "Nope")).toBeNull();
-  expect(await store.deleteConversation("missing")).toBe(false);
+  await store.connection.query(
+    `INSERT INTO users (id, email) VALUES ('user_a', 'a@example.com'), ('user_b', 'b@example.com')`,
+  );
+  const ada = await store.getOrCreateAgentConversation("agent_default", "user_a");
+  const adaAgain = await store.getOrCreateAgentConversation("agent_default", "user_a");
+  const bea = await store.getOrCreateAgentConversation("agent_default", "user_b");
+  const other = await store.getOrCreateAgentConversation("agent_other", "user_a");
+  expect(adaAgain.id).toBe(ada.id);
+  expect(bea.id).not.toBe(ada.id);
+  expect(other.id).not.toBe(ada.id);
+  expect(ada.id).not.toBe(first.id);
+  await expect(store.createConversation("Another", "agent_default", "user_a")).rejects.toThrow();
 });
 
 it("stores and reloads a stream trace", async () => {

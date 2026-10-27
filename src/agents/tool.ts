@@ -74,7 +74,7 @@ export function delegateTool(deps: DelegateDeps): AgentTool {
   return {
     name: DELEGATE_TOOL_NAME,
     description:
-      "Hand a subtask to another agent. That agent replies in its own conversation, with its own instructions, memories, and grants. Returns the child's result.",
+      "Hand a subtask to another agent. The task is appended to that agent's one conversation. The agent uses its own instructions, memories, and grants. Returns the child's result.",
     exposure: "default",
     approval: "never",
     inputSchema: {
