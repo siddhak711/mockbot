@@ -29,6 +29,7 @@ export function SidePane({
   activities = [],
   snapshot = null,
   status = "ready",
+  unavailableReason = null,
   messages = [],
   popped = false,
   onPop,
@@ -46,6 +47,7 @@ export function SidePane({
   activities?: ToolActivity[];
   snapshot?: ComputerSnapshot | null;
   status?: "loading" | "ready" | "error";
+  unavailableReason?: string | null;
   messages?: Message[];
   popped?: boolean;
   onPop?: () => void;
@@ -125,6 +127,7 @@ export function SidePane({
           snapshot={snapshot}
           status={status}
           activities={activities}
+          unavailableReason={unavailableReason}
           onContentTab={onComputerTab}
         />
       )}

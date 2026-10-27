@@ -74,7 +74,7 @@ export type LlmMessage = {
   tool_call_id?: string;
 };
 
-export type ProviderId = "mock" | "openai";
+export type ProviderId = "mock" | "openai" | "unconfigured";
 
 export type MemoryKind = "profile" | "fact";
 
@@ -106,10 +106,15 @@ export type ConversationSummary = {
 
 export type LivePhase = "start" | "reasoning" | "tool" | "text" | "end";
 
+export type ModelUsage = {
+  inputTokens: number;
+  outputTokens: number;
+};
+
 export type LlmStreamEvent =
   | { type: "start"; role: "assistant" }
   | { type: "reasoning"; text: string }
   | { type: "tool_call"; index: number; id?: string; name?: string; arguments?: string }
   | { type: "tool_result"; id: string; name: string; content: string }
   | { type: "text"; text: string }
-  | { type: "end"; finishReason: string | null };
+  | { type: "end"; finishReason: string | null; usage?: ModelUsage };

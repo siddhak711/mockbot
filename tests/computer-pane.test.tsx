@@ -15,6 +15,7 @@ import {
   widthForContentTab,
 } from "../components/computer-pane";
 import { SidePane } from "../components/side-pane";
+import { ComputerUnavailableError, fetchComputerSnapshot } from "../src/sandbox/refresh";
 import type { ComputerSnapshot, SandboxRun } from "../src/sandbox/types";
 
 afterEach(() => {
@@ -387,4 +388,43 @@ it("resizes the computer pane from the keyboard", () => {
   expect(onPaneWidth).toHaveBeenNthCalledWith(1, 436);
   expect(onPaneWidth).toHaveBeenNthCalledWith(2, 404);
   expect(screen.getByRole("button", { name: "Pop out" })).toBeTruthy();
+});
+describe("computer pane when the server has no sandbox", () => {
+  afterEach(() => cleanup());
+
+  const REASON =
+    "The sandbox computer is not configured: DAYTONA_API_KEY is not set. Set it, or set MOCK_SANDBOX=1 to use the labeled mock computer outside production.";
+
+  async function reasonFrom(response: Response): Promise<string | null> {
+    try {
+      await fetchComputerSnapshot(
+        async () => response,
+        1,
+        () => 1,
+      );
+      return null;
+    } catch (error) {
+      if (!(error instanceof ComputerUnavailableError)) throw error;
+      return error.message || null;
+    }
+  }
+
+  it("shows the sandboxError from a 503 body instead of the generic message", async () => {
+    const reason = await reasonFrom(
+      Response.json({ error: REASON, sandboxError: REASON }, { status: 503 }),
+    );
+    render(<ComputerPane status="error" unavailableReason={reason} />);
+    expect(screen.getByRole("alert").textContent).toBe(REASON);
+    expect(screen.queryByText("Computer unavailable")).toBeNull();
+  });
+
+  it("falls back to Computer unavailable when the 503 carries no sandboxError", async () => {
+    const reason = await reasonFrom(
+      Response.json({ error: "Sandbox is not available" }, { status: 503 }),
+    );
+    expect(reason).toBeNull();
+    render(<ComputerPane status="error" unavailableReason={reason} />);
+    expect(screen.getByText("Computer unavailable")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
 });

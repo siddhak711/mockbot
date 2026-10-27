@@ -42,12 +42,15 @@ export function ComputerPane({
   snapshot = null,
   status = "ready",
   activities = [],
+  unavailableReason = null,
   embedded = false,
   onContentTab,
 }: {
   snapshot?: ComputerSnapshot | null;
   status?: ComputerLoad;
   activities?: readonly ComputerActivity[];
+  /** The server's sandboxError, shown instead of the generic message. */
+  unavailableReason?: string | null;
   embedded?: boolean;
   onContentTab?: (tab: ComputerContentTab) => void;
 }) {
@@ -166,8 +169,14 @@ export function ComputerPane({
   } else if (blocked && status === "error") {
     panel = (
       <div className="computer-empty">
-        <h3>Computer unavailable</h3>
-        <p>The sandbox inspector could not be loaded.</p>
+        {unavailableReason ? (
+          <p role="alert">{unavailableReason}</p>
+        ) : (
+          <>
+            <h3>Computer unavailable</h3>
+            <p>The sandbox inspector could not be loaded.</p>
+          </>
+        )}
       </div>
     );
   } else if (contentTab === "terminal") {
