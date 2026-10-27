@@ -365,6 +365,27 @@ describe("sandbox", { concurrent: false }, () => {
     await supervisor.close();
   });
 
+  it("creates a replacement when the cached Daytona sandbox is gone", async () => {
+    const fleet = new FakeFleet();
+    const store = await SandboxStore.open("memory://");
+    const runtime = new DaytonaRuntime(fleet, store, "secret");
+    const supervisor = new ComputerSupervisor(store, runtime, 1_000);
+    const first = await supervisor.invoke("agent", "exec", { command: "echo hi" });
+    expect(first.run.exitCode).toBe(0);
+    const id = fleet.creates[0]?.id ?? "";
+    fleet.drop(id);
+
+    const replaced = await supervisor.invoke("agent", "exec", { command: "echo next" });
+    expect(replaced.run.exitCode).toBe(0);
+    expect(replaced.run.stdout).toBe("next\n");
+    expect(fleet.creates).toHaveLength(2);
+    const nextId = fleet.creates[1]?.id ?? "";
+    expect(nextId).not.toBe(id);
+    expect(fleet.reconnects).toEqual([id]);
+    expect((await store.getComputer("agent"))?.sandboxId).toBe(nextId);
+    await supervisor.close();
+  });
+
   it("cancels prepare and exec when the abort signal fires", async () => {
     const store = await SandboxStore.open("memory://");
     const runtime = new GateRuntime();
@@ -832,6 +853,12 @@ describe("sandbox", { concurrent: false }, () => {
       this.#running.delete(id);
     }
 
+    /** The sandbox is gone, not merely stopped. Reconnect cannot bring it back. */
+    drop(id: string): void {
+      this.#sandboxes.delete(id);
+      this.#running.delete(id);
+    }
+
     async create(agentId: string): Promise<RemoteSandbox> {
       if (this.bootMs > 0) await new Promise((resolve) => setTimeout(resolve, this.bootMs));
       const id = `sbx-${this.creates.length + 1}`;
@@ -859,6 +886,7 @@ describe("sandbox", { concurrent: false }, () => {
       return {
         id,
         ensureRunning: async () => {
+          if (!this.#sandboxes.has(id)) throw new Error("Sandbox is gone");
           if (this.#running.has(id)) return;
           if (this.failNextStart) {
             this.failNextStart = false;

@@ -14,6 +14,11 @@ export type BrowserHost = {
   write(path: string, content: string): Promise<{ ok: true } | { ok: false; error: string }>;
   exec(command: string, timeoutMs: number, signal?: AbortSignal): Promise<ExecOutcome>;
   /**
+   * Create or restore the sandbox before its id is read. The stored id stays
+   * stale until this runs and a replacement is created.
+   */
+  prepare?: (signal?: AbortSignal) => Promise<void>;
+  /**
    * Daytona sandbox id for this host. A new id means the machine was replaced
    * and a previous install must not be reused.
    */
@@ -114,6 +119,8 @@ export class SandboxBrowser implements BrowserDriver {
   }
 
   async #syncInstall(): Promise<void> {
+    // The stored id still names the dead sandbox until prepare creates the replacement.
+    if (this.host.prepare) await this.host.prepare();
     const sandboxId = await this.#sandboxId();
     if (this.#installed && this.#installedFor === sandboxId) {
       await this.#installed;

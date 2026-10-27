@@ -139,14 +139,20 @@ export class DaytonaRuntime implements SandboxRuntime {
     try {
       await handle.ensureRunning();
       return handle;
-    } catch (error) {
+    } catch {
       if (this.#handles.get(agentId) === handle) this.#handles.delete(agentId);
       const computer = await this.store.getComputer(agentId);
-      if (!computer?.sandboxId) throw error;
-      const restored = await this.fleet.reconnect(computer.sandboxId);
-      if (!restored) throw error;
-      this.#handles.set(agentId, restored);
-      return restored;
+      if (computer?.sandboxId) {
+        const restored = await this.fleet.reconnect(computer.sandboxId);
+        if (restored) {
+          this.#handles.set(agentId, restored);
+          return restored;
+        }
+      }
+      const created = await this.fleet.create(agentId);
+      await this.store.setSandboxId(agentId, created.id);
+      this.#handles.set(agentId, created);
+      return created;
     }
   }
 

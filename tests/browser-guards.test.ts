@@ -151,6 +151,36 @@ it("runs one installer for overlapping browse calls", async () => {
   expect(tracked.installs()).toBe(1);
 });
 
+it("reinstalls using the sandbox id resolved after replacement", async () => {
+  let stored = "sandbox-old";
+  let resolved = "sandbox-old";
+  const reads: string[] = [];
+  const tracked = hostTrackingInstalls(async () => ({
+    stdout: "",
+    stderr: "",
+    exitCode: 0,
+    timedOut: false,
+  }));
+  tracked.host.prepare = async () => {
+    stored = resolved;
+  };
+  tracked.host.sandboxId = async () => {
+    reads.push(stored);
+    return stored;
+  };
+  const browser = browserWith(tracked.host);
+  await expect(browser.perform(openStep())).resolves.toMatchObject({ ok: true });
+  expect(tracked.installs()).toBe(1);
+
+  // The store still names the dead sandbox until prepare creates the replacement.
+  resolved = "sandbox-new";
+  const before = reads.length;
+  await expect(browser.perform(openStep())).resolves.toMatchObject({ ok: true });
+  expect(tracked.installs()).toBe(2);
+  expect(reads.slice(before)).toContain("sandbox-new");
+  expect(reads.slice(before)).not.toContain("sandbox-old");
+});
+
 it("reinstalls when the sandbox id changes", async () => {
   let sandboxId = "sandbox-old";
   const tracked = hostTrackingInstalls(async () => ({
