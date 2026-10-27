@@ -12,8 +12,10 @@ import {
 import type { ReactNode } from "react";
 import {
   initialSystemScheme,
+  parsePreference,
   resolveTheme,
   systemScheme,
+  THEME_STORAGE_KEY,
   toggleTheme,
   type ColorScheme,
   type ThemePreference,
@@ -25,21 +27,42 @@ type ThemeValue = {
   preference: ThemePreference;
   scheme: ColorScheme;
   toggle: () => void;
+  setPreference: (preference: ThemePreference) => void;
 };
+
+function readStoredPreference(): ThemePreference {
+  try {
+    return parsePreference(window.localStorage.getItem(THEME_STORAGE_KEY));
+  } catch {
+    return "system";
+  }
+}
+
+function storePreference(preference: ThemePreference) {
+  try {
+    if (preference === "system") window.localStorage.removeItem(THEME_STORAGE_KEY);
+    else window.localStorage.setItem(THEME_STORAGE_KEY, preference);
+  } catch {
+    // A blocked store means the choice lasts until reload.
+  }
+}
 
 const ThemeContext = createContext<ThemeValue | null>(null);
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [preference, setPreference] = useState<ThemePreference>("system");
+  const [preference, setPreferenceState] = useState<ThemePreference>("system");
   const [system, setSystem] = useState<ColorScheme>("light");
   const [ready, setReady] = useState(false);
   const scheme = resolveTheme(preference, system);
 
   useIsoLayoutEffect(() => {
-    const next = initialSystemScheme({
-      dataTheme: document.documentElement.dataset.theme,
-      prefersDark: window.matchMedia("(prefers-color-scheme: dark)").matches,
-    });
+    const stored = readStoredPreference();
+    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    const next =
+      stored === "system"
+        ? initialSystemScheme({ dataTheme: document.documentElement.dataset.theme, prefersDark })
+        : systemScheme(prefersDark);
+    setPreferenceState(stored);
     setSystem(next);
     setReady(true);
   }, []);
@@ -57,11 +80,19 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     document.documentElement.style.colorScheme = scheme;
   }, [scheme, ready, preference]);
 
+  const setPreference = useCallback((next: ThemePreference) => {
+    storePreference(next);
+    setPreferenceState(next);
+  }, []);
+
   const toggle = useCallback(() => {
     setPreference(toggleTheme(scheme));
-  }, [scheme]);
+  }, [scheme, setPreference]);
 
-  const value = useMemo(() => ({ preference, scheme, toggle }), [preference, scheme, toggle]);
+  const value = useMemo(
+    () => ({ preference, scheme, toggle, setPreference }),
+    [preference, scheme, toggle, setPreference],
+  );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }

@@ -107,10 +107,11 @@ it("filters agents by name or preview from the search button", () => {
   expect(onSelect).toHaveBeenCalledWith("agent_old");
 });
 
-it("moves routines and connectors into the footer menu", () => {
+it("puts settings, routines, and connectors in the footer menu", () => {
   renderSidebar();
   expect(screen.queryByRole("link", { name: "Routines" })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Routines and connectors" }));
+  fireEvent.click(screen.getByRole("button", { name: "Settings, routines, and connectors" }));
+  expect(screen.getByRole("menuitem", { name: "Settings" }).getAttribute("href")).toBe("/settings");
   expect(screen.getByRole("menuitem", { name: "Routines" }).getAttribute("href")).toBe("/routines");
   expect(screen.getByRole("menuitem", { name: "Connectors" })).toBeTruthy();
 });
