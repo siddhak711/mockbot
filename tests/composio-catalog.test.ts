@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { DELETE as deleteConnector } from "../app/api/connectors/[id]/route";
 import { GET as listConnectors } from "../app/api/connectors/route";
 import { GET as listToolkits } from "../app/api/connectors/composio/toolkits/route";
@@ -423,14 +423,49 @@ it("resolves a public host header to https and keeps localhost on the request sc
 
 it("pins Notion and GitHub toolkit versions unless the environment overrides them", () => {
   expect(resolveComposioToolkitVersions({})).toMatchObject({
-    notion: "20250909_00",
-    github: "20250909_00",
+    notion: "20261018_00",
+    github: "20261023_00",
   });
   expect(
     resolveComposioToolkitVersions({
       COMPOSIO_TOOLKIT_VERSIONS: '{"notion":"20260101_00"}',
     }),
-  ).toMatchObject({ notion: "20260101_00", github: "20250909_00" });
+  ).toMatchObject({ notion: "20260101_00", github: "20261023_00" });
+});
+
+it("shows an error instead of connected when Composio lists no tools", async () => {
+  const store = await openComposio();
+  const broker = notionBroker();
+  broker.listTools = async () => {
+    throw new Error("Composio returned no notion tools for version 20250909_00.");
+  };
+  setComposioBrokerForTests(broker);
+  const { connector } = await completeComposioConnect(finish("user_test", "ca_notion_1"));
+  expect(connector).toMatchObject({
+    status: "error",
+    statusDetail: "Composio returned no notion tools for version 20250909_00.",
+  });
+
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const registry = new ToolRegistry();
+    await refreshMcpTools({
+      registry,
+      connectors: await store.listConnectors(),
+      env: process.env,
+      userId: "user_test",
+    });
+    expect(registry.list().filter((tool) => tool.name.startsWith("notion_"))).toHaveLength(0);
+    const logged = warn.mock.calls.map((call) => JSON.parse(String(call[0])) as unknown);
+    expect(logged).toContainEqual({
+      event: "connector_tools_unavailable",
+      connectorId: connector.id,
+      catalogId: "notion",
+      error: "Composio returned no notion tools for version 20250909_00.",
+    });
+  } finally {
+    warn.mockRestore();
+  }
 });
 
 it("rejects a failed Composio sign-in without storing a connection", async () => {

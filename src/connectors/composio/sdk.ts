@@ -10,9 +10,43 @@ import type {
 
 /** Pinned Composio toolkit versions. Env COMPOSIO_TOOLKIT_VERSIONS overrides a slug. */
 export const DEFAULT_COMPOSIO_TOOLKIT_VERSIONS: Record<string, string> = {
-  notion: "20250909_00",
-  github: "20250909_00",
+  notion: "20261018_00",
+  github: "20261023_00",
 };
+
+/**
+ * Tools loaded for a toolkit, by slug. GitHub has about 900 tools, and a plain
+ * toolkit listing returns the first 32 alphabetically, so it is pinned to the
+ * everyday read and write tools instead.
+ */
+export const COMPOSIO_TOOLKIT_TOOLS: Record<string, readonly string[]> = {
+  github: [
+    "GITHUB_GET_THE_AUTHENTICATED_USER",
+    "GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER",
+    "GITHUB_SEARCH_REPOSITORIES",
+    "GITHUB_GET_A_REPOSITORY",
+    "GITHUB_GET_REPOSITORY_CONTENT",
+    "GITHUB_SEARCH_CODE",
+    "GITHUB_LIST_BRANCHES",
+    "GITHUB_LIST_COMMITS",
+    "GITHUB_LIST_REPOSITORY_ISSUES",
+    "GITHUB_GET_AN_ISSUE",
+    "GITHUB_GET_ISSUE_COMMENTS",
+    "GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS",
+    "GITHUB_LIST_PULL_REQUESTS",
+    "GITHUB_GET_A_PULL_REQUEST",
+    "GITHUB_CREATE_REPOSITORY",
+    "GITHUB_CREATE_BRANCH",
+    "GITHUB_CREATE_OR_UPDATE_FILE_CONTENTS",
+    "GITHUB_COMMIT_MULTIPLE_FILES",
+    "GITHUB_CREATE_AN_ISSUE",
+    "GITHUB_UPDATE_AN_ISSUE",
+    "GITHUB_CREATE_AN_ISSUE_COMMENT",
+    "GITHUB_CREATE_A_PULL_REQUEST",
+  ],
+};
+
+const MAX_TOOLKIT_TOOLS = 32;
 
 export function resolveComposioToolkitVersions(
   env: Record<string, string | undefined>,
@@ -73,15 +107,14 @@ export function createSdkComposioBroker(
     },
 
     async listTools(toolkit): Promise<ComposioToolSummary[]> {
-      let tools = await composio.tools.getRawComposioTools({
-        toolkits: [toolkit],
-        important: true,
-        limit: 32,
-      });
+      const tools = await listToolkitTools(composio, toolkit);
       if (tools.length === 0) {
-        tools = await composio.tools.getRawComposioTools({ toolkits: [toolkit], limit: 32 });
+        const version = versions[toolkit] ?? "the latest version";
+        throw new Error(
+          `Composio returned no ${toolkit} tools for version ${version}. Pin a version Composio still serves in COMPOSIO_TOOLKIT_VERSIONS.`,
+        );
       }
-      return tools.slice(0, 32).map((tool) => {
+      return tools.slice(0, MAX_TOOLKIT_TOOLS).map((tool) => {
         const tags = tool.tags ?? [];
         return {
           slug: tool.slug,
@@ -123,6 +156,23 @@ export function createSdkComposioBroker(
       }
     },
   };
+}
+
+type RawTool = Awaited<ReturnType<Composio["tools"]["getRawComposioTools"]>>[number];
+
+/**
+ * A pinned slug list wins. Otherwise Composio's "important" tag picks the
+ * tools; the API ignores the important filter when a limit is set.
+ */
+async function listToolkitTools(composio: Composio, toolkit: string): Promise<RawTool[]> {
+  const pinned = COMPOSIO_TOOLKIT_TOOLS[toolkit];
+  if (pinned) {
+    const tools = await composio.tools.getRawComposioTools({ tools: [...pinned] });
+    return tools.filter((tool) => pinned.includes(tool.slug));
+  }
+  const tools = await composio.tools.getRawComposioTools({ toolkits: [toolkit], limit: 1000 });
+  const important = tools.filter((tool) => (tool.tags ?? []).includes("important"));
+  return important.length > 0 ? important : tools;
 }
 
 function toolkitVersions(env: Record<string, string | undefined>): Record<string, string> {

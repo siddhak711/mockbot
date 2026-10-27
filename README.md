@@ -190,7 +190,7 @@ A finished sign-in stores a Composio connected-account id per user and catalog a
 Optional:
 
 - `COMPOSIO_BASE_URL` overrides the Composio API origin.
-- `COMPOSIO_TOOLKIT_VERSIONS` is a JSON object of pinned toolkit versions, such as `{"notion":"20260101_00"}`. It overrides the versions pinned in code. Notion and GitHub default to `20250909_00`. A toolkit without a pin is not executed.
+- `COMPOSIO_TOOLKIT_VERSIONS` is a JSON object of pinned toolkit versions, such as `{"notion":"20260101_00"}`. It overrides the versions pinned in code. Notion defaults to `20261018_00` and GitHub to `20261023_00`. A pinned version Composio no longer serves returns no tools, and the connector then shows an error instead of connecting with nothing. A toolkit without a pin is not executed.
 
 The previous Notion and GitHub OAuth clients, PKCE exchange, Notion REST adapter, and GitHub hosted MCP call remain in the tree. They run only when `NATIVE_CATALOG_OAUTH=1`, and they still need `NOTION_OAUTH_CLIENT_ID`, `NOTION_OAUTH_CLIENT_SECRET`, `GITHUB_OAUTH_CLIENT_ID`, and `GITHUB_OAUTH_CLIENT_SECRET`. Leave that flag unset.
 
