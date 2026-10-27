@@ -20,7 +20,7 @@ Pull requests that change the UI or the data model must say which product-model 
 
 ## No mock providers outside tests
 
-No mock, stub, or fake provider may be reachable outside tests. A missing credential must fail loudly with a visible error, never a silent mock fallback. Every review greps the non-test code the pull request touches for `mock`, `stub`, and `fake` and states the result. See [AGENTS.md](AGENTS.md) section 4.
+No mock, stub, or fake provider may be reachable outside tests. A missing credential must fail loudly with a visible error, never a silent mock fallback. Every review greps the non-test code the pull request touches for `mock`, `stub`, and `fake` and states the result. A mock outside tests is allowed only if (1) it is behind an explicit opt-in flag such as `MOCK_<SERVICE>=1`, off by default; (2) it hard-fails when that flag is set in a production build (`NODE_ENV=production` or `VERCEL_ENV=production`); and (3) its output is labeled as mock to the user. A silent fallback when a credential is missing always blocks the pull request. See [AGENTS.md](AGENTS.md) section 4.
 
 ## Retry rule
 

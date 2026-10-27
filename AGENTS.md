@@ -32,6 +32,11 @@ Reviewers check every pull request against these invariants. A change that break
 
 - No mock, stub, or fake provider may be reachable outside tests. Mock data belongs in test files and test fixtures only.
 - A missing credential (token, API key, or env var) must fail loudly with a visible error in the UI and the tool result. It never falls back silently to mock data.
+- A mock outside tests is allowed only if all three hold:
+  1. It sits behind an explicit opt-in flag such as `MOCK_<SERVICE>=1`, off by default.
+  2. It hard-fails when that flag is set in a production build (`NODE_ENV=production` or `VERCEL_ENV=production`).
+  3. Its output is labeled as mock to the user.
+- A silent fallback to mock data when a credential is missing always blocks the pull request.
 - Every review greps the non-test code the pull request touches for `mock`, `stub`, and `fake`, for example `rg -n -i "mock|stub|fake" src app components --glob '!**/*.test.*' --glob '!tests/**' --glob '!e2e/**'`, and states the result in the review. A hit on a reachable code path blocks the pull request.
 
 ## 5. Retry rule
