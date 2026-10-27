@@ -33,6 +33,7 @@ import { emptyTrace } from "../src/trace";
 import { buildModelInput } from "../src/turn";
 import { createDefaultTools } from "../src/tools/builtins";
 import { ApprovalGate } from "../src/tools/approval";
+import { AskGate } from "../src/tools/ask-user";
 import { readSse } from "./helpers";
 
 afterEach(async () => {
@@ -697,7 +698,8 @@ it("keeps concurrent requests on their own tiers", async () => {
   });
   const tools = createDefaultTools({});
   const approvals = new ApprovalGate();
-  setAppContext({ store, provider, tools, approvals });
+  const asks = new AskGate();
+  setAppContext({ store, provider, tools, approvals, asks });
   const created = await createAgent(
     new Request("http://localhost/api/agents", {
       method: "POST",
@@ -713,6 +715,7 @@ it("keeps concurrent requests on their own tiers", async () => {
       provider,
       tools,
       approvals,
+      asks,
       message: "Hello there",
     }),
     streamChatTurn({
@@ -720,6 +723,7 @@ it("keeps concurrent requests on their own tiers", async () => {
       provider,
       tools,
       approvals,
+      asks,
       message: "Implement the parser in TypeScript",
       agentId: coderId,
     }),

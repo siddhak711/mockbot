@@ -1086,6 +1086,42 @@ summary:focus-visible {
   margin: 6px 0 2px 16px;
 }
 
+.ask-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-bubble);
+}
+
+.ask-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ask-custom {
+  display: flex;
+  gap: 6px;
+}
+
+.ask-custom input {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--window);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+}
+
 .approval-card {
   display: flex;
   align-items: center;

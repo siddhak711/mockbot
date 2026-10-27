@@ -28,6 +28,7 @@ import {
   activitiesAfterReconnect,
   activitiesAfterStop,
   activitiesFromMessages,
+  resumeProgress,
   describeTool,
   previewText,
   type ToolActivity,
@@ -43,6 +44,10 @@ import type { Conversation, LivePhase, Memory, Message, ToolCallStatus } from ".
 function isAbort(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
 }
+
+const RESUME_POLL_MS = 500;
+/** About ten minutes, the longest a resumed turn's tools may run. */
+const RESUME_POLL_ATTEMPTS = 1200;
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -74,6 +79,9 @@ export function Workspace({
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState(false);
+  // A paused turn running again after a decision made with no live stream.
+  const [resuming, setResuming] = useState(false);
+  const resumingRef = useRef(false);
   const [livePhase, setLivePhase] = useState<LivePhase | null>(null);
   const [alert, setAlert] = useState<SpriteAlert | null>(null);
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus>({
@@ -392,8 +400,10 @@ export function Workspace({
 
   async function send(text: string) {
     const trimmed = text.trim();
-    const approvalPending = activitiesRef.current.some((item) => item.state === "approval");
-    if (!trimmed || streaming || approvalPending) return;
+    const approvalPending = activitiesRef.current.some(
+      (item) => item.state === "approval" || item.state === "ask",
+    );
+    if (!trimmed || streaming || resumingRef.current || approvalPending) return;
     agentLoadRequest.current += 1;
     setAlert(null);
     const controller = new AbortController();
@@ -575,6 +585,24 @@ export function Workspace({
                 return { ...item, arguments: raw, ...describeTool(item.name, raw) };
               }),
             );
+          } else if (event.event === "ask_user") {
+            const id = String(payload.id ?? "");
+            const raw = String(payload.arguments ?? "");
+            const question = String(payload.question ?? "");
+            setActivities((prev) =>
+              prev.map((item) => {
+                if (item.id !== id) return item;
+                const described = describeTool(item.name, raw || item.arguments);
+                return {
+                  ...item,
+                  ...described,
+                  state: "ask",
+                  arguments: raw || item.arguments,
+                  summary: question || described.summary,
+                  title: question || described.title,
+                };
+              }),
+            );
           } else if (event.event === "approval_required") {
             const id = String(payload.id ?? "");
             const raw = String(payload.arguments ?? "");
@@ -657,6 +685,8 @@ export function Workspace({
   }
 
   async function decide(id: string, decision: "approve" | "deny") {
+    const live = abortRef.current !== null;
+    let saved = false;
     try {
       const outcome = await settleDecision(decidingRef, id, async () => {
         setDecidingId(id);
@@ -666,6 +696,7 @@ export function Workspace({
           body: JSON.stringify({ id, decision }),
         });
         if (response.ok) {
+          saved = true;
           setActivities((prev) =>
             prev.map((item) =>
               item.id === id
@@ -691,19 +722,96 @@ export function Workspace({
       if (outcome === "released") {
         setDecidingId((current) => (current === id ? null : current));
       }
+      const conversationId = activeIdRef.current;
+      if (saved && !live && conversationId) await watchResume(conversationId, id);
     } catch {
       setDecidingId((current) => (current === id ? null : current));
     }
   }
 
+  async function answer(id: string, text: string) {
+    const live = abortRef.current !== null;
+    let saved = false;
+    try {
+      const outcome = await settleDecision(decidingRef, id, async () => {
+        setDecidingId(id);
+        const response = await fetch("/api/tools/asks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id, answer: text }),
+        });
+        if (response.ok) {
+          saved = true;
+          setActivities((prev) =>
+            prev.map((item) => (item.id === id ? { ...item, state: "running" } : item)),
+          );
+          return true;
+        }
+        const activity = activitiesRef.current.find((item) => item.id === id);
+        if (!activity || activity.state === "ask") {
+          const body = (await response.json().catch(() => null)) as { error?: string } | null;
+          setAlert({
+            message:
+              body?.error ??
+              (response.status === 404
+                ? "That question expired. Send the request again."
+                : "Could not save the answer"),
+            kind: "workspace",
+            ownerId: activeIdRef.current,
+          });
+        }
+        return false;
+      });
+      if (outcome === "released") {
+        setDecidingId((current) => (current === id ? null : current));
+      }
+      const conversationId = activeIdRef.current;
+      if (saved && !live && conversationId) await watchResume(conversationId, id);
+    } catch {
+      setDecidingId((current) => (current === id ? null : current));
+    }
+  }
+
+  /**
+   * Follow a turn that continues on the server after a decision. Keep the
+   * composer locked and poll until the turn ends or pauses for the person again.
+   */
+  async function watchResume(conversationId: string, toolId: string) {
+    resumingRef.current = true;
+    setResuming(true);
+    try {
+      for (let attempt = 0; attempt < RESUME_POLL_ATTEMPTS; attempt += 1) {
+        const response = await fetch(`/api/conversations/${conversationId}`);
+        if (activeIdRef.current !== conversationId) return;
+        if (response.ok) {
+          const data = (await response.json()) as {
+            conversation: Conversation;
+            messages: Message[];
+          };
+          if (activeIdRef.current !== conversationId) return;
+          setMessages(data.messages);
+          setActivities(activitiesFromMessages(data.messages));
+          if (resumeProgress(data.messages, toolId) !== "running") return;
+        }
+        await wait(RESUME_POLL_MS);
+      }
+    } finally {
+      resumingRef.current = false;
+      setResuming(false);
+    }
+  }
+
   function stopTurn() {
-    const pending = activitiesRef.current.filter((activity) => activity.state === "approval");
+    const pending = activitiesRef.current.filter(
+      (activity) => activity.state === "approval" || activity.state === "ask",
+    );
     if (pending.length > 0) setActivities((current) => activitiesAfterStop(current));
     abortRef.current?.abort();
     stopDecision(decidingRef);
     setDecidingId(null);
     for (const activity of pending) {
-      void fetch("/api/tools/approvals", {
+      const path = activity.state === "ask" ? "/api/tools/asks" : "/api/tools/approvals";
+      void fetch(path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: activity.id, decision: "stop" }),
@@ -724,6 +832,7 @@ export function Workspace({
   const speaking = agents.find((agent) => agent.id === speakingId) ?? null;
   const spriteColor = spriteColorForAgent(speaking);
   const spriteName = speaking?.name ?? "Mockbot";
+  const awaitingAsk = activities.some((activity) => activity.state === "ask");
   const awaitingApproval = activities.some((activity) => activity.state === "approval");
   const error = alertMessageForView(alert, activeId);
   const sprite = useRunSprite({
@@ -865,6 +974,7 @@ export function Workspace({
             activities={activities}
             decidingId={decidingId}
             onDecide={(id, decision) => void decide(id, decision)}
+            onAnswer={(id, text) => void answer(id, text)}
             onOpenTrace={showTrace}
             agentName={speaking?.name ?? "Mockbot"}
             reconnectFor={(activity) => {
@@ -888,7 +998,10 @@ export function Workspace({
           ) : null}
           <Composer
             streaming={streaming}
-            awaitingApproval={awaitingApproval}
+            awaitingApproval={awaitingApproval || awaitingAsk || resuming}
+            busyHint={
+              awaitingAsk ? "Waiting for an answer" : resuming ? "Finishing the reply" : undefined
+            }
             placeholder={speaking ? `Message ${speaking.name}` : "Message Mockbot"}
             value={composerDraft}
             onValueChange={setComposerDraft}

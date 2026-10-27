@@ -10,7 +10,7 @@ export function activityStaysInChat(
   activity: ToolActivity,
   reconnectLabel: string | null,
 ): boolean {
-  if (activity.state === "approval") return true;
+  if (activity.state === "approval" || activity.state === "ask") return true;
   if (reconnectLabel) return true;
   return activity.state === "error" && isAuthFailure(activity.output);
 }

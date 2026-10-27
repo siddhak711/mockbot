@@ -1,14 +1,10 @@
 import { SYSTEM_PROMPT, type LlmProvider } from "../llm";
-import {
-  RunLog,
-  captureModelEvent,
-  elapsedMs,
-  emptyModelCapture,
-  ignoreRunLog,
-} from "../runs/events";
 import type { ConversationStore } from "../store";
-import { applyStreamEvent, emptyTrace } from "../trace";
-import { buildModelInput } from "../turn";
+import { streamChatTurn } from "../chat";
+import { SseParser } from "../sse";
+import { ApprovalGate } from "../tools/approval";
+import { AskGate, askUserTool } from "../tools/ask-user";
+import { ToolRegistry } from "../tools/registry";
 import type { LlmMessage, Role } from "../types";
 
 /**
@@ -34,23 +30,10 @@ export function modelMessages(messages: Array<{ role: Role; content: string }>):
   ];
 }
 
-/** Keep the prepared system prompt, and drop an abandoned user turn from the rest. */
-function routineHistory(prepared: LlmMessage[]): LlmMessage[] {
-  const system = prepared.filter((message) => message.role === "system");
-  const turns: Array<{ role: Role; content: string }> = [];
-  for (const message of prepared) {
-    if (message.role === "user" || message.role === "assistant") {
-      turns.push({ role: message.role, content: message.content });
-    }
-  }
-  const kept = modelMessages(turns).filter((message) => message.role !== "system");
-  return [...system, ...kept];
-}
-
 /**
- * The only place a routine invokes the agent loop.
- * It stores the prompt and the finished reply on the routine's conversation.
- * Later milestones can replace this with the shared tool loop.
+ * The only place a routine invokes the agent loop. It runs the same chat turn
+ * a person's message runs, marked unattended: ask_user and approval-gated tools
+ * return at once instead of waiting for somebody who is not there.
  */
 export async function runRoutineTurn(options: {
   store: ConversationStore;
@@ -58,54 +41,51 @@ export async function runRoutineTurn(options: {
   conversationId: string;
   prompt: string;
   runId?: string;
+  /** Tools the routine may call. Defaults to ask_user only, which unattended runs refuse. */
+  tools?: ToolRegistry;
 }): Promise<{ assistantMessageId: string; text: string; runId: string }> {
-  const log = new RunLog(options.store.connection, options.runId);
-  await ignoreRunLog(log.mark("run.started", { conversationId: options.conversationId }));
-  try {
-    await options.store.addMessage(options.conversationId, "user", options.prompt);
-    const stored = await options.store.getConversation(options.conversationId);
-    if (!stored) throw new Error("Conversation disappeared before the routine ran");
-    const prepared = await buildModelInput({
-      store: options.store,
-      conversationId: options.conversationId,
-      agentId: stored.conversation.agentId,
-    });
-    if (!prepared) throw new Error("Conversation disappeared before the routine ran");
-    const history = routineHistory(prepared.messages);
-    let trace = emptyTrace();
-    const capture = emptyModelCapture();
-    const started = performance.now();
-    try {
-      for await (const event of options.provider.stream(history)) {
-        captureModelEvent(capture, event);
-        trace = applyStreamEvent(trace, event);
-      }
-    } finally {
-      await ignoreRunLog(
-        log.recordModel({
-          model: options.provider.model,
-          messages: history,
-          capture,
-          ms: elapsedMs(started),
-        }),
-      );
-    }
-    const assistant = await options.store.addMessage(
-      options.conversationId,
-      "assistant",
-      trace.text,
-      trace,
-    );
-    await ignoreRunLog(
-      log.mark("run.finished", { status: "completed", assistantMessageId: assistant.id }),
-    );
-    return { assistantMessageId: assistant.id, text: trace.text, runId: log.id };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Routine run failed";
-    await ignoreRunLog(log.fail(message));
-    await ignoreRunLog(log.mark("run.finished", { status: "error" }));
-    throw error;
+  const tools = options.tools ?? routineTools();
+  const runId = options.runId ?? `run_${crypto.randomUUID()}`;
+  const response = await streamChatTurn({
+    store: options.store,
+    provider: options.provider,
+    tools,
+    approvals: new ApprovalGate(),
+    asks: new AskGate(),
+    unattended: true,
+    runId,
+    conversationId: options.conversationId,
+    message: options.prompt,
+  });
+  if (!response.body || !response.headers.get("content-type")?.includes("text/event-stream")) {
+    const body = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? "Routine run failed");
   }
+  let assistantMessageId: string | null = null;
+  let failure: string | null = null;
+  const parser = new SseParser();
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    for (const message of parser.push(decoder.decode(value, { stream: true }))) {
+      const data = JSON.parse(message.data) as { assistantMessageId?: string; message?: string };
+      if (message.event === "done") assistantMessageId = data.assistantMessageId ?? null;
+      if (message.event === "error") failure = data.message ?? "Routine run failed";
+    }
+  }
+  if (failure) throw new Error(failure);
+  if (!assistantMessageId) throw new Error("The routine produced no reply");
+  const stored = await options.store.getConversation(options.conversationId);
+  const reply = stored?.messages.find((message) => message.id === assistantMessageId);
+  return { assistantMessageId, text: reply?.content ?? "", runId };
+}
+
+function routineTools(): ToolRegistry {
+  const registry = new ToolRegistry();
+  registry.register(askUserTool());
+  return registry;
 }
 
 export function promptForRun(

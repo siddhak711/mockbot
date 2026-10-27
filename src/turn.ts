@@ -83,3 +83,21 @@ function renderTurnMessage(message: Message): LlmMessage | null {
     ...(failed ? { failed: true } : {}),
   };
 }
+
+/**
+ * Drop a user message that never got an assistant reply. A failed unattended
+ * run can leave one behind, and the next run must not send it as history. The
+ * newest user message is this turn's prompt, so it stays.
+ */
+export function dropAbandonedPrompts(messages: LlmMessage[]): LlmMessage[] {
+  return messages.filter((message, index) => {
+    if (message.role !== "user") return true;
+    for (let next = index + 1; next < messages.length; next += 1) {
+      const later = messages[next];
+      if (!later || later.role === "system") continue;
+      if (later.role === "user") return false;
+      return true;
+    }
+    return true;
+  });
+}

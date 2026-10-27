@@ -1,4 +1,5 @@
-import type { StoredToolCall } from "../types";
+import { readAskUser } from "./ask-user";
+import type { MessageTrace, StoredToolCall } from "../types";
 
 export type ToolActivityState = StoredToolCall["status"];
 
@@ -105,6 +106,10 @@ export function toolTitle(name: string, args: Record<string, unknown> | null): s
   if (name === "read") return typeof args?.path === "string" ? `Read ${args.path}` : "Read a file";
   if (name === "list") return "List sandbox files";
   if (name === "exec") return typeof args?.command === "string" ? args.command : "Run a command";
+  if (name === "ask_user") {
+    const question = typeof args?.question === "string" ? args.question.trim() : "";
+    return question || "Question";
+  }
   return name.replaceAll("_", " ");
 }
 
@@ -132,6 +137,11 @@ export function toolDetail(name: string, args: Record<string, unknown> | null): 
     }
     return "Primary calendar";
   }
+  if (name === "ask_user") {
+    const request = readAskUser(JSON.stringify(args));
+    if (!request) return "";
+    return request.options.join(" · ");
+  }
   if (name.startsWith("memory_")) {
     if (typeof args.query === "string") return args.query;
     if (typeof args.key === "string") return args.key;
@@ -141,7 +151,15 @@ export function toolDetail(name: string, args: Record<string, unknown> | null): 
   return typeof first === "string" ? first : "";
 }
 
+export function isPausedActivity(state: ToolActivity["state"]): boolean {
+  return state === "approval" || state === "ask";
+}
+
 export function approvalSummary(name: string, args: Record<string, unknown> | null): string {
+  if (name === "ask_user") {
+    const question = typeof args?.question === "string" ? args.question.trim() : "";
+    return question;
+  }
   if (name === "memory_delete") {
     const key = typeof args?.key === "string" && args.key.trim() ? args.key.trim() : "this memory";
     return `Forget “${key}”? This removes it from later chats.`;
@@ -220,11 +238,31 @@ export function activitiesFromMessages(
   return messages.flatMap((message) => (message.tools ?? []).map((tool) => toToolActivity(tool)));
 }
 
+/**
+ * Where a turn stands after the person settled one of its paused tools. The
+ * turn is done once its trace has ended, and paused again when another of its
+ * tools waits on the person. Text alone proves nothing: it may be the round
+ * before the pause.
+ */
+export function resumeProgress(
+  messages: Array<{ id: string; trace: MessageTrace | null; tools?: StoredToolCall[] }>,
+  toolId: string,
+): "running" | "paused" | "done" {
+  const message = messages.find((item) => item.tools?.some((tool) => tool.id === toolId));
+  if (!message) return "done";
+  if (message.trace?.ended) return "done";
+  if (message !== messages.at(-1)) return "done";
+  const waiting = (message.tools ?? []).some(
+    (tool) => tool.id !== toolId && isPausedActivity(toToolActivity(tool).state),
+  );
+  return waiting ? "paused" : "running";
+}
+
 export const STOPPED_TOOL_OUTPUT = "Stopped before the tool ran.";
 
 export function activitiesAfterStop(activities: ToolActivity[]): ToolActivity[] {
   return activities.map((activity) =>
-    activity.state === "approval"
+    isPausedActivity(activity.state)
       ? {
           ...activity,
           state: "error",
@@ -244,8 +282,8 @@ export function activitiesAfterReconnect(
     const previous = local.find((entry) => entry.id === item.id);
     if (
       previous &&
-      item.state === "approval" &&
-      previous.state !== "approval" &&
+      isPausedActivity(item.state) &&
+      !isPausedActivity(previous.state) &&
       previous.output === STOPPED_TOOL_OUTPUT
     ) {
       return previous;

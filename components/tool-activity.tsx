@@ -4,6 +4,7 @@ import {
   activityDisclosureOnRunning,
   activityDisclosureToggle,
 } from "../src/tools/activity-open";
+import { readAskUser } from "../src/tools/ask-user";
 import { isMockToolResult, type ToolActivity } from "../src/tools/display";
 import type { ToolTrace } from "../src/types";
 
@@ -60,6 +61,7 @@ export function ToolActivityCards({
   activities,
   decidingId,
   onDecide,
+  onAnswer,
   onSelect,
   reconnectFor,
   onReconnect,
@@ -67,6 +69,7 @@ export function ToolActivityCards({
   activities: ToolActivity[];
   decidingId?: string | null;
   onDecide?: (id: string, decision: "approve" | "deny") => void;
+  onAnswer?: (id: string, answer: string) => void;
   onSelect?: (id: string) => void;
   reconnectFor?: (activity: ToolActivity) => string | null;
   onReconnect?: (activity: ToolActivity) => void;
@@ -81,6 +84,7 @@ export function ToolActivityCards({
           activity={activity}
           decidingId={decidingId}
           onDecide={onDecide}
+          onAnswer={onAnswer}
           onSelect={onSelect}
           reconnectLabel={reconnectFor?.(activity) ?? null}
           onReconnect={onReconnect ? () => onReconnect(activity) : undefined}
@@ -94,6 +98,7 @@ function ActivityRow({
   activity,
   decidingId,
   onDecide,
+  onAnswer,
   onSelect,
   reconnectLabel,
   onReconnect,
@@ -101,6 +106,7 @@ function ActivityRow({
   activity: ToolActivity;
   decidingId?: string | null;
   onDecide?: (id: string, decision: "approve" | "deny") => void;
+  onAnswer?: (id: string, answer: string) => void;
   onSelect?: (id: string) => void;
   reconnectLabel?: string | null;
   onReconnect?: () => void;
@@ -112,6 +118,17 @@ function ActivityRow({
       : activity.state === "running"
         ? activity.detail
         : activity.preview || activity.detail;
+
+  if (activity.state === "ask" && onAnswer) {
+    return (
+      <AskUserCard
+        activity={activity}
+        disabled={decidingId === activity.id}
+        onAnswer={onAnswer}
+        onSelect={onSelect}
+      />
+    );
+  }
 
   if (activity.state === "approval" && onDecide) {
     return (
@@ -199,9 +216,74 @@ export function MockBadge() {
   return <span className="mock-badge">MOCK</span>;
 }
 
+function AskUserCard({
+  activity,
+  disabled,
+  onAnswer,
+  onSelect,
+}: {
+  activity: ToolActivity;
+  disabled: boolean;
+  onAnswer: (id: string, answer: string) => void;
+  onSelect?: (id: string) => void;
+}) {
+  const request = readAskUser(activity.arguments);
+  const [custom, setCustom] = useState("");
+  if (!request) return null;
+  return (
+    <article
+      className="ask-card"
+      data-tool={activity.name}
+      data-state={activity.state}
+      onClick={() => onSelect?.(activity.id)}
+    >
+      <div className="approval-title">{request.question}</div>
+      {request.options.length > 0 ? (
+        <div className="ask-options" onClick={(event) => event.stopPropagation()}>
+          {request.options.map((option) => (
+            <button
+              key={option}
+              type="button"
+              className="btn secondary"
+              disabled={disabled}
+              onClick={() => onAnswer(activity.id, option)}
+            >
+              {option}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {request.allowCustom ? (
+        <form
+          className="ask-custom"
+          onClick={(event) => event.stopPropagation()}
+          onSubmit={(event) => {
+            event.preventDefault();
+            const text = custom.trim();
+            if (!text || disabled) return;
+            onAnswer(activity.id, text);
+          }}
+        >
+          <input
+            aria-label="Your answer"
+            value={custom}
+            disabled={disabled}
+            onChange={(event) => setCustom(event.target.value)}
+          />
+          <button type="submit" className="btn primary" disabled={disabled || !custom.trim()}>
+            Send
+          </button>
+        </form>
+      ) : null}
+      <span className="sr-only">{statusLabel(activity.state)}</span>
+    </article>
+  );
+}
+
 function statusLabel(state: ToolActivity["state"]): string {
   if (state === "running") return "Running";
   if (state === "approval") return "Needs approval";
+  if (state === "ask") return "Waiting for an answer";
   if (state === "denied") return "Denied";
   if (state === "error") return "Failed";
   return "Done";

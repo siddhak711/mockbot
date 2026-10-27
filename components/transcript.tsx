@@ -48,6 +48,7 @@ export function Transcript({
   activities = [],
   decidingId,
   onDecide,
+  onAnswer,
   onSelectTool,
   onOpenTrace,
   spriteState = "idle",
@@ -64,6 +65,7 @@ export function Transcript({
   activities?: ToolActivity[];
   decidingId?: string | null;
   onDecide?: (id: string, decision: "approve" | "deny") => void;
+  onAnswer?: (id: string, answer: string) => void;
   onSelectTool?: (id: string) => void;
   onOpenTrace?: () => void;
   agentName?: string;
@@ -172,6 +174,7 @@ export function Transcript({
                       activities={visibleActivities}
                       decidingId={decidingId}
                       onDecide={onDecide}
+                      onAnswer={onAnswer}
                       onSelect={onSelectTool}
                       reconnectFor={reconnectFor}
                       onReconnect={onReconnect}

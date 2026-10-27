@@ -421,6 +421,48 @@ export class ConversationStore {
     ]);
   }
 
+  async getToolCall(id: string): Promise<StoredToolCall | null> {
+    const result = await this.db.query<ToolCallRow>(
+      `SELECT id, conversation_id, message_id, name, arguments, status, output, created_at
+       FROM tool_calls
+       WHERE id = $1`,
+      [id],
+    );
+    const row = result.rows[0];
+    return row ? mapToolCall(row) : null;
+  }
+
+  /** True while a stored ask_user row in this conversation still waits for an answer. */
+  async hasOpenAsk(conversationId: string): Promise<boolean> {
+    const result = await this.db.query<{ id: string }>(
+      `SELECT id FROM tool_calls
+       WHERE conversation_id = $1 AND status = 'ask' AND name = 'ask_user'
+       LIMIT 1`,
+      [conversationId],
+    );
+    return result.rows.length > 0;
+  }
+
+  /**
+   * Move one stored ask_user row out of `ask`. A second caller gets null so two
+   * instances cannot both continue the same question.
+   */
+  async claimToolCall(
+    id: string,
+    status: ToolCallStatus,
+    output: string,
+  ): Promise<StoredToolCall | null> {
+    const result = await this.db.query<ToolCallRow>(
+      `UPDATE tool_calls
+       SET status = $2, output = $3, updated_at = NOW()
+       WHERE id = $1 AND status = 'ask' AND name = 'ask_user'
+       RETURNING id, conversation_id, message_id, name, arguments, status, output, created_at`,
+      [id, status, output],
+    );
+    const row = result.rows[0];
+    return row ? mapToolCall(row) : null;
+  }
+
   async saveToolCall(input: {
     id: string;
     conversationId: string;

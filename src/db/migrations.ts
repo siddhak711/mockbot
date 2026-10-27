@@ -470,6 +470,16 @@ CREATE UNIQUE INDEX conversations_user_agent_key
   ON conversations (user_id, agent_id) NULLS NOT DISTINCT;
 `,
   },
+  // 010_ask_user sits between 009_one_thread_per_agent and 011_run_events.
+  // Main reserved 010 for this pull request.
+  {
+    id: "010_ask_user",
+    sql: `
+ALTER TABLE tool_calls DROP CONSTRAINT IF EXISTS tool_calls_status_check;
+ALTER TABLE tool_calls ADD CONSTRAINT tool_calls_status_check
+  CHECK (status IN ('running', 'approval', 'ask', 'done', 'denied', 'error'));
+`,
+  },
   // 011_run_events stays after 009_one_thread_per_agent. PR #37 claims
   // 010_ask_user, so this id is 011. A preview already applied this table as
   // 007_run_events. That SQL has the same columns, check, and primary key, so
