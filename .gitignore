@@ -5,6 +5,8 @@ coverage
 *.tsbuildinfo
 .next
 .data
+test-results
+playwright-report
 .env
 .env.local
 .env.*.local

@@ -134,6 +134,38 @@ function jsonValue(value: unknown): unknown {
   }
 }
 
+export type ComposioConnection = {
+  id: string;
+  userId: string;
+  catalogId: string;
+  toolkit: string;
+  connectedAccountId: string;
+  accountLabel: string | null;
+  status: string;
+};
+
+type ComposioConnectionRow = {
+  id: string;
+  user_id: string;
+  catalog_id: string;
+  toolkit: string;
+  connected_account_id: string;
+  account_label: string | null;
+  status: string;
+};
+
+function mapComposioConnection(row: ComposioConnectionRow): ComposioConnection {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    catalogId: row.catalog_id,
+    toolkit: row.toolkit,
+    connectedAccountId: row.connected_account_id,
+    accountLabel: row.account_label,
+    status: row.status,
+  };
+}
+
 function mapConnector(row: ConnectorRow): ConnectorRecord {
   return {
     id: row.id,
@@ -171,6 +203,13 @@ function mapToolCall(row: ToolCallRow): StoredToolCall {
 
 function traceParam(trace: MessageTrace | null): string | null {
   return trace ? JSON.stringify(trace) : null;
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  if ("code" in error && String((error as { code: unknown }).code) === "23505") return true;
+  const message = error instanceof Error ? error.message : "";
+  return message.toLowerCase().includes("duplicate") || message.toLowerCase().includes("unique");
 }
 
 export function titleFromMessage(message: string): string {
@@ -240,6 +279,64 @@ export class ConversationStore {
     return mapConversation(row);
   }
 
+  /**
+   * The one thread for this user and agent. A second caller, including a race,
+   * gets the same row.
+   */
+  async getOrCreateAgentConversation(
+    agentId: string,
+    userId?: string | null,
+  ): Promise<Conversation> {
+    const existing = await this.findAgentConversation(agentId, userId ?? null);
+    if (existing) return existing;
+    try {
+      return await this.createConversation("Chat", agentId, userId ?? null);
+    } catch (error) {
+      if (!isUniqueViolation(error)) throw error;
+      const raced = await this.findAgentConversation(agentId, userId ?? null);
+      if (raced) return raced;
+      throw error;
+    }
+  }
+
+  /** Names a thread that has no messages yet. A later turn leaves the title alone. */
+  async nameIfEmpty(
+    id: string,
+    title: string,
+    userId?: string | null,
+  ): Promise<Conversation | null> {
+    const result = await this.db.query<ConversationRow>(
+      `UPDATE conversations
+       SET title = $2, updated_at = NOW()
+       WHERE id = $1
+         AND ($3::text IS NULL OR user_id IS NOT DISTINCT FROM $3)
+         AND NOT EXISTS (SELECT 1 FROM messages WHERE conversation_id = conversations.id)
+       RETURNING id, title, agent_id, created_at, updated_at`,
+      [id, title, userId ?? null],
+    );
+    const row = result.rows[0];
+    if (row) return mapConversation(row);
+    const loaded = await this.getConversation(id, undefined, userId ?? undefined);
+    return loaded?.conversation ?? null;
+  }
+
+  private async findAgentConversation(
+    agentId: string,
+    userId: string | null,
+  ): Promise<Conversation | null> {
+    const result = await this.db.query<ConversationRow>(
+      `SELECT id, title, agent_id, created_at, updated_at
+       FROM conversations
+       WHERE agent_id = $1
+         AND user_id IS NOT DISTINCT FROM $2
+       ORDER BY created_at ASC, id ASC
+       LIMIT 1`,
+      [agentId, userId],
+    );
+    const row = result.rows[0];
+    return row ? mapConversation(row) : null;
+  }
+
   async listConversations(userId?: string): Promise<Conversation[]> {
     const result = await this.db.query<ConversationRow>(
       `SELECT id, title, agent_id, created_at, updated_at
@@ -288,32 +385,6 @@ export class ConversationStore {
         tools: tools.filter((tool) => tool.messageId === row.id),
       })),
     };
-  }
-
-  async renameConversation(
-    id: string,
-    title: string,
-    userId?: string,
-  ): Promise<Conversation | null> {
-    const result = await this.db.query<ConversationRow>(
-      `UPDATE conversations
-       SET title = $2, updated_at = NOW()
-       WHERE id = $1 AND ($3::text IS NULL OR user_id = $3)
-       RETURNING id, title, agent_id, created_at, updated_at`,
-      [id, title, userId ?? null],
-    );
-    const row = result.rows[0];
-    return row ? mapConversation(row) : null;
-  }
-
-  async deleteConversation(id: string, userId?: string): Promise<boolean> {
-    const result = await this.db.query<{ id: string }>(
-      `DELETE FROM conversations
-       WHERE id = $1 AND ($2::text IS NULL OR user_id = $2)
-       RETURNING id`,
-      [id, userId ?? null],
-    );
-    return result.rows.length > 0;
   }
 
   async addMessage(
@@ -472,6 +543,63 @@ export class ConversationStore {
     return mapConnector(row);
   }
 
+  /**
+   * One shared row per catalog app. A concurrent insert loses and returns the row that won.
+   */
+  async insertCatalogConnector(input: {
+    name: string;
+    transport: ConnectorTransport;
+    target: string;
+    secretRef: string | null;
+    catalogId: string;
+    authType?: ConnectorAuth;
+    accountLabel?: string | null;
+    status?: ConnectorStatus;
+    statusDetail?: string | null;
+    tools?: Record<string, ConnectorToolSetting>;
+    seenTools?: string[];
+    secretCipher?: string | null;
+  }): Promise<ConnectorRecord> {
+    const id = crypto.randomUUID();
+    const inserted = await this.db.query<ConnectorRow>(
+      `INSERT INTO connectors (
+         id, name, transport, target, secret_ref, catalog_id, auth_type, account_label,
+         status, status_detail, tools, seen_tools, secret_cipher
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13)
+       ON CONFLICT (catalog_id) WHERE catalog_id IS NOT NULL DO NOTHING
+       RETURNING ${CONNECTOR_COLUMNS}`,
+      [
+        id,
+        input.name,
+        input.transport,
+        input.target,
+        input.secretRef,
+        input.catalogId,
+        input.authType ?? "none",
+        input.accountLabel ?? null,
+        input.status ?? "connected",
+        input.statusDetail ?? null,
+        JSON.stringify(input.tools ?? {}),
+        JSON.stringify(input.seenTools ?? []),
+        input.secretCipher ?? null,
+      ],
+    );
+    const created = inserted.rows[0];
+    if (created) return mapConnector(created);
+    const existing = await this.db.query<ConnectorRow>(
+      `SELECT ${CONNECTOR_COLUMNS}
+       FROM connectors
+       WHERE catalog_id = $1
+       ORDER BY created_at ASC, id ASC
+       LIMIT 1`,
+      [input.catalogId],
+    );
+    const row = existing.rows[0];
+    if (!row) throw new Error("Failed to create connector");
+    return mapConnector(row);
+  }
+
   async saveOAuthConnector(
     id: string,
     input: {
@@ -579,5 +707,117 @@ export class ConversationStore {
       [id],
     );
     return result.rows.length > 0;
+  }
+
+  async upsertComposioConnection(input: {
+    userId: string;
+    catalogId: string;
+    toolkit: string;
+    connectedAccountId: string;
+    accountLabel: string | null;
+    status: string;
+  }): Promise<ComposioConnection> {
+    const result = await this.db.query<ComposioConnectionRow>(
+      `INSERT INTO composio_connections (
+         id, user_id, catalog_id, toolkit, connected_account_id, account_label, status
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (user_id, catalog_id) DO UPDATE SET
+         toolkit = EXCLUDED.toolkit,
+         connected_account_id = EXCLUDED.connected_account_id,
+         account_label = EXCLUDED.account_label,
+         status = EXCLUDED.status,
+         updated_at = NOW()
+       RETURNING id, user_id, catalog_id, toolkit, connected_account_id, account_label, status`,
+      [
+        crypto.randomUUID(),
+        input.userId,
+        input.catalogId,
+        input.toolkit,
+        input.connectedAccountId,
+        input.accountLabel,
+        input.status,
+      ],
+    );
+    const row = result.rows[0];
+    if (!row) throw new Error("Failed to store the Composio connection.");
+    return mapComposioConnection(row);
+  }
+
+  async getComposioConnection(
+    userId: string,
+    catalogId: string,
+  ): Promise<ComposioConnection | null> {
+    const result = await this.db.query<ComposioConnectionRow>(
+      `SELECT id, user_id, catalog_id, toolkit, connected_account_id, account_label, status
+       FROM composio_connections
+       WHERE user_id = $1 AND catalog_id = $2`,
+      [userId, catalogId],
+    );
+    const row = result.rows[0];
+    return row ? mapComposioConnection(row) : null;
+  }
+
+  async listComposioConnections(userId: string): Promise<ComposioConnection[]> {
+    const result = await this.db.query<ComposioConnectionRow>(
+      `SELECT id, user_id, catalog_id, toolkit, connected_account_id, account_label, status
+       FROM composio_connections
+       WHERE user_id = $1
+       ORDER BY created_at ASC, id ASC`,
+      [userId],
+    );
+    return result.rows.map(mapComposioConnection);
+  }
+
+  async deleteComposioConnection(userId: string, catalogId: string): Promise<void> {
+    await this.db.query(`DELETE FROM composio_connections WHERE user_id = $1 AND catalog_id = $2`, [
+      userId,
+      catalogId,
+    ]);
+  }
+
+  async countComposioConnections(catalogId: string): Promise<number> {
+    const result = await this.db.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM composio_connections WHERE catalog_id = $1`,
+      [catalogId],
+    );
+    return Number(result.rows[0]?.count ?? 0);
+  }
+
+  async saveBrokerConnector(
+    id: string,
+    input: {
+      accountLabel: string | null;
+      target: string;
+      tools: Record<string, ConnectorToolSetting>;
+      status: ConnectorStatus;
+      statusDetail: string | null;
+    },
+  ): Promise<ConnectorRecord | null> {
+    const result = await this.db.query<ConnectorRow>(
+      `UPDATE connectors
+       SET secret_cipher = NULL,
+           secret_ref = NULL,
+           account_label = $2,
+           target = $3,
+           tools = $4::jsonb,
+           status = $5,
+           status_detail = $6,
+           failures = '[]'::jsonb,
+           auth_type = 'oauth',
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING ${CONNECTOR_COLUMNS}`,
+      [
+        id,
+        input.accountLabel,
+        input.target,
+        JSON.stringify(input.tools),
+        input.status,
+        input.statusDetail,
+      ],
+    );
+    const row = result.rows[0];
+    return row ? mapConnector(row) : null;
   }
 }

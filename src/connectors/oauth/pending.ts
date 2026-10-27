@@ -11,6 +11,10 @@ export type PendingOAuth = {
   connectorId?: string;
   redirectUri: string;
   issuedAt: number;
+  /** Set when the catalog connect is going through Composio. */
+  broker?: "composio";
+  userId?: string;
+  connectedAccountId?: string;
 };
 
 export async function sealPending(
@@ -45,6 +49,11 @@ export async function openPending(
         : {}),
       redirectUri: parsed.redirectUri,
       issuedAt: parsed.issuedAt,
+      ...(parsed.broker === "composio" ? { broker: "composio" as const } : {}),
+      ...(typeof parsed.userId === "string" && parsed.userId ? { userId: parsed.userId } : {}),
+      ...(typeof parsed.connectedAccountId === "string" && parsed.connectedAccountId
+        ? { connectedAccountId: parsed.connectedAccountId }
+        : {}),
     };
   } catch {
     return null;

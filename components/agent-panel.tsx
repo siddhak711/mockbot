@@ -256,8 +256,9 @@ export function AgentPanel({
                     />
                   </label>
                   <p className="agent-hint">
-                    New chats use the selected agent. From the lead, send{" "}
-                    <code>delegate to Name: task</code>.
+                    Selecting an agent opens that agent's conversation. From the lead, send{" "}
+                    <code>delegate to Name: task</code>. The result is appended to that agent's
+                    thread.
                   </p>
                   {error ? (
                     <p className="agent-error" role="alert">
