@@ -272,8 +272,13 @@ describe("sandbox", { concurrent: false }, () => {
     const other = await supervisor.invoke("agent-b", "read", { path: "note.txt" });
     expect(other.result.isError).toBe(true);
     expect(other.result.content).not.toContain("from-a");
+    // A read only looks. agent-b gets no sandbox until something writes or runs.
+    expect(fleet.creates).toHaveLength(1);
+    await supervisor.invoke("agent-b", "write", { path: "b.txt", content: "from-b" });
     expect(fleet.creates).toHaveLength(2);
     expect(fleet.creates[0]?.id).not.toBe(fleet.creates[1]?.id);
+    const isolated = await supervisor.invoke("agent-b", "read", { path: "note.txt" });
+    expect(isolated.result.isError).toBe(true);
 
     const again = await supervisor.invoke("agent-a", "exec", { command: "cat note.txt" });
     expect(again.run.stdout).toContain("from-a");
@@ -554,6 +559,61 @@ describe("sandbox", { concurrent: false }, () => {
       supervisor.invoke("agent", "exec", { command: "echo hi" }, controller.signal),
     ).rejects.toMatchObject({ name: "AbortError" });
     expect(await store.listRuns("agent")).toEqual([]);
+    await supervisor.close();
+  });
+
+  it("never creates or replaces a sandbox from list, read, or snapshot", async () => {
+    const fleet = new FakeFleet();
+    const store = await SandboxStore.open("memory://");
+    const runtime = new DaytonaRuntime(fleet, store, "secret");
+    const supervisor = new ComputerSupervisor(store, runtime, 1_000);
+
+    // No sandbox yet: everything that only looks stays empty.
+    expect((await supervisor.snapshot("agent")).files).toEqual([]);
+    expect(await runtime.list("agent", "")).toEqual({ ok: true, entries: [] });
+    const listed = await supervisor.invoke("agent", "list", {});
+    expect(listed.result.isError).toBeUndefined();
+    const missing = await supervisor.invoke("agent", "read", { path: "notes.txt" });
+    expect(missing.result.isError).toBe(true);
+    expect(fleet.creates).toHaveLength(0);
+
+    // write may create.
+    await supervisor.invoke("agent", "write", { path: "notes.txt", content: "hi" });
+    expect(fleet.creates).toHaveLength(1);
+    const first = fleet.creates[0]?.id ?? "";
+
+    // The cached sandbox is gone. Looking does not replace it.
+    fleet.drop(first);
+    expect((await supervisor.snapshot("agent")).files).toEqual([]);
+    expect(await runtime.list("agent", "")).toEqual({ ok: true, entries: [] });
+    expect((await supervisor.invoke("agent", "list", {})).result.isError).toBeUndefined();
+    expect((await supervisor.invoke("agent", "read", { path: "notes.txt" })).result.isError).toBe(
+      true,
+    );
+    expect(fleet.creates).toHaveLength(1);
+    expect((await store.getComputer("agent"))?.sandboxId).toBe(first);
+
+    // exec may replace it.
+    const ran = await supervisor.invoke("agent", "exec", { command: "echo back" });
+    expect(ran.run.exitCode).toBe(0);
+    expect(fleet.creates).toHaveLength(2);
+    const second = fleet.creates[1]?.id ?? "";
+    expect((await store.getComputer("agent"))?.sandboxId).toBe(second);
+
+    // browse (through its sandbox host) may replace it too.
+    fleet.drop(second);
+    expect((await supervisor.snapshot("agent")).files).toEqual([]);
+    expect(fleet.creates).toHaveLength(2);
+    await supervisor.browserHost("agent")?.prepare?.();
+    expect(fleet.creates).toHaveLength(3);
+
+    // write after a drop replaces as well.
+    fleet.drop(fleet.creates[2]?.id ?? "");
+    await supervisor.invoke("agent", "write", { path: "again.txt", content: "x" });
+    expect(fleet.creates).toHaveLength(4);
+    expect((await supervisor.snapshot("agent")).files.map((file) => file.path)).toEqual([
+      "again.txt",
+    ]);
     await supervisor.close();
   });
 

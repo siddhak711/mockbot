@@ -85,13 +85,10 @@ export class DaytonaRuntime implements SandboxRuntime {
     private readonly secret: string,
   ) {}
 
+  /** Lists the live sandbox. Never creates or replaces one; none live lists empty. */
   async list(agentId: string, path: string) {
     try {
-      const ready = await this.#exclusive(agentId, async () => {
-        const handle = await this.#handle(agentId, false);
-        if (!handle) return null;
-        return this.#running(agentId, handle);
-      });
+      const ready = await this.#live(agentId);
       if (!ready) return { ok: true as const, entries: [] };
       return await ready.list(toSandboxPath(path));
     } catch (error) {
@@ -102,7 +99,8 @@ export class DaytonaRuntime implements SandboxRuntime {
   async read(agentId: string, path: string, signal?: AbortSignal) {
     try {
       throwIfAborted(signal);
-      const handle = await withSignal(this.#require(agentId), signal);
+      const handle = await withSignal(this.#live(agentId), signal);
+      if (!handle) return { ok: false as const, error: `No such file: ${path}` };
       return await withSignal(handle.read(toSandboxPath(path)), signal);
     } catch (error) {
       if (isAbortError(error)) throw error;
@@ -148,14 +146,27 @@ export class DaytonaRuntime implements SandboxRuntime {
     }
   }
 
+  /**
+   * The sandbox, created or replaced when needed. Only write and prepare (the
+   * path exec and browse take) call this.
+   */
   #require(agentId: string): Promise<RemoteSandbox> {
-    return this.#exclusive(agentId, () => this.#requireUnlocked(agentId));
+    return this.#exclusive(agentId, async () => {
+      const handle = await this.#handle(agentId, true);
+      if (!handle) throw new Error("Sandbox is unavailable");
+      const ready = await this.#running(agentId, handle, true);
+      if (!ready) throw new Error("Sandbox is unavailable");
+      return ready;
+    });
   }
 
-  async #requireUnlocked(agentId: string): Promise<RemoteSandbox> {
-    const handle = await this.#handle(agentId, true);
-    if (!handle) throw new Error("Sandbox is unavailable");
-    return this.#running(agentId, handle);
+  /** The running sandbox, or null when none is live. Never creates or replaces one. */
+  #live(agentId: string): Promise<RemoteSandbox | null> {
+    return this.#exclusive(agentId, async () => {
+      const handle = await this.#handle(agentId, false);
+      if (!handle) return null;
+      return this.#running(agentId, handle, false);
+    });
   }
 
   /**
@@ -175,7 +186,15 @@ export class DaytonaRuntime implements SandboxRuntime {
     return run;
   }
 
-  async #running(agentId: string, handle: RemoteSandbox): Promise<RemoteSandbox> {
+  /**
+   * Starts a stopped sandbox or reconnects to it. When Daytona confirms it is
+   * gone, `create` decides between a replacement and null.
+   */
+  async #running(
+    agentId: string,
+    handle: RemoteSandbox,
+    create: boolean,
+  ): Promise<RemoteSandbox | null> {
     try {
       await handle.ensureRunning();
       return handle;
@@ -190,6 +209,7 @@ export class DaytonaRuntime implements SandboxRuntime {
         this.#handles.set(agentId, restored);
         return restored;
       }
+      if (!create) return null;
       const created = await this.fleet.create(agentId);
       await this.store.setSandboxId(agentId, created.id);
       this.#handles.set(agentId, created);
