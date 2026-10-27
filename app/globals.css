@@ -1,6 +1,9 @@
 /*
   Cursor-style tokens. Light is the default. Dark follows the system
   setting, and data-theme pins a scheme after the toggle.
+  Text uses ink, ink-2, muted, link, accent-text, accent-on-ink, success,
+  danger, warn, and on-danger. faint, accent, and line-strong are for
+  icons, borders, dividers, focus rings, fills, and disabled glyphs.
 */
 @font-face {
   font-family: Inter;
@@ -44,16 +47,18 @@
   --line: #ebebeb;
   --line-strong: #dcdcdc;
   --ink: #282828;
-  --ink-2: #676767;
-  --muted: #6e6e6e;
-  --faint: #6e6e6e;
-  --link: #2773d0;
+  --ink-2: #505050;
+  --muted: #646464;
+  --faint: #adadad;
+  --link: #2763af;
   --accent: #f54e00;
-  --success: #19845f;
-  --danger: #cf2d56;
-  --danger-fill: #cf2d56;
+  --accent-text: #b63900;
+  --accent-on-ink: #ff5202;
+  --success: #1c7253;
+  --danger: #bb2d4c;
+  --danger-fill: #bb2d4c;
   --on-danger: #ffffff;
-  --warn: #a26714;
+  --warn: #805e1f;
   --scrim: rgba(0, 0, 0, 0.28);
   --diff-add-bg: rgba(31, 138, 101, 0.08);
   --diff-del-bg: rgba(207, 45, 86, 0.06);
@@ -86,13 +91,15 @@
   --ink: #edecec;
   --ink-2: rgba(237, 236, 236, 0.72);
   --muted: rgba(237, 236, 236, 0.55);
-  --faint: rgba(237, 236, 236, 0.52);
+  --faint: rgba(237, 236, 236, 0.38);
   --link: #6aa8f0;
   --accent: #f54e00;
+  --accent-text: #ff5405;
+  --accent-on-ink: #bf3c00;
   --success: #3fb68b;
-  --danger: #e5577a;
-  --danger-fill: #cf2d56;
-  --on-danger: #ffffff;
+  --danger: #e56588;
+  --danger-fill: #e56588;
+  --on-danger: #14120b;
   --warn: #e0a85a;
   --scrim: rgba(0, 0, 0, 0.5);
   --diff-add-bg: rgba(31, 138, 101, 0.16);
@@ -112,13 +119,15 @@
     --ink: #edecec;
     --ink-2: rgba(237, 236, 236, 0.72);
     --muted: rgba(237, 236, 236, 0.55);
-    --faint: rgba(237, 236, 236, 0.52);
+    --faint: rgba(237, 236, 236, 0.38);
     --link: #6aa8f0;
     --accent: #f54e00;
+    --accent-text: #ff5405;
+    --accent-on-ink: #bf3c00;
     --success: #3fb68b;
-    --danger: #e5577a;
-    --danger-fill: #cf2d56;
-    --on-danger: #ffffff;
+    --danger: #e56588;
+    --danger-fill: #e56588;
+    --on-danger: #14120b;
     --warn: #e0a85a;
     --scrim: rgba(0, 0, 0, 0.5);
     --diff-add-bg: rgba(31, 138, 101, 0.16);
@@ -399,7 +408,7 @@ summary:focus-visible {
 
 .empty {
   margin: 4px 16px;
-  color: var(--faint);
+  color: var(--muted);
   font-size: 13px;
   line-height: 18px;
 }
@@ -451,7 +460,7 @@ summary:focus-visible {
 
 .connector-state {
   flex: none;
-  color: var(--faint);
+  color: var(--muted);
   font-size: 11px;
   line-height: 14px;
   letter-spacing: 0.04em;
@@ -1132,7 +1141,7 @@ summary:focus-visible {
   line-height: 14px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--faint);
+  color: var(--muted);
 }
 
 .tool-block,
@@ -1659,7 +1668,7 @@ summary:focus-visible {
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--faint);
+  color: var(--muted);
 }
 
 .computer-files h3:first-child,
@@ -1930,7 +1939,7 @@ summary:focus-visible {
 
 .agent-hint {
   margin: 0;
-  color: var(--faint);
+  color: var(--muted);
   font-size: 12px;
   line-height: 16px;
 }
@@ -2089,7 +2098,7 @@ a.icon-btn {
 .choices legend {
   font-size: 12px;
   line-height: 16px;
-  color: var(--faint);
+  color: var(--muted);
 }
 
 .field small {
@@ -2568,7 +2577,7 @@ a.icon-btn {
 }
 
 .check-row.pending {
-  color: var(--faint);
+  color: var(--muted);
 }
 
 .check-row.done {
@@ -2970,5 +2979,156 @@ a.icon-btn {
 
   .connector-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+.run-id {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.run-id code {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.run-totals {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.run-total {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 12px 14px;
+}
+
+.run-total span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.run-total strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 18px;
+  line-height: 24px;
+  font-weight: 600;
+}
+
+.run-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.run-event {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+
+.run-event summary {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) auto auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.run-event summary::-webkit-details-marker {
+  display: none;
+}
+
+.run-type {
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 16px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.run-type.model {
+  color: var(--link);
+}
+
+.run-type.tool {
+  color: var(--success);
+}
+
+.run-type.event {
+  color: var(--muted);
+}
+
+.run-type.error {
+  color: var(--danger);
+}
+
+.run-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.run-metric {
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.run-body {
+  display: grid;
+  gap: 10px;
+  padding: 0 12px 12px;
+}
+
+.run-body h2 {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.run-body pre {
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  max-height: 320px;
+  background: var(--window);
+  border-radius: var(--radius-md);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@media (max-width: 760px) {
+  .run-totals {
+    grid-template-columns: 1fr;
+  }
+
+  .run-event summary {
+    grid-template-columns: 64px minmax(0, 1fr);
+  }
+
+  .run-metric {
+    grid-column: 2;
   }
 }
