@@ -9,7 +9,7 @@ Reviewers flag a pull request whose screenshots or recordings contradict those i
 
 ## No mock providers outside tests
 
-- [ ] No mock, stub, or fake provider is reachable outside tests. A missing credential fails loudly with a visible error, not a silent mock fallback.
+- [ ] No mock, stub, or fake provider may be reachable outside tests unless it meets the three conditions below. A missing credential fails loudly with a visible error, not a silent mock fallback.
 - [ ] Any mock outside tests is behind an opt-in flag such as `MOCK_<SERVICE>=1` (off by default), hard-fails when that flag is set in a production build (`NODE_ENV=production` or `VERCEL_ENV=production`), and labels its output as mock to the user. A silent fallback when a credential is missing blocks this pull request.
 - [ ] Grep result for `mock|stub|fake` in the non-test code this pull request touches:
 
