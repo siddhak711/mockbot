@@ -1,5 +1,6 @@
 import type { ToolContext } from "../tools/types";
 import { DEFAULT_AGENT_ID } from "./limits";
+import { sandboxOwnerId } from "./owner";
 import type { ComputerSupervisor } from "./supervisor";
 import type { ComputerToolName, ComputerToolResult } from "./types";
 
@@ -21,6 +22,11 @@ export type ComputerTool = {
   invoke: (args: Record<string, unknown>, context: ToolContext) => Promise<ComputerToolResult>;
 };
 
+/**
+ * The sandbox is chosen per call from the turn's agent and user, so one shared
+ * registry serves every agent. agentId applies only to callers with no agent in
+ * their context.
+ */
 export function createComputerTools(
   supervisor: ComputerSupervisor,
   agentId = DEFAULT_AGENT_ID,
@@ -110,7 +116,11 @@ function tool(
     async invoke(args, context) {
       const prepared = spec.prepare(args);
       if ("error" in prepared) return { content: prepared.error, isError: true };
-      const { result } = await supervisor.invoke(agentId, spec.name, prepared.args, context.signal);
+      const owner = sandboxOwnerId({
+        agentId: context.agentId ?? agentId,
+        userId: context.userId,
+      });
+      const { result } = await supervisor.invoke(owner, spec.name, prepared.args, context.signal);
       return result;
     },
   };

@@ -204,6 +204,8 @@ export async function streamChatTurn(options: {
     signal,
     memory: memoryDeps,
     runCounters: new Map(),
+    agentId: speaker.id,
+    userId: options.userId ?? null,
     promote(names) {
       for (const name of names) promoted.add(name);
     },

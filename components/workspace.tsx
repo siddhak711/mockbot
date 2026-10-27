@@ -106,6 +106,8 @@ export function Workspace({
   const [replayIds, setReplayIds] = useState<Record<string, string>>({});
   const abortRef = useRef<AbortController | null>(null);
   const computerRequest = useRef(0);
+  // The agent whose sandbox the computer pane shows.
+  const computerAgentRef = useRef(LEAD_AGENT_ID);
   const agentLoadRequest = useRef(0);
   const activeIdRef = useRef<string | null>(null);
   const memoryAgentRef = useRef(LEAD_AGENT_ID);
@@ -238,6 +240,7 @@ export function Workspace({
         (input) => fetch(input),
         request,
         () => computerRequest.current,
+        computerAgentRef.current,
       );
       if (!snapshot || request !== computerRequest.current) return;
       setComputer(snapshot);
@@ -714,6 +717,11 @@ export function Workspace({
 
   const computerStatus = computerReady ? (computer ? "ready" : "error") : "loading";
   const speakingId = active?.agentId ?? activeAgentId;
+  useEffect(() => {
+    if (computerAgentRef.current === speakingId) return;
+    computerAgentRef.current = speakingId;
+    void refreshComputer();
+  }, [speakingId, refreshComputer]);
   const speaking = agents.find((agent) => agent.id === speakingId) ?? null;
   const spriteColor = spriteColorForAgent(speaking);
   const spriteName = speaking?.name ?? "Mockbot";

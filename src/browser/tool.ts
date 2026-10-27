@@ -1,4 +1,4 @@
-import type { ToolDefinition, ToolResult } from "../tools/types";
+import type { ToolContext, ToolDefinition, ToolResult } from "../tools/types";
 import {
   DEFAULT_BROWSE_TIMEOUT_MS,
   MAX_BROWSE_ACTIONS,
@@ -24,7 +24,8 @@ const LABEL_SELECTOR = /(?:^|[\s>+~,])label\b|\[for\s*=/i;
 
 export type BrowseToolOptions = {
   /** Null when the sandbox cannot run a browser, such as the mock computer. */
-  driver: () => BrowserDriver | null;
+  /** Chosen per call, so each turn's agent drives its own sandbox browser. */
+  driver: (context: ToolContext) => BrowserDriver | null;
   unavailable?: string;
   actionTimeoutMs?: number;
   maxActions?: number;
@@ -70,7 +71,7 @@ export function browseTool(options: BrowseToolOptions): ToolDefinition {
     async invoke(args, context) {
       const prepared = prepareBrowseArgs(args);
       if ("error" in prepared) return { content: prepared.error, isError: true };
-      const driver = options.driver();
+      const driver = options.driver(context);
       if (!driver) {
         return {
           content:

@@ -1,6 +1,8 @@
 import { requireApiUser } from "../../../src/auth/guard";
 import { getAppContext } from "../../../src/context";
+import { LEAD_AGENT_ID } from "../../../src/agents/ids";
 import { normalizeAgentId } from "../../../src/sandbox/limits";
+import { sandboxOwnerId } from "../../../src/sandbox/owner";
 import type { ComputerToolName } from "../../../src/sandbox/types";
 
 export const runtime = "nodejs";
@@ -14,9 +16,9 @@ export async function GET(request: Request): Promise<Response> {
   const { sandbox } = await getAppContext();
   if (!sandbox) return Response.json({ error: "Sandbox is not available" }, { status: 503 });
   const requested = new URL(request.url).searchParams.get("agentId") ?? undefined;
-  const agentId = normalizeAgentId(requested);
+  const agentId = normalizeAgentId(requested ?? LEAD_AGENT_ID);
   if (!agentId) return Response.json({ error: "Unknown agent" }, { status: 400 });
-  return Response.json(await sandbox.snapshot(agentId));
+  return Response.json(await sandbox.snapshot(ownerFor(actor, agentId)));
 }
 
 export async function POST(request: Request): Promise<Response> {
@@ -43,7 +45,9 @@ export async function POST(request: Request): Promise<Response> {
   if (typeof record.tool !== "string" || !TOOLS.has(record.tool as ComputerToolName)) {
     return Response.json({ error: "Unknown computer tool" }, { status: 400 });
   }
-  const agentId = normalizeAgentId(typeof record.agentId === "string" ? record.agentId : undefined);
+  const agentId = normalizeAgentId(
+    typeof record.agentId === "string" ? record.agentId : LEAD_AGENT_ID,
+  );
   if (!agentId) return Response.json({ error: "Unknown agent" }, { status: 400 });
   const args: Record<string, unknown> = {};
   if (typeof record.path === "string") args.path = record.path;
@@ -51,7 +55,7 @@ export async function POST(request: Request): Promise<Response> {
   if (typeof record.command === "string") args.command = record.command;
   try {
     const invocation = await sandbox.invoke(
-      agentId,
+      ownerFor(actor, agentId),
       record.tool as ComputerToolName,
       args,
       request.signal,
@@ -61,4 +65,9 @@ export async function POST(request: Request): Promise<Response> {
     const message = error instanceof Error ? error.message : "Sandbox request failed";
     return Response.json({ error: message }, { status: 400 });
   }
+}
+
+/** The same (user, agent) sandbox the chat tools use for this person. */
+function ownerFor(actor: { scoped: boolean; user: { id: string } }, agentId: string): string {
+  return sandboxOwnerId({ agentId, userId: actor.scoped ? actor.user.id : undefined });
 }

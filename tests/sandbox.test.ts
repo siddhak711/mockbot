@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GET, POST } from "../app/api/computer/route";
-import { resetAppContext, setAppContext } from "../src/context";
 import { withAgentMock } from "../src/agents/mock-script";
 import { MockProvider } from "../src/llm";
 import { commandTimeoutMs, resolveWorkspacePath, toSandboxPath } from "../src/sandbox/limits";
@@ -14,6 +13,10 @@ import type { ExecOutcome, SandboxEntry, SandboxRuntime } from "../src/sandbox/r
 import { ComputerSupervisor, DIFF_MAX_BYTES, DIFF_MAX_FILES } from "../src/sandbox/supervisor";
 import { SandboxStore } from "../src/sandbox/store";
 import { createComputerTools } from "../src/sandbox/tools";
+import { sandboxOwnerId } from "../src/sandbox/owner";
+import { registerComputerTools, resetAppContext, setAppContext } from "../src/context";
+import { sandboxBrowseTool } from "../src/browser/open";
+import { ToolRegistry } from "../src/tools/registry";
 import { SandboxTurnProvider } from "../src/sandbox/turn";
 import { ConversationStore } from "../src/store";
 import {
@@ -613,6 +616,80 @@ describe("sandbox", { concurrent: false }, () => {
     expect(fleet.creates).toHaveLength(4);
     expect((await supervisor.snapshot("agent")).files.map((file) => file.path)).toEqual([
       "again.txt",
+    ]);
+    await supervisor.close();
+  });
+
+  it("routes the shared computer tools to each turn's own agent and user sandbox", async () => {
+    const fleet = new FakeFleet();
+    const store = await SandboxStore.open("memory://");
+    const supervisor = new ComputerSupervisor(
+      store,
+      new DaytonaRuntime(fleet, store, "secret"),
+      1_000,
+    );
+    const registry = new ToolRegistry();
+    registerComputerTools(registry, supervisor);
+    const write = registry.get("write");
+    const read = registry.get("read");
+    if (!write || !read) throw new Error("computer tools missing");
+
+    const a = { agentId: "agent-a" };
+    const b = { agentId: "agent-b" };
+    await write.invoke({ path: "secret.txt", content: "for a" }, a);
+    await write.invoke({ path: "secret.txt", content: "for b" }, b);
+    expect((await read.invoke({ path: "secret.txt" }, a)).content).toContain("for a");
+    expect((await read.invoke({ path: "secret.txt" }, b)).content).toContain("for b");
+    expect(fleet.creates.map((item) => item.agentId)).toEqual(["agent-a", "agent-b"]);
+    const recordA = await store.getComputer("agent-a");
+    const recordB = await store.getComputer("agent-b");
+    expect(recordA?.sandboxId).toBe(fleet.creates[0]?.id);
+    expect(recordB?.sandboxId).toBe(fleet.creates[1]?.id);
+    expect(recordA?.id).not.toBe(recordB?.id);
+
+    // The lead agent's id is shared by every user, so the user is part of the key.
+    const userOne = { agentId: "agent_default", userId: "user-1" };
+    const userTwo = { agentId: "agent_default", userId: "user-2" };
+    await write.invoke({ path: "mine.txt", content: "user one" }, userOne);
+    const leaked = await read.invoke({ path: "mine.txt" }, userTwo);
+    expect(leaked.isError).toBe(true);
+    expect(leaked.content).not.toContain("user one");
+    const ownerOne = sandboxOwnerId(userOne);
+    const ownerTwo = sandboxOwnerId(userTwo);
+    expect(ownerOne).not.toBe(ownerTwo);
+    expect((await store.getComputer(ownerOne))?.sandboxId).toBe(fleet.creates[2]?.id);
+    expect((await store.getComputer(ownerTwo))?.sandboxId ?? null).toBeNull();
+
+    // Only a call with no agent at all falls back to the default sandbox.
+    await write.invoke({ path: "plain.txt", content: "none" }, {});
+    expect(fleet.creates.at(-1)?.agentId).toBe("agent");
+    await supervisor.close();
+  });
+
+  it("drives the browse tool in the turn agent's sandbox, one browser per owner", async () => {
+    const fleet = new FakeFleet();
+    const store = await SandboxStore.open("memory://");
+    const supervisor = new ComputerSupervisor(
+      store,
+      new DaytonaRuntime(fleet, store, "secret"),
+      1_000,
+    );
+    const hosts: string[] = [];
+    vi.spyOn(supervisor, "browserHost").mockImplementation((agentId?: string) => {
+      hosts.push(agentId ?? "");
+      return null;
+    });
+    const browse = sandboxBrowseTool(supervisor, {});
+    await browse.invoke({ action: "open", url: "https://example.com" }, { agentId: "agent-a" });
+    await browse.invoke(
+      { action: "open", url: "https://example.com" },
+      { agentId: "agent_default", userId: "user-1" },
+    );
+    await browse.invoke({ action: "open", url: "https://example.com" }, {});
+    expect(hosts).toEqual([
+      "agent-a",
+      sandboxOwnerId({ agentId: "agent_default", userId: "user-1" }),
+      "agent",
     ]);
     await supervisor.close();
   });
