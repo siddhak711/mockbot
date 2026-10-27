@@ -39,7 +39,17 @@ function clip(text) {
 
 function classifyClick(el) {
   var LOGIN = /\b(log ?in|sign ?in)\b/i;
-  var target = (el.closest && el.closest("button, input")) || el;
+  // Clicking a label activates its control, including label[for] and a wrapped control.
+  var label = null;
+  if (el && el.tagName && String(el.tagName).toLowerCase() === "label") label = el;
+  else if (el && el.closest) label = el.closest("label");
+  var labeled = null;
+  if (label) {
+    labeled = label.control || (label.querySelector && label.querySelector("button, input, select, textarea"));
+  }
+  var inside = el && el.closest ? el.closest("button, input, select, textarea") : null;
+  var resolved = inside || labeled || el;
+  var target = (resolved.closest && resolved.closest("button, input")) || resolved;
   var tag = target.tagName.toLowerCase();
   var type = (target.getAttribute("type") || "").toLowerCase();
   var form = target.form || (target.closest && target.closest("form"));
@@ -50,17 +60,18 @@ function classifyClick(el) {
     if (form.querySelector("input[type=password]")) return "This click submits a login form.";
     return "This click submits a form.";
   }
-  var label = [
+  var words = [
     target.innerText,
     target.value,
     target.getAttribute("aria-label"),
     target.getAttribute("title"),
     target.id,
     target.getAttribute("name"),
-  ]
-    .filter(Boolean)
-    .join(" ");
-  if (LOGIN.test(label)) return "This click looks like a login.";
+  ];
+  if (label && label !== target) {
+    words.push(label.innerText, label.getAttribute("aria-label"), label.id, label.getAttribute("for"));
+  }
+  if (LOGIN.test(words.filter(Boolean).join(" "))) return "This click looks like a login.";
   return null;
 }
 
