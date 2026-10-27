@@ -66,11 +66,22 @@ export type RuntimeStatus = {
   database: string;
 };
 
-export function runtimeStatusLabel(status: RuntimeStatus): {
+/** Before /api/status answers the footer says "Connecting…"; if it fails, it says so. */
+export type RuntimeStatusView = RuntimeStatus | "loading" | "error";
+
+export function runtimeStatusLabel(status: RuntimeStatusView): {
   title: string;
   subtitle: string;
   full: string;
 } {
+  if (status === "loading") return { title: "Connecting…", subtitle: "", full: "Connecting…" };
+  if (status === "error") {
+    return {
+      title: "Status unavailable",
+      subtitle: "",
+      full: "Status unavailable. The server did not answer.",
+    };
+  }
   const provider =
     status.provider === "openai"
       ? "OpenAI-compatible"

@@ -2,7 +2,7 @@ import type { Agent } from "../src/agents/types";
 import type { SignedInUser } from "../src/auth/user";
 import { UserMenu } from "./user-menu";
 import { spriteColorForAgent, type SpriteState } from "../src/sprite";
-import { runtimeStatusLabel, type RuntimeStatus } from "../src/token-stream";
+import { runtimeStatusLabel, type RuntimeStatusView } from "../src/token-stream";
 import { AgentPanel, type AgentDraft } from "./agent-panel";
 import { BotSprite } from "./bot-sprite";
 import { ClockIcon, HidePanelIcon, PlugIcon, TrafficLights } from "./icons";
@@ -41,7 +41,7 @@ export function Sidebar({
   agents: Agent[];
   activeAgentId: string;
   spriteState: SpriteState;
-  runtimeStatus: RuntimeStatus;
+  runtimeStatus: RuntimeStatusView;
   busy: boolean;
   open: boolean;
   collapsed?: boolean;
@@ -132,7 +132,10 @@ export function Sidebar({
         />
       </div>
       <footer className="me" title={status.full}>
-        <UserMenu user={user} detail={`${status.title} · ${status.subtitle}`} />
+        <UserMenu
+          user={user}
+          detail={status.subtitle ? `${status.title} · ${status.subtitle}` : status.title}
+        />
       </footer>
     </aside>
   );

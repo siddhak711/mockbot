@@ -76,6 +76,13 @@ it("formats the sidebar runtime status without one truncated line", () => {
   });
 });
 
+it("says Connecting before the status loads and names a failed status", () => {
+  expect(runtimeStatusLabel("loading").title).toBe("Connecting…");
+  expect(runtimeStatusLabel("error").title).toBe("Status unavailable");
+  expect(runtimeStatusLabel("loading").title).not.toContain("Mock");
+  expect(runtimeStatusLabel("error").full).not.toContain("Mock");
+});
+
 it("binds the live turn to the assistant after the latest user message", () => {
   const messages: Message[] = [
     {

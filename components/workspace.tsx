@@ -17,12 +17,16 @@ import { LEAD_AGENT_ID } from "../src/agents/ids";
 import type { Agent } from "../src/agents/types";
 import type { SignedInUser } from "../src/auth/user";
 import { releaseDecision, settleDecision, stopDecision } from "../src/decision-lock";
-import { applyMemoryRefresh, memoriesAfterAgentSwitch } from "../src/memory/panel-state";
+import {
+  MEMORY_LOAD_ERROR,
+  applyMemoryRefresh,
+  memoriesAfterAgentSwitch,
+} from "../src/memory/panel-state";
 import { SseParser } from "../src/sse";
 import { applyClientEvent, emptyTrace, phaseFromEvent, streamedWeight } from "../src/trace";
 import { fetchComputerSnapshot } from "../src/sandbox/refresh";
 import type { ComputerSnapshot } from "../src/sandbox/types";
-import type { RuntimeStatus } from "../src/token-stream";
+import type { RuntimeStatusView } from "../src/token-stream";
 import {
   activitiesAfterReconnect,
   activitiesAfterStop,
@@ -71,15 +75,14 @@ export function Workspace({
   const [agentsLoaded, setAgentsLoaded] = useState(false);
   const [activeAgentId, setActiveAgentId] = useState(LEAD_AGENT_ID);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
+  // null until the thread is known, so the greeting never flashes before history loads.
+  const [messages, setMessages] = useState<Message[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [streaming, setStreaming] = useState(false);
   const [livePhase, setLivePhase] = useState<LivePhase | null>(null);
   const [alert, setAlert] = useState<SpriteAlert | null>(null);
-  const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus>({
-    provider: "mock",
-    model: null,
-    database: "local",
-  });
+  const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatusView>("loading");
   const [computerOpen, setComputerOpen] = useState(true);
   const [sideTab, setSideTab] = useState<SideTab>("computer");
   const [memories, setMemories] = useState<Memory[] | null>(null);
@@ -147,6 +150,7 @@ export function Workspace({
       setActiveId(conversation.id);
       setActiveAgentId(conversation.agentId);
       setMessages(thread);
+      setLoadError(null);
       releaseApprovalLock();
       const nextActivities = activitiesFromMessages(thread);
       setActivities(nextActivities);
@@ -169,11 +173,18 @@ export function Workspace({
 
   const selectConversation = useCallback(
     async (id: string): Promise<boolean> => {
-      const response = await fetch(`/api/conversations/${id}`);
-      if (!response.ok) return false;
-      const data = (await response.json()) as { conversation: Conversation; messages: Message[] };
-      applyThread(data.conversation, data.messages, "c");
-      return true;
+      try {
+        const response = await fetch(`/api/conversations/${id}`);
+        if (!response.ok) return false;
+        const data = (await response.json()) as {
+          conversation: Conversation;
+          messages: Message[];
+        };
+        applyThread(data.conversation, data.messages, "c");
+        return true;
+      } catch {
+        return false;
+      }
     },
     [applyThread],
   );
@@ -181,19 +192,26 @@ export function Workspace({
   const loadAgentConversation = useCallback(
     async (agentId: string) => {
       const request = ++agentLoadRequest.current;
-      const response = await fetch(`/api/agents/${encodeURIComponent(agentId)}/conversation`);
+      let data: { conversation: Conversation; messages: Message[] } | null = null;
+      try {
+        const response = await fetch(`/api/agents/${encodeURIComponent(agentId)}/conversation`);
+        if (response.ok) {
+          data = (await response.json()) as { conversation: Conversation; messages: Message[] };
+        }
+      } catch {
+        data = null;
+      }
       if (request !== agentLoadRequest.current) return;
-      if (!response.ok) {
+      if (!data) {
         releaseApprovalLock();
         setActive(null);
         setActiveId(null);
-        setMessages([]);
+        setMessages(null);
         setActivities([]);
         setSelectedToolId(null);
+        setLoadError("Could not load this agent's history.");
         return;
       }
-      const data = (await response.json()) as { conversation: Conversation; messages: Message[] };
-      if (request !== agentLoadRequest.current) return;
       applyThread(data.conversation, data.messages, "agent");
     },
     [applyThread, releaseApprovalLock],
@@ -201,16 +219,19 @@ export function Workspace({
 
   const refreshMemories = useCallback(async () => {
     const agentId = memoryAgentRef.current;
-    const response = await fetch(`/api/memories?agentId=${encodeURIComponent(agentId)}`);
-    const loaded = response.ok
-      ? ((await response.json()) as { memories: Memory[] }).memories
-      : null;
+    let loaded: Memory[] | null = null;
+    try {
+      const response = await fetch(`/api/memories?agentId=${encodeURIComponent(agentId)}`);
+      if (response.ok) loaded = ((await response.json()) as { memories: Memory[] }).memories;
+    } catch {
+      loaded = null;
+    }
     const currentAgentId = memoryAgentRef.current;
     if (currentAgentId !== agentId) return;
     const decision = applyMemoryRefresh({
       requestedAgentId: agentId,
       currentAgentId,
-      ok: response.ok,
+      ok: loaded !== null,
       loaded,
       current: memoriesRef.current,
     });
@@ -226,6 +247,8 @@ export function Workspace({
       if (!response.ok) return;
       const data = (await response.json()) as { connectors: ConnectorRecord[] };
       setConnectors(data.connectors);
+    } catch {
+      // Keep the last list. The panel still opens and can retry.
     } finally {
       setConnectorsReady(true);
     }
@@ -259,28 +282,40 @@ export function Workspace({
 
   useEffect(() => {
     let cancelled = false;
+    void refreshConnectors();
     void (async () => {
-      const [statusResponse, agentResponse] = await Promise.all([
-        fetch("/api/status"),
-        fetch("/api/agents"),
-        refreshConnectors(),
-      ]);
-      if (cancelled) return;
-      if (statusResponse.ok) {
+      try {
+        const statusResponse = await fetch("/api/status");
+        if (!statusResponse.ok) throw new Error("status failed");
         const status = (await statusResponse.json()) as {
           provider: string;
           model: string | null;
           database?: string;
         };
+        if (cancelled) return;
         setRuntimeStatus({
           provider: status.provider,
           model: status.model,
           database: status.database === "neon" ? "neon" : "local",
         });
+      } catch {
+        if (!cancelled) setRuntimeStatus("error");
       }
-      if (!agentResponse.ok) return;
-      const agentData = (await agentResponse.json()) as { agents: Agent[] };
+    })();
+    void (async () => {
+      let agentData: { agents: Agent[] } | null = null;
+      try {
+        const agentResponse = await fetch("/api/agents");
+        if (agentResponse.ok) agentData = (await agentResponse.json()) as { agents: Agent[] };
+      } catch {
+        agentData = null;
+      }
       if (cancelled) return;
+      if (!agentData) {
+        setLoadError("Could not load your agents.");
+        setMemoryError(MEMORY_LOAD_ERROR);
+        return;
+      }
       setAgents(agentData.agents);
       setAgentsLoaded(true);
       const params = new URLSearchParams(window.location.search);
@@ -297,7 +332,7 @@ export function Workspace({
     return () => {
       cancelled = true;
     };
-  }, [loadAgentConversation, refreshConnectors, selectConversation]);
+  }, [loadAgentConversation, refreshConnectors, selectConversation, loadAttempt]);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -355,7 +390,24 @@ export function Workspace({
     setActiveAgentId(id);
     activeIdRef.current = null;
     setActiveId(null);
+    // Drop the previous agent's thread now, so the header and sends never disagree.
+    releaseApprovalLock();
+    setActive(null);
+    setMessages(null);
+    setLoadError(null);
+    setActivities([]);
+    setSelectedToolId(null);
     void loadAgentConversation(id);
+  }
+
+  function retryLoad() {
+    setLoadError(null);
+    if (!agentsLoaded) {
+      setMemoryError(null);
+      setLoadAttempt((attempt) => attempt + 1);
+      return;
+    }
+    void loadAgentConversation(activeAgentId);
   }
 
   async function createAgent(draft: AgentDraft): Promise<string | null> {
@@ -379,13 +431,18 @@ export function Workspace({
 
   async function reloadKeepingLonger(id: string) {
     releaseApprovalLock();
-    const response = await fetch(`/api/conversations/${id}`);
-    if (!response.ok) return;
-    const data = (await response.json()) as { conversation: Conversation; messages: Message[] };
+    let data: { conversation: Conversation; messages: Message[] };
+    try {
+      const response = await fetch(`/api/conversations/${id}`);
+      if (!response.ok) return;
+      data = (await response.json()) as { conversation: Conversation; messages: Message[] };
+    } catch {
+      return;
+    }
     setActive(data.conversation);
     setActiveId(data.conversation.id);
     setActiveAgentId(data.conversation.agentId);
-    setMessages((local) => preferRicherAssistant(local, data.messages));
+    setMessages((local) => preferRicherAssistant(local ?? [], data.messages));
     setActivities((local) =>
       activitiesAfterReconnect(local, activitiesFromMessages(data.messages)),
     );
@@ -400,13 +457,18 @@ export function Workspace({
     if (!trimmed || streaming || approvalPending) return;
     agentLoadRequest.current += 1;
     setAlert(null);
+    setLoadError(null);
     const controller = new AbortController();
     abortRef.current = controller;
     setStreaming(true);
     setLivePhase(null);
 
+    // The thread may still be loading (null). A send starts it from what is known.
+    const setThread = (update: (prev: Message[]) => Message[]) =>
+      setMessages((prev) => update(prev ?? []));
+
     const localUserId = `local-${crypto.randomUUID()}`;
-    setMessages((prev) => [
+    setThread((prev) => [
       ...prev,
       {
         id: localUserId,
@@ -428,13 +490,13 @@ export function Workspace({
       else if (assistantLocalId !== serverId) {
         const previous = assistantLocalId;
         assistantLocalId = serverId;
-        setMessages((prev) =>
+        setThread((prev) =>
           prev.map((item) => (item.id === previous ? { ...item, id: serverId } : item)),
         );
       }
       const id = assistantLocalId;
       const convId = conversationId ?? "";
-      setMessages((prev) => {
+      setThread((prev) => {
         if (prev.some((item) => item.id === id)) return prev;
         return [
           ...prev,
@@ -456,7 +518,7 @@ export function Workspace({
       if (!assistantLocalId) assistantLocalId = `local-${crypto.randomUUID()}`;
       const assistantId = assistantLocalId;
       const convId = conversationId ?? "";
-      setMessages((prev) => {
+      setThread((prev) => {
         const index = prev.findIndex((item) => item.id === assistantId);
         if (index === -1) {
           return [
@@ -529,7 +591,7 @@ export function Workspace({
               createdAt: now,
               updatedAt: now,
             });
-            setMessages((prev) =>
+            setThread((prev) =>
               prev.map((item) =>
                 item.id === localUserId ? { ...item, conversationId: id } : item,
               ),
@@ -643,7 +705,7 @@ export function Workspace({
         }
       } else {
         if (!sawMeta) {
-          setMessages((prev) =>
+          setThread((prev) =>
             prev.filter((item) => item.id !== localUserId && item.id !== assistantLocalId),
           );
         }
@@ -724,12 +786,13 @@ export function Workspace({
   const spriteName = speaking?.name ?? "Mockbot";
   const awaitingApproval = activities.some((activity) => activity.state === "approval");
   const error = alertMessageForView(alert, activeId);
+  const thread = messages ?? [];
   const sprite = useRunSprite({
     conversationId: activeId,
     streaming,
     livePhase,
     alert,
-    messages,
+    messages: thread,
     activities,
   });
 
@@ -855,7 +918,10 @@ export function Workspace({
         </header>
         <div className="chat-body">
           <Transcript
-            messages={messages}
+            messages={thread}
+            loading={messages === null}
+            loadError={loadError}
+            onRetry={retryLoad}
             streaming={streaming}
             livePhase={livePhase}
             spriteState={sprite}
@@ -912,7 +978,7 @@ export function Workspace({
             onSelect={setSelectedToolId}
             snapshot={computer}
             status={computerStatus}
-            messages={messages}
+            messages={thread}
           />
         </div>
       </main>
@@ -930,7 +996,7 @@ export function Workspace({
           onSelect={setSelectedToolId}
           snapshot={computer}
           status={computerStatus}
-          messages={messages}
+          messages={thread}
         />
       ) : null}
       <ConnectorsPanel

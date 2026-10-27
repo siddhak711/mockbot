@@ -2,6 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ThemeProvider } from "../components/theme";
+import { Transcript } from "../components/transcript";
 import { Workspace } from "../components/workspace";
 import type { SignedInUser } from "../src/auth/user";
 
@@ -98,11 +99,13 @@ const threads: Record<string, { conversation: object; messages: object[] }> = {
   },
 };
 
-function installFetch() {
+function installFetch(override?: (url: string) => Promise<Response> | Response | undefined) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
+      const custom = override?.(url);
+      if (custom) return custom;
       if (url.includes("/api/conversations")) {
         return new Response("threads are not listed", { status: 404 });
       }
@@ -357,4 +360,125 @@ it("keeps a sent message when the new agent's thread arrives late", async () => 
 
   expect(screen.getByText("Follow the ridge")).toBeTruthy();
   expect(screen.queryByText("Research notes")).toBeNull();
+});
+
+it("shows Loading history instead of the greeting, and Connecting before status loads", async () => {
+  let releaseLead: (response: Response) => void = () => {};
+  let releaseStatus: (response: Response) => void = () => {};
+  const leadHeld = new Promise<Response>((resolve) => {
+    releaseLead = resolve;
+  });
+  const statusHeld = new Promise<Response>((resolve) => {
+    releaseStatus = resolve;
+  });
+  installFetch((url) => {
+    if (url.includes("/api/agents/agent_default/conversation")) return leadHeld;
+    if (url.includes("/api/status")) return statusHeld;
+    return undefined;
+  });
+  render(
+    <ThemeProvider>
+      <Workspace user={user} />
+    </ThemeProvider>,
+  );
+
+  expect(await screen.findByText("Loading history")).toBeTruthy();
+  expect(screen.queryByRole("heading", { name: /Hello from/ })).toBeNull();
+  expect(document.querySelector("footer.me")?.textContent).toContain("Connecting…");
+  expect(document.querySelector("footer.me")?.textContent).not.toContain("Mock provider");
+
+  await act(async () => {
+    releaseLead(Response.json(threads.agent_default));
+    releaseStatus(Response.json({ provider: "openai", model: "m-1", database: "neon" }));
+  });
+  expect(await screen.findByText("Remember the grove")).toBeTruthy();
+  expect(screen.queryByText("Loading history")).toBeNull();
+  await waitFor(() => expect(document.querySelector("footer.me")?.textContent).toContain("m-1"));
+});
+
+it("shows a visible error and Retry when startup requests fail", async () => {
+  let failing = true;
+  installFetch((url) => {
+    if (!failing) return undefined;
+    if (url.endsWith("/api/agents")) return Promise.reject(new TypeError("Failed to fetch"));
+    if (url.includes("/api/status")) return Promise.reject(new TypeError("Failed to fetch"));
+    if (url.includes("/api/memories")) return Promise.reject(new TypeError("Failed to fetch"));
+    return undefined;
+  });
+  render(
+    <ThemeProvider>
+      <Workspace user={user} />
+    </ThemeProvider>,
+  );
+
+  expect(await screen.findByText("Could not load your agents.")).toBeTruthy();
+  expect(screen.queryByRole("heading", { name: /Hello from/ })).toBeNull();
+  expect(screen.queryByText("Loading memories")).toBeNull();
+  await waitFor(() =>
+    expect(document.querySelector("footer.me")?.textContent).toContain("Status unavailable"),
+  );
+
+  failing = false;
+  fireEvent.click(screen.getAllByRole("button", { name: "Retry" })[0]!);
+  expect(await screen.findByText("Remember the grove")).toBeTruthy();
+  expect(screen.queryByText("Could not load your agents.")).toBeNull();
+  expect(screen.getByRole("button", { name: /Researcher/ })).toBeTruthy();
+});
+
+it("clears the previous agent at once when switching, and shows a failed load", async () => {
+  let releaseResearch: (response: Response) => void = () => {};
+  const researchHeld = new Promise<Response>((resolve) => {
+    releaseResearch = resolve;
+  });
+  installFetch((url) => {
+    if (url.includes("/api/agents/agent_research/conversation")) return researchHeld;
+    if (url.includes("/api/agents/agent_scribe/conversation")) {
+      return Promise.reject(new TypeError("Failed to fetch"));
+    }
+    return undefined;
+  });
+  render(
+    <ThemeProvider>
+      <Workspace user={user} />
+    </ThemeProvider>,
+  );
+  expect(await screen.findByText("Remember the grove")).toBeTruthy();
+
+  fireEvent.click(screen.getByRole("button", { name: /Researcher/ }));
+  expect(screen.queryByText("Remember the grove")).toBeNull();
+  expect(screen.getByText("Loading history")).toBeTruthy();
+  expect(document.querySelector(".thread-title")?.textContent).toBe("Researcher");
+  expect(screen.getByRole("textbox", { name: "Message" }).getAttribute("placeholder")).toBe(
+    "Message Researcher",
+  );
+  await act(async () => {
+    releaseResearch(Response.json(threads.agent_research));
+  });
+  expect(await screen.findByText("Research notes")).toBeTruthy();
+  expect(screen.getByRole("article", { name: "You" })).toBeTruthy();
+
+  fireEvent.click(screen.getByRole("button", { name: /Scribe/ }));
+  expect(await screen.findByText("Could not load this agent's history.")).toBeTruthy();
+  expect(screen.queryByRole("heading", { name: /Hello from/ })).toBeNull();
+  expect(document.querySelector(".thread-title")?.textContent).toBe("Scribe");
+});
+
+it("labels assistant replies with the agent's name", () => {
+  render(
+    <Transcript
+      agentName="Researcher"
+      messages={[
+        {
+          id: "a1",
+          conversationId: "c-research",
+          role: "assistant",
+          content: "Found it",
+          createdAt: "2020-01-02T00:00:00.000Z",
+          trace: null,
+        },
+      ]}
+    />,
+  );
+  expect(screen.getByRole("article", { name: "Researcher" })).toBeTruthy();
+  expect(screen.queryByRole("article", { name: "Mockbot" })).toBeNull();
 });

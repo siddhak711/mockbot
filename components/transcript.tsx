@@ -55,6 +55,9 @@ export function Transcript({
   agentName = "Mockbot",
   reconnectFor,
   onReconnect,
+  loading = false,
+  loadError = null,
+  onRetry,
 }: {
   messages: Message[];
   streaming?: boolean;
@@ -69,6 +72,10 @@ export function Transcript({
   agentName?: string;
   reconnectFor?: (activity: ToolActivity) => string | null;
   onReconnect?: (activity: ToolActivity) => void;
+  /** History is still loading. Shown instead of the greeting so it does not flash. */
+  loading?: boolean;
+  loadError?: string | null;
+  onRetry?: () => void;
 }) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
@@ -126,7 +133,28 @@ export function Transcript({
   return (
     <div className="transcript-frame">
       <div className="transcript" ref={scrollerRef} data-pinned={pinned ? "true" : "false"}>
-        {messages.length === 0 ? (
+        {messages.length === 0 && loadError ? (
+          <div className="transcript-empty">
+            <p className="error" role="alert">
+              {loadError}
+            </p>
+            {onRetry ? (
+              <button type="button" className="ghost-text" onClick={onRetry}>
+                Retry
+              </button>
+            ) : null}
+          </div>
+        ) : messages.length === 0 && loading ? (
+          <div className="transcript-empty" aria-busy="true">
+            <BotSprite
+              state="idle"
+              color={spriteColor}
+              size={64}
+              label={botSpriteLabel(agentName, "idle")}
+            />
+            <p>Loading history</p>
+          </div>
+        ) : messages.length === 0 ? (
           <div className="transcript-empty">
             <BotSprite
               state="idle"
@@ -165,7 +193,7 @@ export function Transcript({
                 <article
                   key={message.id}
                   className="message assistant"
-                  aria-label={live ? "Reply still streaming" : "Mockbot"}
+                  aria-label={live ? "Reply still streaming" : agentName}
                 >
                   {visibleActivities.length > 0 ? (
                     <ToolActivityCards
