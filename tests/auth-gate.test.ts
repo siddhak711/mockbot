@@ -69,8 +69,8 @@ it("redirects anonymous app requests to login and leaves auth routes public", as
     "http://localhost:3000/login?next=%2Froutines%3Ftab%3Druns",
   );
 
-  const settings = proxy(request("/settings"));
-  expect(settings.headers.get("location")).toBe("http://localhost:3000/login?next=%2Fsettings");
+  const replay = proxy(request("/runs/run_1"));
+  expect(replay.headers.get("location")).toBe("http://localhost:3000/login?next=%2Fruns%2Frun_1");
 
   expect(proxy(request("/login")).headers.get("location")).toBeNull();
   expect(proxy(request("/login?error=Configuration")).headers.get("location")).toBeNull();

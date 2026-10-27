@@ -5,7 +5,6 @@ import {
   activityDisclosureToggle,
 } from "../src/tools/activity-open";
 import { isMockToolResult, type ToolActivity } from "../src/tools/display";
-import type { ToolTrace } from "../src/types";
 
 function useActivityDisclosure(running: boolean) {
   const [disclosure, setDisclosure] = useState(() => activityDisclosure(running));
@@ -21,40 +20,6 @@ function useActivityDisclosure(running: boolean) {
 }
 
 export type { ToolActivity };
-
-export function ToolCallCard({ tool, pending }: { tool: ToolTrace; pending: boolean }) {
-  const title = tool.name || "Tool call";
-  const { open, toggle } = useActivityDisclosure(pending);
-  return (
-    <div data-tool-name={title} data-state={pending ? "running" : "done"}>
-      <button type="button" className="tool-line" aria-expanded={open} onClick={toggle}>
-        <span className="tool-mark" aria-hidden="true">
-          ◦
-        </span>
-        <span className="tool-line-title">{title}</span>
-        {isMockToolResult(tool.name, tool.result) ? <MockBadge /> : null}
-        {tool.id ? <span className="tool-line-meta">· {tool.id}</span> : null}
-        <span className="sr-only">{pending ? "Running" : "Done"}</span>
-      </button>
-      {open ? (
-        <div className="tool-expanded">
-          {tool.arguments ? (
-            <>
-              <div className="tool-label">Arguments</div>
-              <ToolText text={tool.arguments} streaming={pending} />
-            </>
-          ) : null}
-          {tool.result != null ? (
-            <>
-              <div className="tool-label">Result</div>
-              <ToolText text={tool.result} />
-            </>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  );
-}
 
 export function ToolActivityCards({
   activities,
