@@ -1,5 +1,5 @@
 import { requireApiUser } from "../../../../src/auth/guard";
-import { resumeChatTurn } from "../../../../src/chat";
+import { CONVERSATION_BUSY, lockConversation, resumeChatTurn } from "../../../../src/chat";
 import { getAppContext } from "../../../../src/context";
 import { withUserTools } from "../../../../src/mcp/user-tools";
 import { SseParser } from "../../../../src/sse";
@@ -66,43 +66,84 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: "That answer is not one of the options" }, { status: 400 });
   }
 
-  // One winner per question: the database claim decides, before any waiter wakes.
-  const claimed = await store.claimToolCall(id, "done", accepted);
-  if (!claimed) return gone();
-  if (asks.waiting(id) && asks.answer(id, accepted) === "ok") {
-    return Response.json({ id, answer: accepted });
-  }
-
-  // The live turn is gone. Resume it through the same turn builder a new
-  // message uses, with this user's own connector tools.
+  const actorId = actor.user.id;
   const agents =
     context.agents && actor.scoped ? context.agents.forUser(actor.user.id) : context.agents;
-  const response = await withUserTools(
-    { store, tools: context.tools, userId: actor.user.id },
-    (fresh) =>
-      resumeChatTurn({
-        store,
-        provider: context.provider,
-        tools: fresh,
-        approvals: context.approvals,
-        asks,
-        agents,
-        memory: context.memory,
-        computer: context.computer,
-        connector: context.connector,
-        userId,
-        tool: claimed,
-        answer: accepted,
-      }),
-  );
-  if (!response.body || !response.headers.get("content-type")?.includes("text/event-stream")) {
-    const failure = (await response.json().catch(() => null)) as { error?: string } | null;
-    const text = failure?.error ?? "The turn could not continue.";
-    await noteStoredAsk(store, { ...claimed, output: accepted }, accepted);
-    return Response.json({ error: text }, { status: response.status || 500 });
+
+  // A turn still running in this process is waiting on the question: the
+  // database claim picks one winner, then the waiter wakes. No lock is needed,
+  // since nothing new starts. That turn may be a resume that holds the lock.
+  if (asks.waiting(id)) {
+    const claimed = await store.claimToolCall(id, "done", accepted);
+    if (!claimed) return gone();
+    if (asks.answer(id, accepted) === "ok") return Response.json({ id, answer: accepted });
+    return resumeStored(claimed, accepted, null);
   }
-  const outcome = await followResume(response.body);
-  return Response.json({ id, answer: accepted, resumed: true, ...outcome });
+
+  // The live turn is gone. Lock the conversation before claiming, so a new
+  // message cannot start between the claim and the resume.
+  const release = lockConversation(pending.conversationId);
+  if (!release) return Response.json({ error: CONVERSATION_BUSY }, { status: 409 });
+  let claimed: StoredToolCall | null;
+  try {
+    claimed = await store.claimToolCall(id, "done", accepted);
+  } catch (error) {
+    release();
+    throw error;
+  }
+  if (!claimed) {
+    release();
+    return gone();
+  }
+  return resumeStored(claimed, accepted, release);
+
+  /**
+   * Resume through the same turn builder a new message uses, with this user's
+   * own connector tools. `release` is the conversation lock, handed to the turn.
+   */
+  async function resumeStored(
+    tool: StoredToolCall,
+    output: string,
+    held: (() => void) | null,
+  ): Promise<Response> {
+    const release = held ?? lockConversation(tool.conversationId);
+    if (!release) {
+      await noteStoredAsk(store, { ...tool, output }, output);
+      return Response.json({ error: CONVERSATION_BUSY }, { status: 409 });
+    }
+    let handedOff = false;
+    let response: Response;
+    try {
+      response = await withUserTools({ store, tools: context.tools, userId: actorId }, (fresh) => {
+        handedOff = true;
+        return resumeChatTurn({
+          store,
+          provider: context.provider,
+          tools: fresh,
+          approvals: context.approvals,
+          asks,
+          agents,
+          memory: context.memory,
+          computer: context.computer,
+          connector: context.connector,
+          userId,
+          tool,
+          answer: output,
+          release,
+        });
+      });
+    } finally {
+      if (!handedOff) release();
+    }
+    if (!response.body || !response.headers.get("content-type")?.includes("text/event-stream")) {
+      const failure = (await response.json().catch(() => null)) as { error?: string } | null;
+      const text = failure?.error ?? "The turn could not continue.";
+      await noteStoredAsk(store, { ...tool, output }, output);
+      return Response.json({ error: text }, { status: response.status || 500 });
+    }
+    const outcome = await followResume(response.body);
+    return Response.json({ id, answer: output, resumed: true, ...outcome });
+  }
 }
 
 function gone(): Response {

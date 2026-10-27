@@ -1,7 +1,8 @@
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { POST as postChat } from "../app/api/chat/route";
 import { POST as postApproval } from "../app/api/tools/approvals/route";
 import { POST as postAsk } from "../app/api/tools/asks/route";
+import { CONVERSATION_BUSY } from "../src/chat";
 import { resetAppContext, setAppContext } from "../src/context";
 import { MockProvider, streamOptions, type LlmProvider } from "../src/llm";
 import { SseParser } from "../src/sse";
@@ -16,6 +17,7 @@ import type { LlmMessage, Message, StoredToolCall } from "../src/types";
 // One test per review issue on the ask_user resume path (PR #37).
 
 afterEach(() => {
+  vi.restoreAllMocks();
   resetAppContext();
 });
 
@@ -261,6 +263,106 @@ it("blocks a new turn while a stored question with no live waiter is open", asyn
   const blocked = await sendMessage(started.conversationId, "Never mind, do this instead");
   expect(blocked.status).toBe(409);
   expect(((await blocked.json()) as { error: string }).error).toContain("waiting for an answer");
+});
+
+it("locks the conversation before claiming, so a new turn cannot slip in before the resume", async () => {
+  const store = await ConversationStore.open();
+  const started = await startAsk(
+    store,
+    scripted(() => [ASK]),
+    createDefaultTools({}),
+  );
+  // Hold the answer right after its claim lands, before the resume starts.
+  let claimedNow!: () => void;
+  const claimLanded = new Promise<void>((resolve) => (claimedNow = resolve));
+  let resumeNow!: () => void;
+  const hold = new Promise<void>((resolve) => (resumeNow = resolve));
+  const claim = store.claimToolCall.bind(store);
+  vi.spyOn(store, "claimToolCall").mockImplementation(async (...args) => {
+    const row = await claim(...args);
+    claimedNow();
+    await hold;
+    return row;
+  });
+
+  const answering = answer(started.id, "Yes");
+  await claimLanded;
+  expect((await store.getToolCall(started.id))?.status).toBe("done");
+  const raced = await sendMessage(started.conversationId, "Something else");
+  expect(raced.status).toBe(409);
+  expect(((await raced.json()) as { error: string }).error).toBe(CONVERSATION_BUSY);
+
+  resumeNow();
+  expect((await answering).status).toBe(200);
+  const users = (await store.getConversation(started.conversationId))?.messages.filter(
+    (message) => message.role === "user",
+  );
+  expect(users?.map((message) => message.content)).toEqual(["Ask whether to continue"]);
+});
+
+it("refuses an answer without claiming it while a new turn is starting", async () => {
+  const store = await ConversationStore.open();
+  const started = await startAsk(
+    store,
+    scripted(() => [ASK]),
+    createDefaultTools({}),
+  );
+  // Hold a new turn inside its start checks, while it holds the lock.
+  let checking!: () => void;
+  const inCheck = new Promise<void>((resolve) => (checking = resolve));
+  let finishCheck!: () => void;
+  const hold = new Promise<void>((resolve) => (finishCheck = resolve));
+  const hasOpenAsk = store.hasOpenAsk.bind(store);
+  vi.spyOn(store, "hasOpenAsk").mockImplementation(async (id) => {
+    checking();
+    await hold;
+    return hasOpenAsk(id);
+  });
+
+  const turn = sendMessage(started.conversationId, "Something else");
+  await inCheck;
+  const answered = await answer(started.id, "Yes");
+  expect(answered.status).toBe(409);
+  expect(((await answered.json()) as { error: string }).error).toBe(CONVERSATION_BUSY);
+  // The claim never ran, so the question can still be answered.
+  expect((await store.getToolCall(started.id))?.status).toBe("ask");
+
+  finishCheck();
+  expect((await turn).status).toBe(409);
+  vi.restoreAllMocks();
+  expect((await answer(started.id, "Yes")).status).toBe(200);
+});
+
+it("ends a failed resume's trace so the client unlocks the composer", async () => {
+  const store = await ConversationStore.open();
+  const tools = createDefaultTools({});
+  const inner = scripted(() => [ASK]);
+  let failFollowUp = false;
+  const provider = {
+    id: inner.id,
+    model: inner.model,
+    stream(messages, input) {
+      if (failFollowUp) throw new Error("upstream unavailable");
+      return inner.stream(messages, input);
+    },
+  } as LlmProvider;
+  const started = await startAsk(store, provider, tools);
+  failFollowUp = true;
+
+  const response = await answer(started.id, "Yes");
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ state: "error", error: "upstream unavailable" });
+
+  const loaded = await store.getConversation(started.conversationId);
+  const message = await lastAssistant(store, started.conversationId);
+  expect(message.trace?.ended).toBe(true);
+  expect(message.trace?.finishReason).toBe("error");
+  expect(resumeProgress(loaded?.messages ?? [], started.id)).toBe("done");
+  // The lock is released too: the next message runs.
+  failFollowUp = false;
+  const next = await sendMessage(started.conversationId, "Try again");
+  expect(next.status).toBe(200);
+  await next.body?.cancel();
 });
 
 // Helpers

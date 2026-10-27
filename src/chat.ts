@@ -147,19 +147,33 @@ export type ChatTurnOptions = {
 export const UNATTENDED_APPROVAL =
   "This run has nobody to approve actions, so this one was not run. Do not retry it unless the person asks.";
 
+/**
+ * Conversations whose turn is starting, or whose paused turn is resuming. A new
+ * turn holds the lock while it checks for open questions and adds its message.
+ * An answer takes it before claiming the question and keeps it until the
+ * resumed turn finishes. So the two can never interleave.
+ */
+const lockedConversations = new Set<string>();
+
+export const CONVERSATION_BUSY = "The previous turn is still finishing in this conversation.";
+
+/** Take the conversation's turn lock. Returns its release, or null when it is held. */
+export function lockConversation(conversationId: string): (() => void) | null {
+  if (lockedConversations.has(conversationId)) return null;
+  lockedConversations.add(conversationId);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    lockedConversations.delete(conversationId);
+  };
+}
+
 /** New turns wait while a question or approval in this conversation is still open. */
-/** Conversations whose paused turn is running again after a stored answer. */
-const resumingConversations = new Set<string>();
-
-const RESUMING_ERROR = "The previous turn is still finishing in this conversation.";
-
 async function pendingTurnBlock(
   options: ChatTurnOptions,
   conversationId: string,
 ): Promise<Response | null> {
-  if (resumingConversations.has(conversationId)) {
-    return Response.json({ error: RESUMING_ERROR }, { status: 409 });
-  }
   if (options.approvals.hasPending(conversationId)) {
     return Response.json(
       { error: "An approval is still pending for this conversation." },
@@ -207,20 +221,43 @@ export async function streamChatTurn(
   }
   const named = await options.store.nameIfEmpty(conversation.id, titleFromMessage(message), userId);
   if (named) conversation = named;
-  const blocked = await pendingTurnBlock(options, conversation.id);
-  if (blocked) return blocked;
-
-  const user = await options.store.addMessage(conversation.id, "user", message);
-  return runChatTurn({ ...options, agents }, conversation, { userMessageId: user.id });
+  const release = lockConversation(conversation.id);
+  if (!release) return Response.json({ error: CONVERSATION_BUSY }, { status: 409 });
+  let userMessageId: string;
+  try {
+    const blocked = await pendingTurnBlock(options, conversation.id);
+    if (blocked) return blocked;
+    userMessageId = (await options.store.addMessage(conversation.id, "user", message)).id;
+  } finally {
+    release();
+  }
+  return runChatTurn({ ...options, agents }, conversation, { userMessageId });
 }
 
 /**
  * Continue a turn that paused on ask_user after its live waiter is gone. The
- * answer row is already claimed. The same turn builder and loop as a new
- * message run it, seeded with the stored assistant message.
+ * caller holds the conversation lock (lockConversation) and has claimed the
+ * answer row. This takes over `release` and calls it when the resumed turn
+ * ends. The same turn builder and loop as a new message run it, seeded with
+ * the stored assistant message.
  */
 export async function resumeChatTurn(
-  options: ChatTurnOptions & { tool: StoredToolCall; answer: string },
+  options: ChatTurnOptions & { tool: StoredToolCall; answer: string; release: () => void },
+): Promise<Response> {
+  const { release } = options;
+  try {
+    const response = await startResume(options);
+    // A streamed turn releases the lock when its stream finishes.
+    if (!response.headers.get("content-type")?.includes("text/event-stream")) release();
+    return response;
+  } catch (error) {
+    release();
+    throw error;
+  }
+}
+
+async function startResume(
+  options: ChatTurnOptions & { tool: StoredToolCall; answer: string; release: () => void },
 ): Promise<Response> {
   const loaded = await options.store.getConversation(
     options.tool.conversationId,
@@ -242,34 +279,21 @@ export async function resumeChatTurn(
       { status: 409 },
     );
   }
-  const conversationId = loaded.conversation.id;
-  if (resumingConversations.has(conversationId)) {
-    return Response.json({ error: RESUMING_ERROR }, { status: 409 });
-  }
-  resumingConversations.add(conversationId);
-  try {
-    const trace = applyStreamEvent(message.trace ?? emptyTrace(), {
-      type: "tool_result",
-      id: options.tool.id,
-      name: ASK_USER_TOOL,
-      content: options.answer,
-    });
-    await options.store.updateMessage(message.id, trace.text, trace);
-    const response = await runChatTurn(options, loaded.conversation, {
-      resume: { messageId: message.id, trace },
-    });
-    // A streamed turn releases the conversation when its stream finishes.
-    if (!response.headers.get("content-type")?.includes("text/event-stream")) {
-      resumingConversations.delete(conversationId);
-    }
-    return response;
-  } catch (error) {
-    resumingConversations.delete(conversationId);
-    throw error;
-  }
+  const trace = applyStreamEvent(message.trace ?? emptyTrace(), {
+    type: "tool_result",
+    id: options.tool.id,
+    name: ASK_USER_TOOL,
+    content: options.answer,
+  });
+  await options.store.updateMessage(message.id, trace.text, trace);
+  return runChatTurn(options, loaded.conversation, {
+    resume: { messageId: message.id, trace, release: options.release },
+  });
 }
 
-type TurnStart = { userMessageId: string } | { resume: { messageId: string; trace: MessageTrace } };
+type TurnStart =
+  | { userMessageId: string }
+  | { resume: { messageId: string; trace: MessageTrace; release: () => void } };
 
 /** The stored turn as model history: one assistant message with its calls, then each result. */
 function resumedHistory(trace: MessageTrace): LlmMessage[] {
@@ -623,6 +647,11 @@ async function runChatTurn(
         } else {
           runStatus = "error";
           await stopOpenCalls();
+          // A failed turn is over. Ending its trace lets a client watching a
+          // resumed turn stop waiting and unlock the composer.
+          if (trace.started) {
+            trace = applyStreamEvent(trace, { type: "end", finishReason: "error" });
+          }
           const text = error instanceof Error ? error.message : "The model request failed";
           await ignoreRunLog(runLog.fail(text));
           enqueue("error", { message: text });
@@ -632,7 +661,7 @@ async function runChatTurn(
           await persist(partial, trace);
           await ignoreRunLog(runLog.mark("run.finished", { status: runStatus }));
         } finally {
-          if (resume) resumingConversations.delete(conversation.id);
+          resume?.release();
           close();
         }
       }
