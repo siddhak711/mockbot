@@ -25,6 +25,8 @@ export type RemoteSandbox = {
 export type RemoteSandboxFleet = {
   create(agentId: string): Promise<RemoteSandbox>;
   reconnect(sandboxId: string): Promise<RemoteSandbox | null>;
+  /** Delete a sandbox this process created but lost the race to save. */
+  destroy(sandboxId: string): Promise<void>;
 };
 
 export type DaytonaSettings = {
@@ -173,12 +175,24 @@ export class DaytonaRuntime implements SandboxRuntime {
     let handle: RemoteSandbox | null = null;
     if (computer.sandboxId) handle = await this.fleet.reconnect(computer.sandboxId);
     if (!handle && !create) return null;
-    if (!handle) {
-      handle = await this.fleet.create(agentId);
-      await this.store.setSandboxId(agentId, handle.id);
-    }
+    if (!handle) handle = await this.#createClaimed(agentId, computer.sandboxId);
     this.#handles.set(agentId, handle);
     return handle;
+  }
+
+  /**
+   * Create a sandbox and save it only if no other process saved one first.
+   * The in-process opening map cannot see other serverless instances, so the
+   * database decides. The loser deletes its sandbox and uses the winner's.
+   */
+  async #createClaimed(agentId: string, stale: string | null): Promise<RemoteSandbox> {
+    const created = await this.fleet.create(agentId);
+    const saved = await this.store.claimSandboxId(agentId, created.id, stale);
+    if (saved === created.id) return created;
+    await this.fleet.destroy(created.id).catch(() => undefined);
+    const winner = saved ? await this.fleet.reconnect(saved) : null;
+    if (!winner) throw new Error("Sandbox is unavailable");
+    return winner;
   }
 }
 
@@ -220,6 +234,15 @@ class SdkFleet implements RemoteSandboxFleet {
     } catch (error) {
       redactError(error, this.secret);
       return null;
+    }
+  }
+
+  async destroy(sandboxId: string): Promise<void> {
+    try {
+      const sandbox = await this.daytona.get(sandboxId);
+      await this.daytona.delete(sandbox);
+    } catch (error) {
+      throw redactError(error, this.secret);
     }
   }
 

@@ -1,14 +1,22 @@
+import { AgentDirectory } from "../agents/directory";
 import { LEAD_AGENT_ID } from "../agents/ids";
 import type { LlmProvider } from "../llm";
 import type { ConversationStore } from "../store";
 import { emptyTrace } from "../trace";
 import type { Clock } from "./clock";
 import type { RoutineStore } from "./store";
-import { promptForRun, runRoutineTurn } from "./turn";
+import { ROUTINE_STREAM_TIMEOUT_MS, promptForRun, runRoutineTurn } from "./turn";
 
 export type TickResult = { claimed: number; succeeded: number; failed: number };
 
 const DEFAULT_LIMIT = 25;
+const DEFAULT_CONCURRENCY = 4;
+
+/**
+ * How long a claimed run may stay 'running' before another tick fails it.
+ * Three stream timeouts, so a live worker that is merely slow is never reclaimed.
+ */
+export const ROUTINE_LEASE_MS = 3 * ROUTINE_STREAM_TIMEOUT_MS;
 
 function errorText(error: unknown): string {
   const message = error instanceof Error && error.message ? error.message : "Routine run failed";
@@ -100,80 +108,118 @@ async function ensureConversation(
   return moved;
 }
 
-export async function tick(options: {
+type TickOptions = {
   routines: RoutineStore;
   store: ConversationStore;
   provider: LlmProvider;
   clock: Clock;
   workerId: string;
   limit?: number;
-}): Promise<TickResult> {
+  /** Runs worked at once. One stalled provider call no longer blocks the rest. */
+  concurrency?: number;
+  /** A run claimed longer ago than this is failed by the next tick. */
+  leaseMs?: number;
+  /** Upper bound on one model stream. Keep it well under the lease. */
+  streamTimeoutMs?: number;
+  agents?: AgentDirectory;
+};
+
+type Job = NonNullable<Awaited<ReturnType<RoutineStore["claimNext"]>>>;
+
+async function runJob(
+  options: TickOptions & { agents: AgentDirectory },
+  job: Job,
+  now: Date,
+  result: TickResult,
+): Promise<void> {
+  let conversationId: string | null = job.routine.conversationId;
+  try {
+    conversationId = await ensureConversation(
+      options.store,
+      options.routines,
+      job.routine,
+      conversationId,
+      now,
+    );
+    const activeConversation = conversationId;
+    await withConversation(activeConversation, async () => {
+      try {
+        const event = job.run.eventId ? await options.routines.getEvent(job.run.eventId) : null;
+        const turn = await runRoutineTurn({
+          store: options.store,
+          provider: options.provider,
+          conversationId: activeConversation,
+          prompt: promptForRun(job.routine.prompt, event),
+          runId: job.run.id,
+          agents: options.agents,
+          timeoutMs: options.streamTimeoutMs,
+        });
+        const saved = await options.routines.finishRun(job.run.id, options.workerId, {
+          status: "succeeded",
+          finishedAt: options.clock.now(),
+          conversationId: activeConversation,
+          assistantMessageId: turn.assistantMessageId,
+          error: null,
+        });
+        if (saved) result.succeeded += 1;
+      } catch (error) {
+        const text = errorText(error);
+        let assistantMessageId: string | null = null;
+        try {
+          assistantMessageId = await recordFailure(options.store, activeConversation, text);
+        } catch {
+          // The run is still marked failed. The next turn skips an unanswered prompt.
+        }
+        const saved = await options.routines.finishRun(job.run.id, options.workerId, {
+          status: "failed",
+          finishedAt: options.clock.now(),
+          conversationId: activeConversation,
+          assistantMessageId,
+          error: text,
+        });
+        if (saved) result.failed += 1;
+      }
+    });
+  } catch (error) {
+    const text = errorText(error);
+    const saved = await options.routines.finishRun(job.run.id, options.workerId, {
+      status: "failed",
+      finishedAt: options.clock.now(),
+      conversationId,
+      assistantMessageId: null,
+      error: text,
+    });
+    if (saved) result.failed += 1;
+  }
+}
+
+export async function tick(options: TickOptions): Promise<TickResult> {
   const now = options.clock.now();
+  await options.routines.reclaimStale(now, options.leaseMs ?? ROUTINE_LEASE_MS);
   await options.routines.enqueueDue(now);
   const limit = options.limit ?? DEFAULT_LIMIT;
+  const concurrency = Math.max(1, options.concurrency ?? DEFAULT_CONCURRENCY);
+  const agents = options.agents ?? (await AgentDirectory.attach(options.store));
   const result: TickResult = { claimed: 0, succeeded: 0, failed: 0 };
-  while (result.claimed < limit) {
-    const job = await options.routines.claimNext(options.workerId, now);
-    if (!job) break;
-    result.claimed += 1;
-    let conversationId: string | null = job.routine.conversationId;
-    try {
-      conversationId = await ensureConversation(
-        options.store,
-        options.routines,
-        job.routine,
-        conversationId,
-        now,
+  let reserved = 0;
+  let drained = false;
+  const lane = async () => {
+    while (!drained && reserved < limit) {
+      reserved += 1;
+      const job = await options.routines.claimNext(options.workerId, now);
+      if (!job) {
+        reserved -= 1;
+        drained = true;
+        return;
+      }
+      result.claimed += 1;
+      // Runs of one routine keep their claim order across lanes.
+      await withConversation(`routine:${job.routine.id}`, () =>
+        runJob({ ...options, agents }, job, now, result),
       );
-      const activeConversation = conversationId;
-      await withConversation(activeConversation, async () => {
-        try {
-          const event = job.run.eventId ? await options.routines.getEvent(job.run.eventId) : null;
-          const turn = await runRoutineTurn({
-            store: options.store,
-            provider: options.provider,
-            conversationId: activeConversation,
-            prompt: promptForRun(job.routine.prompt, event),
-            runId: job.run.id,
-          });
-          const saved = await options.routines.finishRun(job.run.id, options.workerId, {
-            status: "succeeded",
-            finishedAt: options.clock.now(),
-            conversationId: activeConversation,
-            assistantMessageId: turn.assistantMessageId,
-            error: null,
-          });
-          if (saved) result.succeeded += 1;
-        } catch (error) {
-          const text = errorText(error);
-          let assistantMessageId: string | null = null;
-          try {
-            assistantMessageId = await recordFailure(options.store, activeConversation, text);
-          } catch {
-            // The run is still marked failed. The next turn skips an unanswered prompt.
-          }
-          const saved = await options.routines.finishRun(job.run.id, options.workerId, {
-            status: "failed",
-            finishedAt: options.clock.now(),
-            conversationId: activeConversation,
-            assistantMessageId,
-            error: text,
-          });
-          if (saved) result.failed += 1;
-        }
-      });
-    } catch (error) {
-      const text = errorText(error);
-      const saved = await options.routines.finishRun(job.run.id, options.workerId, {
-        status: "failed",
-        finishedAt: options.clock.now(),
-        conversationId,
-        assistantMessageId: null,
-        error: text,
-      });
-      if (saved) result.failed += 1;
     }
-  }
+  };
+  await Promise.all(Array.from({ length: concurrency }, lane));
   return result;
 }
 
@@ -192,17 +238,14 @@ export async function sleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-export async function runWorker(options: {
-  routines: RoutineStore;
-  store: ConversationStore;
-  provider: LlmProvider;
-  clock: Clock;
-  workerId: string;
-  pollMs: number;
-  signal: AbortSignal;
-  onTick?: (result: TickResult) => void;
-  onError?: (error: unknown) => void;
-}): Promise<void> {
+export async function runWorker(
+  options: TickOptions & {
+    pollMs: number;
+    signal: AbortSignal;
+    onTick?: (result: TickResult) => void;
+    onError?: (error: unknown) => void;
+  },
+): Promise<void> {
   while (!options.signal.aborted) {
     try {
       const result = await tick(options);

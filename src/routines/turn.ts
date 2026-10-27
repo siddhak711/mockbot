@@ -1,3 +1,7 @@
+import { AgentDirectory } from "../agents/directory";
+import { NoteMemory } from "../agents/ports";
+import { buildAgentSystemPrompt } from "../agents/prompt";
+import type { AgentMemoryPort } from "../agents/types";
 import { SYSTEM_PROMPT, type LlmProvider } from "../llm";
 import {
   RunLog,
@@ -47,10 +51,48 @@ function routineHistory(prepared: LlmMessage[]): LlmMessage[] {
   return [...system, ...kept];
 }
 
+/** A model stream that runs longer than this is aborted, so a stalled provider frees the worker. */
+export const ROUTINE_STREAM_TIMEOUT_MS = 5 * 60_000;
+
+function timeoutError(ms: number): Error {
+  return new Error(`Routine model call timed out after ${Math.round(ms / 1000)}s`);
+}
+
+/**
+ * Stop iterating when the signal fires, even if the provider ignores it.
+ * A provider that never yields again would otherwise hold the worker forever.
+ */
+async function* untilAborted<T>(
+  source: AsyncIterable<T>,
+  signal: AbortSignal,
+  reason: () => Error,
+): AsyncIterable<T> {
+  const iterator = source[Symbol.asyncIterator]();
+  let onAbort: () => void = () => {};
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(reason());
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+  });
+  aborted.catch(() => undefined);
+  try {
+    while (true) {
+      const next = await Promise.race([iterator.next(), aborted]);
+      if (next.done) return;
+      yield next.value;
+    }
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+    void Promise.resolve(iterator.return?.()).catch(() => undefined);
+  }
+}
+
 /**
  * The only place a routine invokes the agent loop.
  * It stores the prompt and the finished reply on the routine's conversation.
- * Later milestones can replace this with the shared tool loop.
+ * The system prompt carries the target agent's instructions, memory note, and
+ * grants, as chat and delegate build it. Tools are not offered: the shared
+ * tool loop lives in the chat route and the worker cannot reach it yet.
  */
 export async function runRoutineTurn(options: {
   store: ConversationStore;
@@ -58,6 +100,9 @@ export async function runRoutineTurn(options: {
   conversationId: string;
   prompt: string;
   runId?: string;
+  agents?: AgentDirectory;
+  memory?: AgentMemoryPort;
+  timeoutMs?: number;
 }): Promise<{ assistantMessageId: string; text: string; runId: string }> {
   const log = new RunLog(options.store.connection, options.runId);
   await ignoreRunLog(log.mark("run.started", { conversationId: options.conversationId }));
@@ -65,21 +110,35 @@ export async function runRoutineTurn(options: {
     await options.store.addMessage(options.conversationId, "user", options.prompt);
     const stored = await options.store.getConversation(options.conversationId);
     if (!stored) throw new Error("Conversation disappeared before the routine ran");
+    const agents = options.agents ?? (await AgentDirectory.attach(options.store));
+    const memory = options.memory ?? new NoteMemory(agents);
+    const speaker = (await agents.get(stored.conversation.agentId)) ?? (await agents.lead());
+    if (!speaker) throw new Error("Agent not found");
+    const [memories, grants] = await Promise.all([
+      memory.list(speaker.id),
+      agents.listGrants(speaker.id),
+    ]);
     const prepared = await buildModelInput({
       store: options.store,
       conversationId: options.conversationId,
       agentId: stored.conversation.agentId,
+      agentPrompt: buildAgentSystemPrompt({ agent: speaker, memories, grants, child: false }),
     });
     if (!prepared) throw new Error("Conversation disappeared before the routine ran");
     const history = routineHistory(prepared.messages);
     let trace = emptyTrace();
     const capture = emptyModelCapture();
     const started = performance.now();
+    const timeoutMs = options.timeoutMs ?? ROUTINE_STREAM_TIMEOUT_MS;
+    const signal = AbortSignal.timeout(timeoutMs);
     try {
-      for await (const event of options.provider.stream(history)) {
+      const events = options.provider.stream(history, { signal });
+      for await (const event of untilAborted(events, signal, () => timeoutError(timeoutMs))) {
         captureModelEvent(capture, event);
         trace = applyStreamEvent(trace, event);
       }
+      // A provider that honors the signal may end quietly instead of throwing.
+      if (signal.aborted) throw timeoutError(timeoutMs);
     } finally {
       await ignoreRunLog(
         log.recordModel({

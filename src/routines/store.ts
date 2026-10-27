@@ -1,7 +1,7 @@
 import type { Sql } from "../db/sql";
 import type { ConversationStore } from "../store";
 import { CronError, nextCron } from "./cron";
-import { ROUTINES_MIGRATION } from "./migration";
+import { ADOPT_OWNERLESS_ROUTINES } from "./migration";
 import type { Routine, RoutineEvent, RoutineRun, RoutineStatus } from "./types";
 import {
   RoutineInputError,
@@ -148,7 +148,7 @@ export class RoutineStore {
   private constructor(private readonly conversations: ConversationStore) {}
 
   static async attach(conversations: ConversationStore): Promise<RoutineStore> {
-    await conversations.connection.exec(ROUTINES_MIGRATION);
+    await conversations.connection.query(ADOPT_OWNERLESS_ROUTINES);
     return new RoutineStore(conversations);
   }
 
@@ -394,6 +394,31 @@ export class RoutineStore {
     const routine = await this.get(row.routine_id);
     if (!routine) return null;
     return { run: mapRun(row), routine };
+  }
+
+  /**
+   * Fail runs whose claim is older than the lease. Their worker died or hung,
+   * so nothing else will ever finish them. They are failed, not re-queued: the
+   * turn may already have written the prompt or a partial reply to the thread,
+   * and running it again would repeat that. The next cron occurrence still runs.
+   * A late finish from the old worker is ignored, since finishRun needs 'running'.
+   */
+  async reclaimStale(now: Date, leaseMs: number): Promise<number> {
+    const cutoff = new Date(now.getTime() - leaseMs);
+    const minutes = Math.round(leaseMs / 60_000);
+    const rows = await query<{ id: string }>(
+      this.db,
+      `UPDATE routine_runs
+       SET status = 'failed',
+           finished_at = $2,
+           error = $3
+       WHERE status = 'running'
+         AND claimed_at IS NOT NULL
+         AND claimed_at < $1
+       RETURNING id`,
+      [cutoff, now, `Routine run abandoned: its worker did not finish within ${minutes} minutes.`],
+    );
+    return rows.length;
   }
 
   async finishRun(runId: string, workerId: string, outcome: FinishInput): Promise<boolean> {
