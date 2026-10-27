@@ -72,6 +72,8 @@ function eventData(event: LlmStreamEvent): unknown {
       return { id: event.id, name: event.name, content: event.content };
     case "end":
       return { finishReason: event.finishReason };
+    case "route":
+      return { tier: event.tier, reason: event.reason, model: event.model };
   }
 }
 
@@ -350,6 +352,10 @@ export async function streamChatTurn(options: {
 
           try {
             for await (const event of events) {
+              if (event.type === "route") {
+                route = { tier: event.tier, reason: event.reason, model: event.model };
+                continue;
+              }
               if (signal?.aborted || userStopped) break;
               if (!sawStart && event.type !== "start") {
                 sawStart = true;

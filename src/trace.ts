@@ -81,6 +81,8 @@ export function applyStreamEvent(trace: MessageTrace, event: LlmStreamEvent): Me
   switch (event.type) {
     case "start":
       return { ...trace, started: true, role: "assistant" };
+    case "route":
+      return trace;
     case "reasoning":
       return {
         ...trace,

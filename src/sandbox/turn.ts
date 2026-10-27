@@ -30,13 +30,8 @@ export class SandboxTurnProvider implements LlmProvider {
     const plan =
       this.#inner.id === "mock" && ownsComputerTurn(messages, text) ? planComputerTurn(text) : null;
     if (!plan) {
-      const inner = this.#inner.stream(messages, input) as AsyncIterable<LlmStreamEvent> & {
-        decision?: unknown;
-      };
-      async function* forward(): AsyncIterable<LlmStreamEvent> {
-        yield* inner;
-      }
-      return inner.decision ? Object.assign(forward(), { decision: inner.decision }) : forward();
+      // Hand back the router iterable itself. A new generator would drop `.decision`.
+      return this.#inner.stream(messages, input);
     }
 
     const delayMs = this.#delayMs;

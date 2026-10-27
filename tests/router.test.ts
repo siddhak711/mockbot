@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { once } from "node:events";
 import { afterEach, expect, it, vi } from "vitest";
+import { withAgentMock } from "../src/agents/mock-script";
 import { POST as createAgent } from "../app/api/agents/route";
 import { POST } from "../app/api/chat/route";
 import { streamChatTurn } from "../src/chat";
@@ -703,6 +704,88 @@ it("keeps concurrent requests on their own tiers", async () => {
     tier: "strong",
     reason: "code",
     model: DEFAULT_ROUTER_CONFIG.strong.id,
+  });
+});
+
+function liveStack(store: ConversationStore): LlmProvider {
+  return new SandboxTurnProvider({
+    inner: new RoutingProvider({
+      inner: withAgentMock(
+        selectProvider({
+          LLM_PROVIDER: "mock",
+          MOCK_STREAM_DELAY_MS: "0",
+          MOCK_CHUNK_SIZE: "80",
+        }),
+      ),
+      config: DEFAULT_ROUTER_CONFIG,
+      db: store.connection,
+    }),
+    delayMs: 0,
+  });
+}
+
+it("saves trace.route through the live chat route", async () => {
+  const store = await ConversationStore.open();
+  const provider = liveStack(store);
+  expect(provider.constructor.name).toBe("SandboxTurnProvider");
+  const carried = provider.stream([{ role: "user", content: "Hello there" }]);
+  expect(streamDecision(carried)).toMatchObject({
+    tier: "cheap",
+    reason: "chat",
+    model: DEFAULT_ROUTER_CONFIG.cheap.id,
+  });
+  for await (const _event of carried) {
+    // The sandbox wrapper must expose the router decision, not drop it.
+  }
+  setAppContext({ store, provider });
+  const response = await POST(
+    new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Hello there" }),
+    }),
+  );
+  const events = await readSse(response);
+  expect(events.some((event) => event.event === "error")).toBe(false);
+  expect(events.some((event) => event.event === "route")).toBe(false);
+  const loaded = await store.getConversation((await store.listConversations())[0]!.id);
+  expect(
+    loaded?.messages.find((message) => message.role === "assistant")?.trace?.route,
+  ).toMatchObject({
+    tier: "cheap",
+    reason: "chat",
+    model: DEFAULT_ROUTER_CONFIG.cheap.id,
+  });
+});
+
+it("saves trace.route when a yield* wrapper drops .decision", async () => {
+  const store = await ConversationStore.open();
+  const inner = liveStack(store);
+  const dropping: LlmProvider = {
+    id: inner.id,
+    model: inner.model,
+    async *stream(messages, input) {
+      yield* inner.stream(messages, input);
+    },
+  };
+  const dropped = dropping.stream([{ role: "user", content: "Hello there" }]);
+  expect(streamDecision(dropped)).toBeUndefined();
+  setAppContext({ store, provider: dropping });
+  const response = await POST(
+    new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Hello there" }),
+    }),
+  );
+  await readSse(response);
+  const loaded = await store.getConversation((await store.listConversations())[0]!.id);
+  expect(
+    loaded?.messages.find((message) => message.role === "assistant")?.trace?.route,
+  ).toMatchObject({
+    tier: "cheap",
+    reason: "chat",
+    model: DEFAULT_ROUTER_CONFIG.cheap.id,
   });
 });
 

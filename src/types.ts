@@ -120,6 +120,12 @@ export type LivePhase = "start" | "reasoning" | "tool" | "text" | "end";
 export type LlmStreamEvent =
   | { type: "start"; role: "assistant" }
   | { type: "reasoning"; text: string }
+  | {
+      type: "route";
+      tier: "cheap" | "strong";
+      reason: "chat" | "tool" | "plan" | "code" | "retry";
+      model: string;
+    }
   | { type: "tool_call"; index: number; id?: string; name?: string; arguments?: string }
   | { type: "tool_result"; id: string; name: string; content: string }
   | { type: "text"; text: string }

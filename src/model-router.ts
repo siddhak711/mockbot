@@ -426,6 +426,13 @@ export class RoutingProvider implements LlmProvider {
     async function* generate(): AsyncIterable<LlmStreamEvent> {
       let outputTokens = 0;
       try {
+        // First event, so a wrapper that only yield*s still delivers this turn's tier.
+        yield {
+          type: "route",
+          tier: decision.tier,
+          reason: decision.reason,
+          model: decision.model,
+        };
         for await (const event of inner.stream(messages, {
           ...options,
           model: decision.model,
