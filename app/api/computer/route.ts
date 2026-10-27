@@ -12,9 +12,7 @@ export async function GET(request: Request): Promise<Response> {
   const actor = await requireApiUser(request);
   if (!actor.ok) return actor.response;
   const { sandbox, sandboxError } = await getAppContext();
-  if (!sandbox) {
-    return Response.json({ error: sandboxError ?? "Sandbox is not available" }, { status: 503 });
-  }
+  if (!sandbox) return unavailable(sandboxError);
   const requested = new URL(request.url).searchParams.get("agentId") ?? undefined;
   const agentId = normalizeAgentId(requested);
   if (!agentId) return Response.json({ error: "Unknown agent" }, { status: 400 });
@@ -25,9 +23,7 @@ export async function POST(request: Request): Promise<Response> {
   const actor = await requireApiUser(request);
   if (!actor.ok) return actor.response;
   const { sandbox, sandboxError } = await getAppContext();
-  if (!sandbox) {
-    return Response.json({ error: sandboxError ?? "Sandbox is not available" }, { status: 503 });
-  }
+  if (!sandbox) return unavailable(sandboxError);
   let body: unknown;
   try {
     body = await request.json();
@@ -65,4 +61,15 @@ export async function POST(request: Request): Promise<Response> {
     const message = error instanceof Error ? error.message : "Sandbox request failed";
     return Response.json({ error: message }, { status: 400 });
   }
+}
+
+/** 503 for the Computer pane. sandboxError names the missing setting when there is one. */
+function unavailable(sandboxError: string | undefined): Response {
+  return Response.json(
+    {
+      error: sandboxError ?? "Sandbox is not available",
+      ...(sandboxError ? { sandboxError } : {}),
+    },
+    { status: 503 },
+  );
 }

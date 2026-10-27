@@ -23,6 +23,7 @@ export function ComputerPane({
   onSelect,
   snapshot = null,
   status = "ready",
+  unavailableReason = null,
   onHide,
   embedded = false,
 }: {
@@ -31,6 +32,8 @@ export function ComputerPane({
   onSelect?: (id: string) => void;
   snapshot?: ComputerSnapshot | null;
   status?: "loading" | "ready" | "error";
+  /** The server's sandboxError, shown instead of the generic message. */
+  unavailableReason?: string | null;
   onHide?: () => void;
   embedded?: boolean;
 }) {
@@ -67,8 +70,14 @@ export function ComputerPane({
       </div>
     ) : status === "error" && !snapshot && activities.length === 0 ? (
       <div className="computer-empty">
-        <h3>Computer unavailable</h3>
-        <p>The sandbox inspector could not be loaded.</p>
+        {unavailableReason ? (
+          <p role="alert">{unavailableReason}</p>
+        ) : (
+          <>
+            <h3>Computer unavailable</h3>
+            <p>The sandbox inspector could not be loaded.</p>
+          </>
+        )}
       </div>
     ) : (
       <div className="computer-body">

@@ -88,7 +88,10 @@ it("surfaces the missing sandbox in the tool result and the computer pane", asyn
 
   const pane = await getComputer(new Request("http://localhost/api/computer"));
   expect(pane.status).toBe(503);
-  expect(await pane.json()).toEqual({ error: SANDBOX_NOT_CONFIGURED });
+  expect(await pane.json()).toEqual({
+    error: SANDBOX_NOT_CONFIGURED,
+    sandboxError: SANDBOX_NOT_CONFIGURED,
+  });
 });
 
 it("fails child-run computer and connector calls instead of inventing content", async () => {
