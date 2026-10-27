@@ -20,16 +20,69 @@ export function createPkcePair(): { verifier: string; challenge: string } {
   return { verifier, challenge };
 }
 
+/**
+ * Origin for the OAuth callback. APP_ORIGIN is an optional override.
+ * Without it, the origin comes from the request, then from NextAuth's URL.
+ */
 export function publicOrigin(request: Request, env: Record<string, string | undefined>): string {
-  const configured = env.APP_ORIGIN?.trim();
-  if (configured) return configured.replace(/\/$/, "");
-  const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
-  const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
-  if (forwardedHost) {
-    const proto = forwardedProto || "https";
-    return `${proto}://${forwardedHost}`;
+  return (
+    configuredOrigin(env.APP_ORIGIN) ??
+    requestOrigin(request) ??
+    urlOrigin(request.url) ??
+    configuredOrigin(env.AUTH_URL) ??
+    configuredOrigin(env.NEXTAUTH_URL) ??
+    "http://localhost:3000"
+  );
+}
+
+function urlOrigin(value: string): string | null {
+  try {
+    return configuredOrigin(value);
+  } catch {
+    return null;
   }
-  return new URL(request.url).origin;
+}
+
+function configuredOrigin(value: string | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+function requestOrigin(request: Request): string | null {
+  const host = headerValue(request, "x-forwarded-host") ?? headerValue(request, "host");
+  if (!host || /[\s/@\\]/.test(host)) return null;
+  const forwarded = headerValue(request, "x-forwarded-proto")?.toLowerCase();
+  const requestProto = new URL(request.url).protocol.replace(":", "");
+  const proto =
+    forwarded === "http" || forwarded === "https"
+      ? forwarded
+      : requestProto === "http" && isLocalHost(host)
+        ? "http"
+        : "https";
+  try {
+    const url = new URL(`${proto}://${host}`);
+    if (url.pathname !== "/" || url.username || url.password) return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+function headerValue(request: Request, name: string): string | null {
+  const value = request.headers.get(name)?.split(",")[0]?.trim();
+  return value || null;
+}
+
+function isLocalHost(host: string): boolean {
+  const name = host.replace(/:\d+$/, "").toLowerCase();
+  return name === "localhost" || name === "127.0.0.1" || name === "[::1]";
 }
 
 export function oauthRedirectUri(origin: string, entry: CatalogEntry): string {

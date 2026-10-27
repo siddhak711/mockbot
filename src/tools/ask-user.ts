@@ -2,6 +2,10 @@ import type { ToolDefinition } from "./types";
 
 export const ASK_USER_TOOL = "ask_user";
 
+export const ASK_UNATTENDED = "This routine has nobody to ask, so ask_user was not run.";
+
+export const ASK_EXPIRED = "This question expired.";
+
 const MAX_QUESTION = 500;
 const MAX_OPTIONS = 8;
 const MAX_OPTION = 200;
@@ -45,6 +49,13 @@ export function parseAskUser(
     return { ok: false, error: "ask_user needs at least one option, or allowCustom set to true." };
   }
   return { ok: true, request: { question, options, allowCustom } };
+}
+
+export function acceptedAskAnswer(request: AskUserRequest, answer: string): string | null {
+  const text = answer.trim();
+  if (!text || text.length > MAX_ANSWER) return null;
+  if (request.options.includes(text) || request.allowCustom) return text;
+  return null;
 }
 
 export function readAskUser(raw: string): AskUserRequest | null {
@@ -131,6 +142,11 @@ export class AskGate {
     return this.#waiters.get(id)?.conversationId ?? null;
   }
 
+  /** True when this process is blocked inside wait() for the id. */
+  waiting(id: string): boolean {
+    return this.#waiters.has(id);
+  }
+
   hasPending(conversationId: string): boolean {
     for (const waiter of this.#waiters.values()) {
       if (waiter.conversationId === conversationId) return true;
@@ -141,10 +157,8 @@ export class AskGate {
   answer(id: string, answer: string): "ok" | "missing" | "rejected" {
     const waiter = this.#waiters.get(id);
     if (!waiter) return "missing";
-    const text = answer.trim();
-    if (!text || text.length > MAX_ANSWER) return "rejected";
-    const allowed = waiter.request.options.includes(text) || waiter.request.allowCustom;
-    if (!allowed) return "rejected";
+    const text = acceptedAskAnswer(waiter.request, answer);
+    if (!text) return "rejected";
     waiter.resolve({ reason: "user", answer: text });
     return "ok";
   }

@@ -1,6 +1,7 @@
 import { SYSTEM_PROMPT, type LlmProvider } from "../llm";
 import type { ConversationStore } from "../store";
 import { applyStreamEvent, emptyTrace } from "../trace";
+import { ASK_UNATTENDED, ASK_USER_TOOL } from "../tools/ask-user";
 import type { LlmMessage, Role } from "../types";
 
 /**
@@ -44,6 +45,21 @@ export async function runRoutineTurn(options: {
   let trace = emptyTrace();
   for await (const event of options.provider.stream(history)) {
     trace = applyStreamEvent(trace, event);
+  }
+  if (trace.tools.some((tool) => tool.name === ASK_USER_TOOL)) {
+    trace = {
+      ...trace,
+      started: true,
+      role: "assistant",
+      text: ASK_UNATTENDED,
+      ended: true,
+      finishReason: "stop",
+      tools: trace.tools.map((tool) =>
+        tool.name === ASK_USER_TOOL && tool.result == null
+          ? { ...tool, result: ASK_UNATTENDED }
+          : tool,
+      ),
+    };
   }
   const assistant = await options.store.addMessage(
     options.conversationId,

@@ -69,7 +69,7 @@ The same names are listed in `.env.example`. If the Google variables are missing
 
 ### Existing rows
 
-Migration `006_auth` adds `users`, `accounts`, `sessions`, and `verification_tokens`, and nullable `user_id` on `conversations`, `agents`, and `memories`. It does not assign existing rows and it does not edit production by hand. The app migrator applies it on startup, the same way as the earlier migrations.
+Migration `006_auth` adds `users`, `accounts`, `sessions`, and `verification_tokens`, and nullable `user_id` on `conversations`, `agents`, and `memories`. It does not assign existing rows and it does not edit production by hand. The app migrator applies it on startup, the same way as the earlier migrations. Migration `007_composio_connections` stores each user's Composio connected-account id for a catalog app. Migration `008_connector_catalog` keeps one connector row per catalog app. Before the unique index, it keeps the oldest row for each catalog id and folds the other rows' tool settings into it.
 
 Rows with `user_id` still null are orphans from before accounts, or from a path that does not know the caller (the routines worker). The **earliest account**, ordered by `users.created_at` then `id`, adopts those rows the next time that account loads the app. Later accounts do not see them. Each account also gets its own lead agent named Mockbot. The legacy lead id `agent_default` stays the lead for the account that adopted it. Another account's lead has its own id and can still delegate.
 
@@ -153,31 +153,35 @@ GITHUB_TOKEN=github_pat_...
 
 The sidebar can register an MCP server. A connector stores a name, a transport (`http` or `stdio`), a target, and an optional secret reference. The reference is the name of an environment variable on the server and must start with `MCP_`, such as `MCP_DEMO_TOKEN`. The value stays on the server: it is sent as a bearer token for HTTP, or as that one variable in a stdio process, and it is not written into the prompt, the transcript, or API responses.
 
-### Catalog OAuth
+### Catalog connectors (Composio)
 
-Notion and GitHub in the catalog use a real OAuth 2.0 authorization-code flow. The other catalog apps are shown as not available yet and do not create a connector. Client secrets are read from the environment. They are not stored in the repo.
-
-The redirect URI is `/connectors/oauth/callback` on the app origin:
-
-- Local: `http://localhost:3000/connectors/oauth/callback`
-- Production: `https://mockbot-jet.vercel.app/connectors/oauth/callback`
-
-Set `APP_ORIGIN` to that site's origin when the request host would be different, for example `APP_ORIGIN=https://mockbot-jet.vercel.app` on Vercel and `APP_ORIGIN=http://localhost:3000` locally. If it is unset, the redirect URI uses the incoming request origin. The value must match the redirect URI registered with the provider exactly.
+Notion and GitHub in the catalog connect through [Composio](https://composio.dev). Composio runs the provider OAuth flow and executes the provider's tools. The other catalog apps are config entries (a Composio toolkit slug is recorded, and connect stays disabled) and do not create a connector.
 
 ```bash
-NOTION_OAUTH_CLIENT_ID=
-NOTION_OAUTH_CLIENT_SECRET=
-GITHUB_OAUTH_CLIENT_ID=
-GITHUB_OAUTH_CLIENT_SECRET=
+COMPOSIO_API_KEY=
 ```
 
-Notion is a public integration from [Notion's developer portal](https://www.notion.so/profile/integrations). Create it as public, add both redirect URIs on that one integration, and enable read content, update content, and insert content. Notion does not use PKCE. The token request uses HTTP Basic with the client id and secret. Notion's hosted MCP server at `https://mcp.notion.com/mcp` runs its own OAuth and does not accept this public-integration token, so Notion tools call `https://api.notion.com/v1` through the Notion adapter (`search`, `get_page`, `get_block_children`, `list_databases`, `create_page`).
+`COMPOSIO_API_KEY` is a server secret. It is not written into the repo, the prompt, or the browser. If it is unset, connect fails with that variable name and does not create a connector.
 
-GitHub is an OAuth App from [GitHub developer settings](https://github.com/settings/developers). An OAuth App has one authorization callback URL, so use one app for `http://localhost:3000/connectors/oauth/callback` and another for `https://mockbot-jet.vercel.app/connectors/oauth/callback`, and put that app's client id and secret in the matching environment. The flow sends PKCE (`S256`) and requests the `repo`, `read:org`, and `read:user` scopes. Enable "Expire user authorization tokens" if you want refresh tokens. After sign-in, the connector uses the hosted GitHub MCP server at `https://api.githubcopilot.com/mcp/` and sends the access token as a bearer token. Tool names come from that server.
+The catalog sign-in window opens Composio's hosted URL. Composio sends the browser back to `/connectors/oauth/callback`. The callback origin does not require `APP_ORIGIN`:
 
-Access and refresh tokens are encrypted with `CONNECTOR_SECRET_KEY` and stored on the connector. A token with `expires_in` is refreshed about a minute before it expires. A `401` refreshes once and retries when a refresh token is stored. Notion refresh tokens rotate: the new refresh token replaces the old one. If a provider's client id or secret is missing, connect fails with the variable names and does not create a connector.
+1. `APP_ORIGIN`, when it is set to an http or https URL. This is an optional override.
+2. The incoming request. `x-forwarded-host` is used when the platform sends it, otherwise the `host` header. The scheme is `x-forwarded-proto` when that is `http` or `https`. A public host without that header uses `https`. A localhost host uses the request URL's scheme.
+3. The origin of the request URL, when those headers are absent.
+4. `AUTH_URL`, or `NEXTAUTH_URL` when `AUTH_URL` is unset. This is the URL NextAuth is configured with, and it is used only when the request URL is not an http or https origin.
 
-Adding another provider is a `oauth` block on its catalog entry plus, when that provider has no hosted MCP server that accepts the token, an adapter registered in `src/connectors/adapters`.
+On Vercel that is the deployment host from the forwarded headers, so production and preview each call back to the site that started sign-in. Leave `APP_ORIGIN` unset.
+
+A finished sign-in stores a Composio connected-account id per user and catalog app in `composio_connections`. The id is a connection reference, not an access token. The connector row itself stays workspace-wide and does not hold the provider token or a person's account name. Tool calls for a chat turn use the signed-in user's connection. Another account has to connect the same app before those tools run for them. Disconnecting removes that person's link. The shared connector stays until nobody is linked. A failed sign-in marks reconnect on that person's link only.
+
+`GET /api/connectors/composio/toolkits` lists Composio toolkits and which catalog entries are enabled. Notion and GitHub are the enabled proof of concept. Enabling another catalog app is the `composio.enabled` flag on its catalog entry; the connect and execute path is the same.
+
+Optional:
+
+- `COMPOSIO_BASE_URL` overrides the Composio API origin.
+- `COMPOSIO_TOOLKIT_VERSIONS` is a JSON object of pinned toolkit versions, such as `{"notion":"20260101_00"}`. It overrides the versions pinned in code. Notion and GitHub default to `20250909_00`. A toolkit without a pin is not executed.
+
+The previous Notion and GitHub OAuth clients, PKCE exchange, Notion REST adapter, and GitHub hosted MCP call remain in the tree. They run only when `NATIVE_CATALOG_OAUTH=1`, and they still need `NOTION_OAUTH_CLIENT_ID`, `NOTION_OAUTH_CLIENT_SECRET`, `GITHUB_OAUTH_CLIENT_ID`, and `GITHUB_OAUTH_CLIENT_SECRET`. Leave that flag unset.
 
 HTTP targets are `http` or `https` URLs. Stdio targets are a program and arguments separated by spaces, run without a shell. Disabling or removing a connector drops its tools from the next turn. The built-in web, GitHub, and calendar tools stay registered.
 
@@ -280,7 +284,7 @@ The same form is on the Routines page.
   The OpenAI-compatible provider forwards the model phases from a chat-completions stream when the upstream chunk includes them: `delta.role`, `delta.content`, `delta.reasoning` / `reasoning_content` / `thinking`, `delta.tool_calls` (and legacy `function_call`), `delta.refusal`, and `finish_reason`. `data: [DONE]` becomes an end token when the upstream never sent a finish reason. Each stored assistant message includes a `trace` with the reasoning, tool calls, answer text, and finish reason. Registered tools also stay in `tool_calls` on that message. A `finish_reason` of `tool_calls`, or a tool call with no provider result and no answer text, runs through the registry. The default mock omits `tool_call` and `tool_result`. Tests can construct `MockProvider` with `scriptToolCall: true` to emit a display-only `lookup_context` call and result, or `demoTools: true` to run the registry demo.
 
 - `POST /api/tools/approvals` with `{ "id": "...", "decision": "approve" | "deny" | "stop" }` approves, denies, or stops a pending write.
-- `POST /api/tools/asks` with `{ "id": "...", "answer": "..." }` resumes a paused `ask_user` call. The tool result is that answer. `{ "id", "decision": "stop" }` ends the question. The pending question is stored on the assistant message, so a reload shows the same card while the server process is still waiting.
+- `POST /api/tools/asks` with `{ "id": "...", "answer": "..." }` resumes a paused `ask_user` call. The tool result is that answer. `{ "id", "decision": "stop" }` ends the question. The pending question is stored on the assistant message. If the turn is still waiting in this process, the answer wakes it. If that waiter is gone, the answer is checked against the stored question and the turn continues from the database. A question whose stored payload can no longer be read is marked expired so the card is not left pending.
 - `POST /api/tools/plans` with `{ "id", "decision": "approve" | "edit" | "cancel" }` resumes a pending plan. `edit` includes `{ "steps": [{ "title", "detail" }] }` and leaves the plan waiting. `approve` may include `steps` to save an edit and start execution. `cancel` aborts the run before any step. The pending plan is stored on the assistant message, so a reload shows the same card while the server process is still waiting. Approving after that reload continues the run.
 - `GET /api/connectors` lists connectors. Each row has `id`, `name`, `transport`, `target`, `secretRef`, `enabled`, `createdAt`, and `updatedAt`. `secretRef` is an environment variable name that starts with `MCP_`. The secret value is not included.
 - `POST /api/connectors` with `{ "name", "transport": "http" | "stdio", "target", "secretRef": "optional" }` checks that the server lists tools, then stores the connector.

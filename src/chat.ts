@@ -10,7 +10,7 @@ import { encodeSse, ssePadding } from "./sse";
 import { titleFromMessage, type ConversationStore } from "./store";
 import type { LlmProvider } from "./llm";
 import { PLAN_MODE_ON } from "./memory/prompt";
-import { ASK_USER_TOOL, type AskGate } from "./tools/ask-user";
+import { ASK_UNATTENDED, ASK_USER_TOOL, type AskGate } from "./tools/ask-user";
 import { requiresApproval, type ApprovalGate } from "./tools/approval";
 import {
   approvedPlanMessage,
@@ -128,6 +128,8 @@ export async function streamChatTurn(options: {
   asks: AskGate;
   plans: PlanGate;
   plan?: boolean;
+  /** Routine and other background runs must not wait for a person. */
+  unattended?: boolean;
   message: string;
   conversationId?: string;
   agentId?: string;
@@ -661,6 +663,15 @@ export async function streamChatTurn(options: {
           { question, options, allowCustom },
           conversationSnapshot.id,
         );
+        if (outcome.reason !== "user") {
+          const stored = await store.getToolCall(call.id);
+          if (stored && stored.status !== "ask") {
+            call.status = "done";
+            call.output = stored.output;
+            userStopped = true;
+            return null;
+          }
+        }
         if (!signal?.aborted) followRequest = true;
         if (outcome.reason === "stopped") {
           userStopped = true;
@@ -713,6 +724,7 @@ export async function streamChatTurn(options: {
           return finish(call, "done", "The plan is already in progress.");
         }
         if (call.name === ASK_USER_TOOL) {
+          if (options.unattended) return finish(call, "error", ASK_UNATTENDED);
           return askPerson(call, prepared.args);
         }
         if (requiresApproval(tool, prepared.args)) {

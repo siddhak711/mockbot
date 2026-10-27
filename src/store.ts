@@ -134,6 +134,38 @@ function jsonValue(value: unknown): unknown {
   }
 }
 
+export type ComposioConnection = {
+  id: string;
+  userId: string;
+  catalogId: string;
+  toolkit: string;
+  connectedAccountId: string;
+  accountLabel: string | null;
+  status: string;
+};
+
+type ComposioConnectionRow = {
+  id: string;
+  user_id: string;
+  catalog_id: string;
+  toolkit: string;
+  connected_account_id: string;
+  account_label: string | null;
+  status: string;
+};
+
+function mapComposioConnection(row: ComposioConnectionRow): ComposioConnection {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    catalogId: row.catalog_id,
+    toolkit: row.toolkit,
+    connectedAccountId: row.connected_account_id,
+    accountLabel: row.account_label,
+    status: row.status,
+  };
+}
+
 function mapConnector(row: ConnectorRow): ConnectorRecord {
   return {
     id: row.id,
@@ -350,6 +382,37 @@ export class ConversationStore {
     ]);
   }
 
+  async getToolCall(id: string): Promise<StoredToolCall | null> {
+    const result = await this.db.query<ToolCallRow>(
+      `SELECT id, conversation_id, message_id, name, arguments, status, output, created_at
+       FROM tool_calls
+       WHERE id = $1`,
+      [id],
+    );
+    const row = result.rows[0];
+    return row ? mapToolCall(row) : null;
+  }
+
+  /**
+   * Move one stored ask_user row out of `ask`. A second caller gets null so two
+   * instances cannot both continue the same question.
+   */
+  async claimToolCall(
+    id: string,
+    status: ToolCallStatus,
+    output: string,
+  ): Promise<StoredToolCall | null> {
+    const result = await this.db.query<ToolCallRow>(
+      `UPDATE tool_calls
+       SET status = $2, output = $3, updated_at = NOW()
+       WHERE id = $1 AND status = 'ask' AND name = 'ask_user'
+       RETURNING id, conversation_id, message_id, name, arguments, status, output, created_at`,
+      [id, status, output],
+    );
+    const row = result.rows[0];
+    return row ? mapToolCall(row) : null;
+  }
+
   async saveToolCall(input: {
     id: string;
     conversationId: string;
@@ -472,6 +535,63 @@ export class ConversationStore {
     return mapConnector(row);
   }
 
+  /**
+   * One shared row per catalog app. A concurrent insert loses and returns the row that won.
+   */
+  async insertCatalogConnector(input: {
+    name: string;
+    transport: ConnectorTransport;
+    target: string;
+    secretRef: string | null;
+    catalogId: string;
+    authType?: ConnectorAuth;
+    accountLabel?: string | null;
+    status?: ConnectorStatus;
+    statusDetail?: string | null;
+    tools?: Record<string, ConnectorToolSetting>;
+    seenTools?: string[];
+    secretCipher?: string | null;
+  }): Promise<ConnectorRecord> {
+    const id = crypto.randomUUID();
+    const inserted = await this.db.query<ConnectorRow>(
+      `INSERT INTO connectors (
+         id, name, transport, target, secret_ref, catalog_id, auth_type, account_label,
+         status, status_detail, tools, seen_tools, secret_cipher
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13)
+       ON CONFLICT (catalog_id) WHERE catalog_id IS NOT NULL DO NOTHING
+       RETURNING ${CONNECTOR_COLUMNS}`,
+      [
+        id,
+        input.name,
+        input.transport,
+        input.target,
+        input.secretRef,
+        input.catalogId,
+        input.authType ?? "none",
+        input.accountLabel ?? null,
+        input.status ?? "connected",
+        input.statusDetail ?? null,
+        JSON.stringify(input.tools ?? {}),
+        JSON.stringify(input.seenTools ?? []),
+        input.secretCipher ?? null,
+      ],
+    );
+    const created = inserted.rows[0];
+    if (created) return mapConnector(created);
+    const existing = await this.db.query<ConnectorRow>(
+      `SELECT ${CONNECTOR_COLUMNS}
+       FROM connectors
+       WHERE catalog_id = $1
+       ORDER BY created_at ASC, id ASC
+       LIMIT 1`,
+      [input.catalogId],
+    );
+    const row = existing.rows[0];
+    if (!row) throw new Error("Failed to create connector");
+    return mapConnector(row);
+  }
+
   async saveOAuthConnector(
     id: string,
     input: {
@@ -579,5 +699,117 @@ export class ConversationStore {
       [id],
     );
     return result.rows.length > 0;
+  }
+
+  async upsertComposioConnection(input: {
+    userId: string;
+    catalogId: string;
+    toolkit: string;
+    connectedAccountId: string;
+    accountLabel: string | null;
+    status: string;
+  }): Promise<ComposioConnection> {
+    const result = await this.db.query<ComposioConnectionRow>(
+      `INSERT INTO composio_connections (
+         id, user_id, catalog_id, toolkit, connected_account_id, account_label, status
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (user_id, catalog_id) DO UPDATE SET
+         toolkit = EXCLUDED.toolkit,
+         connected_account_id = EXCLUDED.connected_account_id,
+         account_label = EXCLUDED.account_label,
+         status = EXCLUDED.status,
+         updated_at = NOW()
+       RETURNING id, user_id, catalog_id, toolkit, connected_account_id, account_label, status`,
+      [
+        crypto.randomUUID(),
+        input.userId,
+        input.catalogId,
+        input.toolkit,
+        input.connectedAccountId,
+        input.accountLabel,
+        input.status,
+      ],
+    );
+    const row = result.rows[0];
+    if (!row) throw new Error("Failed to store the Composio connection.");
+    return mapComposioConnection(row);
+  }
+
+  async getComposioConnection(
+    userId: string,
+    catalogId: string,
+  ): Promise<ComposioConnection | null> {
+    const result = await this.db.query<ComposioConnectionRow>(
+      `SELECT id, user_id, catalog_id, toolkit, connected_account_id, account_label, status
+       FROM composio_connections
+       WHERE user_id = $1 AND catalog_id = $2`,
+      [userId, catalogId],
+    );
+    const row = result.rows[0];
+    return row ? mapComposioConnection(row) : null;
+  }
+
+  async listComposioConnections(userId: string): Promise<ComposioConnection[]> {
+    const result = await this.db.query<ComposioConnectionRow>(
+      `SELECT id, user_id, catalog_id, toolkit, connected_account_id, account_label, status
+       FROM composio_connections
+       WHERE user_id = $1
+       ORDER BY created_at ASC, id ASC`,
+      [userId],
+    );
+    return result.rows.map(mapComposioConnection);
+  }
+
+  async deleteComposioConnection(userId: string, catalogId: string): Promise<void> {
+    await this.db.query(`DELETE FROM composio_connections WHERE user_id = $1 AND catalog_id = $2`, [
+      userId,
+      catalogId,
+    ]);
+  }
+
+  async countComposioConnections(catalogId: string): Promise<number> {
+    const result = await this.db.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM composio_connections WHERE catalog_id = $1`,
+      [catalogId],
+    );
+    return Number(result.rows[0]?.count ?? 0);
+  }
+
+  async saveBrokerConnector(
+    id: string,
+    input: {
+      accountLabel: string | null;
+      target: string;
+      tools: Record<string, ConnectorToolSetting>;
+      status: ConnectorStatus;
+      statusDetail: string | null;
+    },
+  ): Promise<ConnectorRecord | null> {
+    const result = await this.db.query<ConnectorRow>(
+      `UPDATE connectors
+       SET secret_cipher = NULL,
+           secret_ref = NULL,
+           account_label = $2,
+           target = $3,
+           tools = $4::jsonb,
+           status = $5,
+           status_detail = $6,
+           failures = '[]'::jsonb,
+           auth_type = 'oauth',
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING ${CONNECTOR_COLUMNS}`,
+      [
+        id,
+        input.accountLabel,
+        input.target,
+        JSON.stringify(input.tools),
+        input.status,
+        input.statusDetail,
+      ],
+    );
+    const row = result.rows[0];
+    return row ? mapConnector(row) : null;
   }
 }
