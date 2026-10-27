@@ -34,7 +34,11 @@ it("streams start, reasoning, answer text, and end from the mock provider", asyn
   const store = await ConversationStore.open();
   setAppContext({
     store,
-    provider: selectProvider({ MOCK_STREAM_DELAY_MS: "0", MOCK_CHUNK_SIZE: "12" }),
+    provider: selectProvider({
+      LLM_PROVIDER: "mock",
+      MOCK_STREAM_DELAY_MS: "0",
+      MOCK_CHUNK_SIZE: "12",
+    }),
   });
 
   const response = await POST(
@@ -359,7 +363,7 @@ it("does not send an empty partial assistant message back to the model", async (
 
 it("does not call a tool when the message only mentions calling one", async () => {
   const provider = new MockProvider({ delayMs: 0, chunkSize: 200 });
-  const tools = createDefaultTools({}).list();
+  const tools = createDefaultTools(process.env).list();
   const events: LlmStreamEvent[] = [];
   for await (const event of provider.stream(
     [{ role: "user", content: "can you call web_search later" }],
