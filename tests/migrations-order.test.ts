@@ -11,7 +11,12 @@ const PLAN_STATUSES = ["running", "approval", "ask", "plan", "done", "denied", "
 it("applies every migration in order on a fresh database", async () => {
   const ids = MIGRATIONS.map((migration) => migration.id);
   expect(new Set(ids).size).toBe(ids.length);
-  expect(ids.at(-1)).toBe("012_plan_mode");
+  expect(ids.slice(-4)).toEqual([
+    "010_ask_user",
+    "011_run_events",
+    "012_plan_mode",
+    "013_site_tools",
+  ]);
 
   const dir = await mkdtemp(join(tmpdir(), "mockbot-migrations-"));
   const db = await openPglite(dir);

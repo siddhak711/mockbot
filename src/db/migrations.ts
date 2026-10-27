@@ -546,4 +546,22 @@ ALTER TABLE tool_calls ADD CONSTRAINT tool_calls_status_check
   CHECK (status IN ('running', 'approval', 'ask', 'plan', 'done', 'denied', 'error'));
 `,
   },
+  {
+    id: "013_site_tools",
+    sql: `
+CREATE TABLE IF NOT EXISTS site_tools (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  "schema" JSONB NOT NULL,
+  script TEXT NOT NULL,
+  version INTEGER NOT NULL CHECK (version >= 1),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (user_id, name, version)
+);
+
+CREATE INDEX IF NOT EXISTS site_tools_latest_idx
+  ON site_tools (user_id, lower(name), version DESC);
+`,
+  },
 ];

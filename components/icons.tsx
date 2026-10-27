@@ -25,6 +25,17 @@ export function ComposeIcon() {
   );
 }
 
+export function AppsIcon() {
+  return (
+    <Icon>
+      <rect x="4" y="4" width="6.5" height="6.5" rx="1.5" />
+      <rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5" />
+      <rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5" />
+      <path d="M16.75 13.5v6.5M13.5 16.75H20" strokeLinecap="round" />
+    </Icon>
+  );
+}
+
 export function ClockIcon() {
   return (
     <Icon>

@@ -2158,6 +2158,183 @@ summary:focus-visible {
   padding-bottom: 4px;
 }
 
+.round-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-pill);
+  display: grid;
+  place-items: center;
+  flex: none;
+  color: var(--ink-2);
+  background: var(--hover);
+}
+
+.round-btn:hover:not(:disabled),
+.round-btn.on,
+.round-btn[aria-expanded="true"] {
+  background: var(--selected);
+  color: var(--ink);
+}
+
+.side-head {
+  gap: 6px;
+}
+
+.roster-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 12px 6px;
+  padding: 0 10px;
+  height: 34px;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.roster-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 14px;
+  outline: none;
+}
+
+.roster-pins {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 12px 10px;
+}
+
+.roster-pin {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 104px;
+  padding: 10px 6px 8px;
+  border-radius: var(--radius-xl);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 17px;
+  text-align: center;
+}
+
+.roster-pin:hover:not(:disabled),
+.roster-row:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.roster-pin.on,
+.roster-row.on {
+  background: var(--selected);
+}
+
+.roster-pin-name {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.roster {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 8px;
+}
+
+.roster-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 8px;
+  border-radius: var(--radius-lg);
+  color: var(--ink);
+  text-align: left;
+}
+
+.roster-copy {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.roster-name {
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.roster-preview {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.roster-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--link);
+  flex: none;
+}
+
+.sidebar .me {
+  border: 0;
+  background: transparent;
+  padding: 8px 6px;
+}
+
+.sidebar .me .ava {
+  width: 32px;
+  height: 32px;
+}
+
+.sidebar .me-name {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.apps-menu {
+  position: relative;
+  flex: none;
+}
+
+.apps-pop {
+  right: 0;
+  bottom: calc(100% + 8px);
+}
+
+.apps-pop .nav-action {
+  margin: 0;
+  width: 100%;
+}
+
+.user-pop-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px 8px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+}
+
+.user-pop-info .me-meta,
+.user-pop-info .me-model {
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
+}
+
 .agent-modal {
   position: fixed;
   inset: 0;

@@ -46,12 +46,14 @@ export function UserMenu({ user, detail }: { user: SignedInUser; detail?: string
         )}
         <span className="me-copy">
           <span className="me-name">{label}</span>
-          <span className="me-meta">{user.email}</span>
-          {detail ? <span className="me-model">{detail}</span> : null}
         </span>
       </button>
       {open ? (
         <div className="menu user-pop" id={menuId} role="menu" aria-label="Account">
+          <div className="user-pop-info">
+            <span className="me-meta">{user.email}</span>
+            {detail ? <span className="me-model">{detail}</span> : null}
+          </div>
           <form action={signOutAction}>
             <button type="submit" role="menuitem">
               Log out

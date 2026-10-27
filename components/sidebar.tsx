@@ -1,3 +1,6 @@
+"use client";
+
+import { useEffect, useId, useRef, useState } from "react";
 import type { Agent } from "../src/agents/types";
 import type { SignedInUser } from "../src/auth/user";
 import { UserMenu } from "./user-menu";
@@ -5,7 +8,16 @@ import { spriteColorForAgent, type SpriteState } from "../src/sprite";
 import { runtimeStatusLabel, type RuntimeStatus } from "../src/token-stream";
 import { AgentPanel, type AgentDraft } from "./agent-panel";
 import { BotSprite } from "./bot-sprite";
-import { ClockIcon, HidePanelIcon, PlugIcon, TrafficLights } from "./icons";
+import {
+  AppsIcon,
+  ClockIcon,
+  CloseIcon,
+  HidePanelIcon,
+  PlugIcon,
+  PlusIcon,
+  SearchIcon,
+  TrafficLights,
+} from "./icons";
 import { ThemeToggle } from "./theme";
 
 function userLabel(user: SignedInUser): string {
@@ -53,6 +65,9 @@ export function Sidebar({
 }) {
   const status = runtimeStatusLabel(runtimeStatus);
   const person = userLabel(user);
+  const [searching, setSearching] = useState(false);
+  const [query, setQuery] = useState("");
+  const [formOpen, setFormOpen] = useState(false);
 
   if (collapsed) {
     return (
@@ -110,16 +125,45 @@ export function Sidebar({
           </button>
         ) : null}
         <ThemeToggle />
-      </div>
-      <a className="nav-action" href="/routines">
-        <ClockIcon />
-        Routines
-      </a>
-      {onOpenConnectors ? (
-        <button type="button" className="nav-action" onClick={onOpenConnectors}>
-          <PlugIcon />
-          Connectors
+        <button
+          type="button"
+          className={searching ? "round-btn on" : "round-btn"}
+          aria-label={searching ? "Close search" : "Search agents"}
+          aria-expanded={searching}
+          onClick={() => {
+            setSearching((value) => !value);
+            setQuery("");
+          }}
+        >
+          {searching ? <CloseIcon /> : <SearchIcon size={16} />}
         </button>
+        <button
+          type="button"
+          className="round-btn"
+          aria-label="New agent"
+          onClick={() => setFormOpen(true)}
+          disabled={busy || formOpen}
+        >
+          <PlusIcon />
+        </button>
+      </div>
+      {searching ? (
+        <div className="roster-search">
+          <SearchIcon />
+          <input
+            aria-label="Search agents"
+            placeholder="Search agents"
+            value={query}
+            autoFocus
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                setSearching(false);
+                setQuery("");
+              }
+            }}
+          />
+        </div>
       ) : null}
       <div className="sidebar-sections">
         <AgentPanel
@@ -127,13 +171,77 @@ export function Sidebar({
           activeAgentId={activeAgentId}
           spriteState={spriteState}
           busy={busy}
+          query={query}
+          formOpen={formOpen}
+          onFormOpenChange={setFormOpen}
           onSelect={onSelectAgent}
           onCreate={onCreateAgent}
         />
       </div>
       <footer className="me" title={status.full}>
         <UserMenu user={user} detail={`${status.title} · ${status.subtitle}`} />
+        <AppsMenu onOpenConnectors={onOpenConnectors} />
       </footer>
     </aside>
+  );
+}
+
+function AppsMenu({ onOpenConnectors }: { onOpenConnectors?: () => void }) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  const menuId = useId();
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointer(event: MouseEvent) {
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="apps-menu" ref={root}>
+      <button
+        type="button"
+        className="round-btn"
+        aria-label="Routines and connectors"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-controls={menuId}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <AppsIcon />
+      </button>
+      {open ? (
+        <div className="menu apps-pop" id={menuId} role="menu" aria-label="Workspace">
+          <a className="nav-action" role="menuitem" href="/routines">
+            <ClockIcon />
+            Routines
+          </a>
+          {onOpenConnectors ? (
+            <button
+              type="button"
+              className="nav-action"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                onOpenConnectors();
+              }}
+            >
+              <PlugIcon />
+              Connectors
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
   );
 }

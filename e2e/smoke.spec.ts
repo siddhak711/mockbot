@@ -31,9 +31,10 @@ test("anonymous visitor signs in, sees their email, and logs out", async ({ page
   // The sidebar lists agents, never conversations, and has no New chat action.
   await expect(page.getByRole("button", { name: /Mockbot/ })).toBeVisible();
   await expect(page.getByRole("button", { name: "New chat" })).toHaveCount(0);
-  await expect(accountEmail(page)).toHaveText(email);
 
+  // The email lives in the account popover, opened from the sidebar footer.
   await accountMenuButton(page).click();
+  await expect(accountEmail(page)).toHaveText(email);
   await page.getByRole("menuitem", { name: "Log out" }).click();
   await expect(page).toHaveURL(isLogin);
 

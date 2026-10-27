@@ -1,7 +1,6 @@
 // @vitest-environment happy-dom
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { AgentPanel } from "../components/agent-panel";
 import { Sidebar } from "../components/sidebar";
 import { SidePane } from "../components/side-pane";
 import { ThreadActions } from "../components/thread-actions";
@@ -10,6 +9,24 @@ import { ThemeProvider } from "../components/theme";
 afterEach(() => {
   cleanup();
 });
+
+function NewAgentHarness({ onCreate }: { onCreate: () => Promise<string | null> }) {
+  return (
+    <ThemeProvider>
+      <Sidebar
+        agents={[]}
+        activeAgentId="agent_default"
+        spriteState="idle"
+        runtimeStatus={{ provider: "mock", model: null, database: "local" }}
+        busy={false}
+        open
+        onSelectAgent={() => {}}
+        onCreateAgent={onCreate}
+        user={{ id: "user_1", name: "Ada", email: "ada@example.com", image: null }}
+      />
+    </ThemeProvider>
+  );
+}
 
 it("gives thread actions their labels and clicks", () => {
   const onMemory = vi.fn();
@@ -81,10 +98,11 @@ it("renders the theme toggle in the sidebar header", () => {
   expect(header?.contains(toggle)).toBe(true);
   expect(footer?.contains(toggle)).toBe(false);
   expect(footer?.textContent).toContain("Ada");
+  expect(footer?.textContent).not.toContain("ada@example.com");
+
+  fireEvent.click(screen.getByRole("button", { name: /Ada/ }));
   expect(footer?.textContent).toContain("ada@example.com");
   expect(footer?.textContent).toContain("deepseek/deepseek-v4.1-flash");
-
-  fireEvent.click(screen.getByRole("button", { name: /ada@example.com/i }));
   const logout = screen.getByRole("menuitem", { name: "Log out" });
   expect(footer?.contains(logout)).toBe(true);
   expect(logout.closest("form")?.getAttribute("action")).toBeTruthy();
@@ -93,16 +111,7 @@ it("renders the theme toggle in the sidebar header", () => {
 });
 
 it("opens a new-agent dialog and closes it from Escape, the backdrop, and the X", () => {
-  render(
-    <AgentPanel
-      agents={[]}
-      activeAgentId="agent_default"
-      spriteState="idle"
-      busy={false}
-      onSelect={() => {}}
-      onCreate={async () => null}
-    />,
-  );
+  render(<NewAgentHarness onCreate={async () => null} />);
 
   fireEvent.click(screen.getByRole("button", { name: "New agent" }));
   expect(screen.getByRole("dialog").getAttribute("aria-modal")).toBe("true");
@@ -123,14 +132,7 @@ it("keeps Tab inside the new-agent dialog", () => {
   render(
     <>
       <button type="button">Send</button>
-      <AgentPanel
-        agents={[]}
-        activeAgentId="agent_default"
-        spriteState="idle"
-        busy={false}
-        onSelect={() => {}}
-        onCreate={async () => null}
-      />
+      <NewAgentHarness onCreate={async () => null} />
     </>,
   );
 
@@ -166,16 +168,7 @@ it("ignores Escape and backdrop dismissal while create is pending", async () => 
         finish = resolve;
       }),
   );
-  render(
-    <AgentPanel
-      agents={[]}
-      activeAgentId="agent_default"
-      spriteState="idle"
-      busy={false}
-      onSelect={() => {}}
-      onCreate={onCreate}
-    />,
-  );
+  render(<NewAgentHarness onCreate={onCreate} />);
 
   fireEvent.click(screen.getByRole("button", { name: "New agent" }));
   fireEvent.click(screen.getByRole("button", { name: "Create agent" }));
