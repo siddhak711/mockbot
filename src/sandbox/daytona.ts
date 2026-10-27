@@ -1,4 +1,10 @@
-import type { Daytona, Sandbox } from "@daytonaio/sdk";
+import {
+  DaytonaGoneError,
+  DaytonaNotFoundError,
+  SandboxState,
+  type Daytona,
+  type Sandbox,
+} from "@daytonaio/sdk";
 import { isAbortError, throwIfAborted, withSignal } from "./abort";
 import { toSandboxPath } from "./limits";
 import type { ExecOutcome, SandboxEntry, SandboxRuntime } from "./runtime";
@@ -24,6 +30,11 @@ export type RemoteSandbox = {
 
 export type RemoteSandboxFleet = {
   create(agentId: string): Promise<RemoteSandbox>;
+  /**
+   * Reattach to an existing sandbox. Null means Daytona confirmed it is
+   * missing or deleted. Network errors, rate limits, and start timeouts reject
+   * so the caller does not replace a sandbox that is still there.
+   */
   reconnect(sandboxId: string): Promise<RemoteSandbox | null>;
 };
 
@@ -62,6 +73,11 @@ export class DaytonaRuntime implements SandboxRuntime {
   readonly kind = "daytona" as const;
   readonly #handles = new Map<string, RemoteSandbox>();
   readonly #opening = new Map<string, Promise<RemoteSandbox | null>>();
+  /**
+   * Serializes handle recovery per agent. Aborting a caller rejects only that
+   * waiter; this chain stays until the in-flight delete-and-create finishes.
+   */
+  readonly #tail = new Map<string, Promise<void>>();
 
   constructor(
     private readonly fleet: RemoteSandboxFleet,
@@ -69,11 +85,11 @@ export class DaytonaRuntime implements SandboxRuntime {
     private readonly secret: string,
   ) {}
 
+  /** Lists the live sandbox. Never creates or replaces one; none live lists empty. */
   async list(agentId: string, path: string) {
     try {
-      const handle = await this.#handle(agentId, false);
-      if (!handle) return { ok: true as const, entries: [] };
-      const ready = await this.#running(agentId, handle);
+      const ready = await this.#live(agentId);
+      if (!ready) return { ok: true as const, entries: [] };
       return await ready.list(toSandboxPath(path));
     } catch (error) {
       return { ok: false as const, error: redact(errorText(error), this.secret) };
@@ -83,7 +99,8 @@ export class DaytonaRuntime implements SandboxRuntime {
   async read(agentId: string, path: string, signal?: AbortSignal) {
     try {
       throwIfAborted(signal);
-      const handle = await withSignal(this.#require(agentId), signal);
+      const handle = await withSignal(this.#live(agentId), signal);
+      if (!handle) return { ok: false as const, error: `No such file: ${path}` };
       return await withSignal(handle.read(toSandboxPath(path)), signal);
     } catch (error) {
       if (isAbortError(error)) throw error;
@@ -129,13 +146,55 @@ export class DaytonaRuntime implements SandboxRuntime {
     }
   }
 
-  async #require(agentId: string): Promise<RemoteSandbox> {
-    const handle = await this.#handle(agentId, true);
-    if (!handle) throw new Error("Sandbox is unavailable");
-    return this.#running(agentId, handle);
+  /**
+   * The sandbox, created or replaced when needed. Only write and prepare (the
+   * path exec and browse take) call this.
+   */
+  #require(agentId: string): Promise<RemoteSandbox> {
+    return this.#exclusive(agentId, async () => {
+      const handle = await this.#handle(agentId, true);
+      if (!handle) throw new Error("Sandbox is unavailable");
+      const ready = await this.#running(agentId, handle, true);
+      if (!ready) throw new Error("Sandbox is unavailable");
+      return ready;
+    });
   }
 
-  async #running(agentId: string, handle: RemoteSandbox): Promise<RemoteSandbox> {
+  /** The running sandbox, or null when none is live. Never creates or replaces one. */
+  #live(agentId: string): Promise<RemoteSandbox | null> {
+    return this.#exclusive(agentId, async () => {
+      const handle = await this.#handle(agentId, false);
+      if (!handle) return null;
+      return this.#running(agentId, handle, false);
+    });
+  }
+
+  /**
+   * One recovery at a time for this agent. The next caller waits on the same
+   * chain, including when an earlier caller has already aborted.
+   */
+  #exclusive<T>(agentId: string, work: () => Promise<T>): Promise<T> {
+    const previous = this.#tail.get(agentId) ?? Promise.resolve();
+    const run = previous.then(work, work);
+    this.#tail.set(
+      agentId,
+      run.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return run;
+  }
+
+  /**
+   * Starts a stopped sandbox or reconnects to it. When Daytona confirms it is
+   * gone, `create` decides between a replacement and null.
+   */
+  async #running(
+    agentId: string,
+    handle: RemoteSandbox,
+    create: boolean,
+  ): Promise<RemoteSandbox | null> {
     try {
       await handle.ensureRunning();
       return handle;
@@ -143,10 +202,18 @@ export class DaytonaRuntime implements SandboxRuntime {
       if (this.#handles.get(agentId) === handle) this.#handles.delete(agentId);
       const computer = await this.store.getComputer(agentId);
       if (!computer?.sandboxId) throw error;
+      // Null is a confirmed miss. A transient reconnect failure rejects with
+      // that error and must not fall through to create.
       const restored = await this.fleet.reconnect(computer.sandboxId);
-      if (!restored) throw error;
-      this.#handles.set(agentId, restored);
-      return restored;
+      if (restored) {
+        this.#handles.set(agentId, restored);
+        return restored;
+      }
+      if (!create) return null;
+      const created = await this.fleet.create(agentId);
+      await this.store.setSandboxId(agentId, created.id);
+      this.#handles.set(agentId, created);
+      return created;
     }
   }
 
@@ -215,11 +282,12 @@ class SdkFleet implements RemoteSandboxFleet {
     try {
       const sandbox = await this.daytona.get(sandboxId);
       await sandbox.refreshData();
+      if (sandboxIsGone(sandbox.state)) return null;
       if (sandbox.state !== this.started) await sandbox.start(60);
       return await this.adapt(sandbox);
     } catch (error) {
-      redactError(error, this.secret);
-      return null;
+      if (sandboxMissingError(error)) return null;
+      throw redactError(error, this.secret);
     }
   }
 
@@ -326,4 +394,13 @@ function redactError(error: unknown, secret: string): Error {
 
 function isTimeoutError(error: unknown): boolean {
   return error instanceof Error && /Timeout/i.test(error.name);
+}
+
+/** Daytona reported that this sandbox does not exist or has been deleted. */
+function sandboxMissingError(error: unknown): boolean {
+  return error instanceof DaytonaNotFoundError || error instanceof DaytonaGoneError;
+}
+
+function sandboxIsGone(state: Sandbox["state"]): boolean {
+  return state === SandboxState.DESTROYED || state === SandboxState.DESTROYING;
 }

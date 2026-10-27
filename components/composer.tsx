@@ -19,7 +19,7 @@ export function Composer({
   streaming: boolean;
   awaitingApproval?: boolean;
   busyHint?: string;
-  onSend: (text: string) => void;
+  onSend: (text: string, options?: { plan?: boolean }) => void;
   onStop: () => void;
   placeholder?: string;
   value?: string;
@@ -28,6 +28,7 @@ export function Composer({
 }) {
   const [internalValue, setInternalValue] = useState("");
   const [menu, setMenu] = useState(false);
+  const [plan, setPlan] = useState(false);
   const value = controlledValue ?? internalValue;
 
   function setValue(next: string) {
@@ -41,7 +42,7 @@ export function Composer({
     const text = value.trim();
     if (!text || busy) return;
     setValue("");
-    onSend(text);
+    onSend(text, plan ? { plan: true } : undefined);
   }
 
   return (
@@ -96,6 +97,15 @@ export function Composer({
               ) : null}
             </div>
           ) : null}
+          <button
+            type="button"
+            className={plan ? "plan-toggle on" : "plan-toggle"}
+            aria-pressed={plan}
+            disabled={busy}
+            onClick={() => setPlan((current) => !current)}
+          >
+            Plan
+          </button>
           {busy ? (
             <span className="hint">
               {busyHint ?? (awaitingApproval ? "Needs approval" : "Responding")}

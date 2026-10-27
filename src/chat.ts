@@ -2,17 +2,28 @@ import { DELEGATE_TOOL_NAME, isLeadAgent } from "./agents/ids";
 import { AgentDirectory } from "./agents/directory";
 import { NoteMemory, defaultComputer, defaultConnector } from "./agents/ports";
 import { buildAgentSystemPrompt } from "./agents/prompt";
-import { runWithDelegate } from "./agents/stream";
+import { runWithDelegate, runWithDelegateUnlessPlan } from "./agents/stream";
 import { toolsForSpeaker } from "./agents/tool";
 import type { AgentMemoryPort, ComputerPort, ConnectorPort } from "./agents/types";
 import { findSecrets } from "./memory/scrub";
 import { encodeSse, ssePadding } from "./sse";
 import { titleFromMessage, type ConversationStore } from "./store";
 import type { LlmProvider } from "./llm";
+import { PLAN_MODE_ON } from "./memory/prompt";
 import { streamDecision } from "./model-router";
 import type { ModelRouteEvent } from "./run-events";
 import { ASK_UNATTENDED, ASK_USER_TOOL, type AskGate } from "./tools/ask-user";
 import { requiresApproval, type ApprovalGate } from "./tools/approval";
+import {
+  approvedPlanMessage,
+  PLAN_UNATTENDED,
+  PROPOSE_PLAN_TOOL,
+  parsePlan,
+  fallbackPlan,
+  stepCommand,
+  type PlanGate,
+  type PlanStep,
+} from "./tools/plan";
 import { runTool, type ToolRegistry } from "./tools/registry";
 import {
   activityTitle,
@@ -38,6 +49,7 @@ import type {
   LlmToolCall,
   MessageTrace,
   StoredToolCall,
+  ToolCallStatus,
 } from "./types";
 
 const MAX_MESSAGE_LENGTH = 20_000;
@@ -56,7 +68,7 @@ type PendingCall = {
   name: string;
   arguments: string;
   result: string | null;
-  status: "running" | "approval" | "ask" | "done" | "denied" | "error";
+  status: ToolCallStatus;
   output: string | null;
 };
 
@@ -136,6 +148,9 @@ export type ChatTurnOptions = {
   tools: ToolRegistry;
   approvals: ApprovalGate;
   asks: AskGate;
+  plans: PlanGate;
+  /** Composer Plan switch: plan first, then run only after approval. */
+  plan?: boolean;
   /** Routine and other background runs must not wait for a person. */
   unattended?: boolean;
   signal?: AbortSignal;
@@ -187,6 +202,12 @@ async function pendingTurnBlock(
   if (options.asks.hasPending(conversationId) || (await options.store.hasOpenAsk(conversationId))) {
     return Response.json(
       { error: "A question is still waiting for an answer in this conversation." },
+      { status: 409 },
+    );
+  }
+  if (options.plans.hasPending(conversationId)) {
+    return Response.json(
+      { error: "A plan is still waiting for approval in this conversation." },
       { status: 409 },
     );
   }
@@ -357,9 +378,14 @@ async function runChatTurn(
     if (history.at(-1)?.role === "assistant") history.pop();
     history.push(...resumedHistory(resume.trace));
   }
+  if (options.plan && !resume) {
+    const system = history.find((item) => item.role === "system");
+    if (system) system.content = `${system.content}\n\n${PLAN_MODE_ON}`;
+  }
+  const planText = lastUserText(history);
   const memoryDeps = prepared.deps;
 
-  const { store, provider, approvals, asks, signal } = options;
+  const { store, provider, approvals, asks, plans, signal } = options;
   const runLog = new RunLog(store.connection, options.runId);
   const tools = toolsForSpeaker(options.tools, speaker, {
     directory: agents,
@@ -378,6 +404,9 @@ async function runChatTurn(
   const toolContext: ToolContext = {
     signal,
     memory: memoryDeps,
+    runCounters: new Map(),
+    agentId: speaker.id,
+    userId: options.userId ?? null,
     promote(names) {
       for (const name of names) promoted.add(name);
     },
@@ -396,6 +425,7 @@ async function runChatTurn(
   let saved = "";
   let persistQueue = Promise.resolve();
   let userStopped = false;
+  let halted = false;
   let followRequest = true;
   const clientCancelled = () => followRequest && Boolean(signal?.aborted);
   const liveCalls: PendingCall[] = [];
@@ -477,13 +507,66 @@ async function runChatTurn(
 
       const stopOpenCalls = async () => {
         for (const call of liveCalls) {
-          if (call.status !== "running" && call.status !== "approval" && call.status !== "ask") {
+          if (
+            call.status !== "running" &&
+            call.status !== "approval" &&
+            call.status !== "ask" &&
+            call.status !== "plan"
+          ) {
             continue;
           }
           call.status = "error";
           call.output = "Stopped before the tool finished.";
           await saveCall(call);
         }
+      };
+
+      type ActivePlan = { call: PendingCall; steps: PlanStep[]; index: number };
+      let activePlan: ActivePlan | null = null;
+
+      const publishPlan = async (status: ToolCallStatus) => {
+        if (!activePlan) return;
+        activePlan.call.status = status;
+        activePlan.call.arguments = JSON.stringify({ steps: activePlan.steps });
+        await saveCall(activePlan.call);
+        enqueue("plan_progress", {
+          id: activePlan.call.id,
+          name: activePlan.call.name,
+          steps: activePlan.steps,
+          status,
+          arguments: activePlan.call.arguments,
+          assistantMessageId: assistantId,
+        });
+      };
+
+      const advancePlan = async (assistantCommitted: boolean, text: string): Promise<boolean> => {
+        if (!activePlan) return false;
+        const current = activePlan.steps[activePlan.index];
+        if (!current) return false;
+        current.state = "done";
+        activePlan.index += 1;
+        if (activePlan.index >= activePlan.steps.length) {
+          activePlan.call.output = activePlan.steps.map((step) => step.title).join("\n");
+          activePlan.call.result = activePlan.call.output;
+          await publishPlan("done");
+          enqueue("tool_result", {
+            id: activePlan.call.id,
+            name: activePlan.call.name,
+            status: "done",
+            output: activePlan.call.output,
+            assistantMessageId: assistantId,
+          });
+          return false;
+        }
+        const next = activePlan.steps[activePlan.index];
+        if (!next) return false;
+        next.state = "active";
+        await publishPlan("running");
+        if (!assistantCommitted) {
+          history.push({ role: "assistant", content: text || `Finished: ${current.title}` });
+        }
+        history.push({ role: "user", content: stepCommand(next, activePlan.index) });
+        return true;
       };
 
       let runStatus = "completed";
@@ -517,8 +600,10 @@ async function runChatTurn(
           const roundAbort = new AbortController();
           const providerSignal = roundAbort.signal as AbortSignal & {
             tools?: typeof exposed;
+            plan?: boolean;
           };
           providerSignal.tools = exposed;
+          if (options.plan) providerSignal.plan = true;
           const abortRound = () => roundAbort.abort(signal?.reason);
           if (followRequest) {
             if (signal?.aborted) abortRound();
@@ -534,28 +619,37 @@ async function runChatTurn(
             signal: providerSignal,
             tools: exposed,
             conversationId: conversationSnapshot.id,
+            ...(options.plan ? { plan: true } : {}),
             onRoute: (event) => {
               routeLog.event = event;
             },
           });
           const streamed = streamDecision(modelEvents);
           if (streamed) route = streamed;
-          const events = delegateTool
-            ? runWithDelegate(modelEvents, async (call) => {
-                let args: Record<string, unknown>;
-                try {
-                  const parsed: unknown = JSON.parse(call.arguments);
-                  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-                    return "Delegation failed: arguments are not JSON.";
-                  }
-                  args = parsed as Record<string, unknown>;
-                } catch {
-                  return "Delegation failed: arguments are not JSON.";
-                }
-                const result = await delegateTool.invoke(args, { signal });
-                return result.content;
-              })
-            : modelEvents;
+          const invokeDelegate = async (call: { id: string; arguments: string }) => {
+            let args: Record<string, unknown>;
+            try {
+              const parsed: unknown = JSON.parse(call.arguments);
+              if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+                return "Delegation failed: arguments are not JSON.";
+              }
+              args = parsed as Record<string, unknown>;
+            } catch {
+              return "Delegation failed: arguments are not JSON.";
+            }
+            if (!delegateTool) return "Delegation failed: the delegate tool is not available.";
+            const result = await delegateTool.invoke(args, { signal });
+            return result.content;
+          };
+          // A self-proposed plan can share the round with delegate. Do not start
+          // that delegate until the round is known to contain no propose_plan.
+          const events = !delegateTool
+            ? modelEvents
+            : activePlan
+              ? runWithDelegate(modelEvents, invokeDelegate)
+              : options.plan
+                ? modelEvents
+                : runWithDelegateUnlessPlan(modelEvents, invokeDelegate, PROPOSE_PLAN_TOOL);
 
           runLog.holdWrites();
           try {
@@ -623,19 +717,122 @@ async function runChatTurn(
           }
 
           const pending = roundCalls.filter((call) => call.name && call.result == null);
-          const shouldRun =
-            pending.length > 0 && (finishReason === "tool_calls" || roundText.length === 0);
-          if (!shouldRun) break;
+          const planCall = pending.find((call) => call.name === PROPOSE_PLAN_TOOL);
+          if (!options.unattended && !activePlan && (planCall || options.plan)) {
+            const resolved = resolvePlanSteps(planCall, planText, Boolean(options.plan));
+            if (resolved) {
+              const call: PendingCall = planCall ?? {
+                index: roundCalls.length,
+                id: `call_plan_${crypto.randomUUID()}`,
+                name: PROPOSE_PLAN_TOOL,
+                arguments: "",
+                result: null,
+                status: "plan",
+                output: null,
+              };
+              if (!call.id) call.id = `call_plan_${crypto.randomUUID()}`;
+              const steps = resolved.map((step) => ({ ...step, state: "pending" as const }));
+              call.name = PROPOSE_PLAN_TOOL;
+              call.arguments = JSON.stringify({ steps });
+              call.status = "plan";
+              call.output = null;
+              call.result = null;
+              liveCalls.push(call);
+              await saveCall(call);
+              followRequest = false;
+              enqueue("plan_required", {
+                id: call.id,
+                name: call.name,
+                steps,
+                arguments: call.arguments,
+                assistantMessageId: assistantId,
+              });
+              const outcome = await plans.wait(
+                call.id,
+                steps,
+                conversationSnapshot.id,
+                assistantId ?? "",
+              );
+              if (!signal?.aborted) followRequest = true;
+              if (outcome.reason !== "approved") {
+                const cancelled = outcome.reason === "cancelled";
+                const output = cancelled
+                  ? "Plan cancelled. Nothing ran."
+                  : "The plan timed out before it was approved. Nothing ran.";
+                const note = cancelled
+                  ? "Cancelled the plan. Nothing ran."
+                  : "The plan timed out. Nothing ran.";
+                call.status = cancelled ? "denied" : "error";
+                call.output = output;
+                call.result = output;
+                await saveCall(call);
+                enqueue("tool_result", {
+                  id: call.id,
+                  name: call.name,
+                  status: call.status,
+                  output,
+                  assistantMessageId: assistantId,
+                });
+                await publish(applyStreamEvent(trace, { type: "text", text: note }), {
+                  type: "text",
+                  text: note,
+                });
+                break;
+              }
+              const approved = outcome.steps.map((step, index) => ({
+                ...step,
+                state: index === 0 ? ("active" as const) : ("pending" as const),
+              }));
+              call.arguments = JSON.stringify({ steps: approved });
+              call.status = "running";
+              call.result = "approved";
+              activePlan = { call, steps: approved, index: 0 };
+              await saveCall(call);
+              enqueue("plan_progress", {
+                id: call.id,
+                name: call.name,
+                steps: approved,
+                status: "running",
+                arguments: call.arguments,
+                assistantMessageId: assistantId,
+              });
+              history.push({
+                role: "assistant",
+                content: roundText,
+                tool_calls: [toLlmToolCall(call)],
+              });
+              history.push({
+                role: "tool",
+                tool_call_id: call.id,
+                content: approvedPlanMessage(approved),
+              });
+              const first = approved[0];
+              if (first) history.push({ role: "user", content: stepCommand(first, 0) });
+              continue;
+            }
+            if (planCall) {
+              if (!planCall.id) planCall.id = `call_${planCall.index}_${crypto.randomUUID()}`;
+              await finish(planCall, "error", "The plan was not valid, so nothing ran.");
+            }
+          }
 
-          for (const call of pending) {
+          const runnable = roundCalls.filter((call) => call.name && call.result == null);
+          const shouldRun =
+            runnable.length > 0 && (finishReason === "tool_calls" || roundText.length === 0);
+          if (!shouldRun) {
+            if (await advancePlan(false, roundText)) continue;
+            break;
+          }
+
+          for (const call of runnable) {
             if (!call.id) call.id = `call_${call.index}_${crypto.randomUUID()}`;
           }
           history.push({
             role: "assistant",
             content: roundText,
-            tool_calls: pending.map(toLlmToolCall),
+            tool_calls: runnable.map(toLlmToolCall),
           });
-          for (const call of pending) {
+          for (const call of runnable) {
             if (clientCancelled() || userStopped) break;
             liveCalls.push(call);
             const output = await executeCall(call);
@@ -647,7 +844,12 @@ async function runChatTurn(
               failed: call.status === "error",
             });
           }
-          if (clientCancelled() || userStopped) break;
+          // A tool that halts the run (browse at its action limit) also ends a plan.
+          if (clientCancelled() || userStopped || halted) break;
+          if (activePlan) {
+            if (await advancePlan(true, roundText)) continue;
+            break;
+          }
         }
 
         if (clientCancelled() || userStopped) runStatus = "stopped";
@@ -796,6 +998,10 @@ async function runChatTurn(
         }
         const prepared = tool.prepare ? tool.prepare(parsed.args) : { args: parsed.args };
         if ("error" in prepared) return finish(call, "error", prepared.error);
+        if (call.name === PROPOSE_PLAN_TOOL) {
+          if (options.unattended) return finish(call, "error", PLAN_UNATTENDED);
+          return finish(call, "done", "The plan is already in progress.");
+        }
         if (call.name === ASK_USER_TOOL) {
           if (options.unattended) return finish(call, "error", ASK_UNATTENDED);
           return askPerson(call, prepared.args);
@@ -850,6 +1056,7 @@ async function runChatTurn(
           ...toolContext,
           signal: followRequest && !signal?.aborted ? toolContext.signal : undefined,
         });
+        if (result.halt) halted = true;
         if (!call.name.startsWith("memory_")) memoryDeps.toolOutputs.push(result.content);
         const blocked = result.blocked === "secret";
         const shown = blocked ? BLOCKED_MEMORY_OUTPUT : result.content;
@@ -913,6 +1120,28 @@ async function runChatTurn(
   });
 
   return new Response(stream, { headers: SSE_HEADERS });
+}
+
+function resolvePlanSteps(
+  call: PendingCall | undefined,
+  userText: string,
+  forced: boolean,
+): PlanStep[] | null {
+  if (call?.arguments) {
+    const parsed = parsePlan(call.arguments);
+    if (parsed.ok) return parsed.steps.map((step) => ({ ...step, state: "pending" as const }));
+  }
+  if (forced) return fallbackPlan(userText);
+  return null;
+}
+
+/** The latest user message in the model history, used to name a forced plan's steps. */
+function lastUserText(history: readonly LlmMessage[]): string {
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const item = history[index];
+    if (item?.role === "user" && typeof item.content === "string") return item.content;
+  }
+  return "";
 }
 
 function freshToolIds(

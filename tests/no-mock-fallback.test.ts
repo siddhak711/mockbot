@@ -7,7 +7,8 @@ import {
   defaultComputer,
   defaultConnector,
 } from "../src/agents/ports";
-import { resetAppContext, setAppContext } from "../src/context";
+import { BROWSE_TOOL_NAME } from "../src/browser/tool";
+import { registerUnavailableComputerTools, resetAppContext, setAppContext } from "../src/context";
 import type { LlmProvider } from "../src/llm";
 import { isProductionBuild, mockEnabled } from "../src/mock-gate";
 import {
@@ -16,6 +17,7 @@ import {
   sandboxUnavailableReason,
 } from "../src/sandbox/open";
 import { ConversationStore } from "../src/store";
+import { ToolRegistry } from "../src/tools/registry";
 import type { LlmStreamEvent } from "../src/types";
 import { readSse } from "./helpers";
 
@@ -97,4 +99,14 @@ it("surfaces the missing sandbox in the tool result and the computer pane", asyn
 it("fails child-run computer and connector calls instead of inventing content", async () => {
   await expect(defaultComputer.read("desk", "notes.txt")).rejects.toThrow(COMPUTER_NOT_WIRED);
   await expect(defaultConnector.call("notion", "search", {})).rejects.toThrow(CONNECTOR_NOT_WIRED);
+});
+
+it("registers a browse tool that fails with the sandbox reason when there is no sandbox", async () => {
+  const registry = new ToolRegistry();
+  registerUnavailableComputerTools(registry, SANDBOX_NOT_CONFIGURED);
+  const browse = registry.get(BROWSE_TOOL_NAME);
+  expect(browse).toBeTruthy();
+  const result = await browse!.invoke({ action: "open", url: "https://example.com" }, {});
+  expect(result.isError).toBe(true);
+  expect(result.content).toBe(`browse is unavailable: ${SANDBOX_NOT_CONFIGURED}`);
 });

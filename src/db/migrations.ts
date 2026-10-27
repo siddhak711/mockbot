@@ -537,4 +537,13 @@ $run_events_constraints$;
 DELETE FROM schema_migrations WHERE id = '007_run_events';
 `,
   },
+  // 012_plan_mode. 008, 009, 010, and 011 are already used on main and other branches.
+  {
+    id: "012_plan_mode",
+    sql: `
+ALTER TABLE tool_calls DROP CONSTRAINT IF EXISTS tool_calls_status_check;
+ALTER TABLE tool_calls ADD CONSTRAINT tool_calls_status_check
+  CHECK (status IN ('running', 'approval', 'ask', 'plan', 'done', 'denied', 'error'));
+`,
+  },
 ];

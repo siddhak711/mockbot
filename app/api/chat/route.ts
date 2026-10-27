@@ -10,7 +10,7 @@ export async function POST(request: Request): Promise<Response> {
   const actor = await requireApiUser(request);
   if (!actor.ok) return actor.response;
   const context = await getAppContext();
-  const { store, provider, tools, approvals, asks } = context;
+  const { store, provider, tools, approvals, asks, plans } = context;
   let body: unknown;
   try {
     body = await request.json();
@@ -20,7 +20,12 @@ export async function POST(request: Request): Promise<Response> {
   if (!body || typeof body !== "object") {
     return Response.json({ error: "Expected JSON body" }, { status: 400 });
   }
-  const record = body as { message?: unknown; conversationId?: unknown; agentId?: unknown };
+  const record = body as {
+    message?: unknown;
+    conversationId?: unknown;
+    agentId?: unknown;
+    plan?: unknown;
+  };
   return withUserTools(
     { store, tools, userId: actor.user.id, signal: request.signal },
     async (fresh) => {
@@ -32,6 +37,8 @@ export async function POST(request: Request): Promise<Response> {
         tools: fresh,
         approvals,
         asks,
+        plans,
+        plan: record.plan === true,
         message: typeof record.message === "string" ? record.message : "",
         conversationId:
           typeof record.conversationId === "string" ? record.conversationId : undefined,
