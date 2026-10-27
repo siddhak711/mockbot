@@ -4,6 +4,7 @@ import { SandboxBrowser } from "../browser/sandbox-browser";
 import type { ComputerSupervisor } from "../sandbox/supervisor";
 import type { ConversationStore } from "../store";
 import type { ToolDefinition } from "../tools/types";
+import { siteToolCallNeedsApproval } from "./approval";
 import { mintSiteTool, runSiteTool } from "./mint";
 import { SiteToolRepository } from "./repository";
 import type { SiteToolDeps } from "./types";
@@ -47,8 +48,7 @@ function mintTool(deps: SiteToolDeps): ToolDefinition {
       "Explore a site with the sandbox browser and save a reusable Playwright site tool with a typed JSON schema. " +
       "The script is saved only after it runs once on the live site and a self-check review passes. Minting the same name again stores a new version.",
     exposure: "hidden",
-    approval: "never",
-    skipHeuristicApproval: true,
+    approval: (args, context) => siteToolCallNeedsApproval("mint", args, context, deps),
     inputSchema: {
       type: "object",
       properties: {
@@ -62,6 +62,11 @@ function mintTool(deps: SiteToolDeps): ToolDefinition {
           type: "string",
           description: "Optional stable name. Defaults to a slug of the task.",
         },
+        confirm: {
+          type: "boolean",
+          description:
+            "Set when the task submits a form or clicks a submit control. The user approves first.",
+        },
       },
       required: ["site", "task"],
       additionalProperties: false,
@@ -72,16 +77,27 @@ function mintTool(deps: SiteToolDeps): ToolDefinition {
       if (!site) return { error: "mint_site_tool requires a site." };
       if (!task) return { error: "mint_site_tool requires a task." };
       const name = typeof args.name === "string" ? args.name.trim() : "";
-      return { args: { site, task, ...(name ? { name } : {}) } };
+      return {
+        args: {
+          site,
+          task,
+          ...(name ? { name } : {}),
+          ...(args.confirm === true ? { confirm: true } : {}),
+        },
+      };
     },
     async invoke(args, context) {
+      const userId = context.userId?.trim();
+      if (!userId) return { content: "Sign in before minting a site tool.", isError: true };
+      const allowSubmit = await siteToolCallNeedsApproval("mint", args, context, deps);
       const minted = await mintSiteTool(
         {
-          userId: context.userId ?? "",
+          userId,
           site: String(args.site ?? ""),
           task: String(args.task ?? ""),
           name: typeof args.name === "string" ? args.name : undefined,
           signal: context.signal,
+          allowSubmit,
         },
         deps,
       );
@@ -112,13 +128,17 @@ function runTool(deps: SiteToolDeps): ToolDefinition {
     description:
       "Replay a saved site tool by name. args must match the tool's typed JSON schema. Uses the latest version for this user.",
     exposure: "hidden",
-    approval: "never",
-    skipHeuristicApproval: true,
+    approval: (args, context) => siteToolCallNeedsApproval("run", args, context, deps),
     inputSchema: {
       type: "object",
       properties: {
         name: { type: "string", description: "Saved site tool name" },
         args: { type: "object", description: "Typed arguments for the saved script" },
+        confirm: {
+          type: "boolean",
+          description:
+            "Set when the saved script submits a form or clicks a submit control. The user approves first.",
+        },
       },
       required: ["name"],
       additionalProperties: false,
@@ -126,15 +146,16 @@ function runTool(deps: SiteToolDeps): ToolDefinition {
     prepare(args) {
       const name = typeof args.name === "string" ? args.name.trim() : "";
       if (!name) return { error: "run_site_tool requires a name." };
+      const confirm = args.confirm === true ? { confirm: true as const } : {};
       const raw = args.args;
-      if (raw == null) return { args: { name, args: {} } };
+      if (raw == null) return { args: { name, args: {}, ...confirm } };
       if (typeof raw === "string") {
         try {
           const parsed = JSON.parse(raw) as unknown;
           if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
             return { error: "run_site_tool args must be an object." };
           }
-          return { args: { name, args: parsed } };
+          return { args: { name, args: parsed, ...confirm } };
         } catch {
           return { error: "run_site_tool args must be an object." };
         }
@@ -142,15 +163,19 @@ function runTool(deps: SiteToolDeps): ToolDefinition {
       if (typeof raw !== "object" || Array.isArray(raw)) {
         return { error: "run_site_tool args must be an object." };
       }
-      return { args: { name, args: raw } };
+      return { args: { name, args: raw, ...confirm } };
     },
     async invoke(args, context) {
+      const userId = context.userId?.trim();
+      if (!userId) return { content: "Sign in before running a site tool.", isError: true };
+      const allowSubmit = await siteToolCallNeedsApproval("run", args, context, deps);
       const ran = await runSiteTool(
         {
-          userId: context.userId ?? "",
+          userId,
           name: String(args.name ?? ""),
           args: args.args,
           signal: context.signal,
+          allowSubmit,
         },
         deps,
       );

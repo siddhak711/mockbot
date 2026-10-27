@@ -10,12 +10,14 @@ export async function runPlaywrightScript(options: {
   args: Record<string, string>;
   timeoutMs?: number;
   signal?: AbortSignal;
+  allowSubmit?: boolean;
 }): Promise<ScriptRunResult> {
   const scriptPath = `.mockbot/site-tools/run-${randomUUID()}.cjs`;
   const wrote = await options.host.write(scriptPath, options.script);
   if (!wrote.ok) return { ok: false, error: wrote.error };
   const encoded = Buffer.from(JSON.stringify(options.args)).toString("base64");
-  const command = `${browserCommandPrefix(options.paths)} ${quote(options.paths.node)} ${quote(scriptPath)} ${quote(encoded)}`;
+  const allow = options.allowSubmit ? "1" : "0";
+  const command = `${browserCommandPrefix(options.paths)} ${quote(options.paths.node)} ${quote(scriptPath)} ${quote(encoded)} ${quote(allow)}`;
   const timeoutMs = options.timeoutMs ?? SITE_TOOL_RUN_TIMEOUT_MS;
   const outcome = await options.host.exec(command, timeoutMs, options.signal);
   if (outcome.timedOut) {

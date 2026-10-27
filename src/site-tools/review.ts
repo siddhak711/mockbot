@@ -105,6 +105,37 @@ function reviewApiKey(env: Record<string, string | undefined>): string {
   return env.LLM_API_KEY?.trim() || env.SITE_TOOL_REVIEW_API_KEY?.trim() || "";
 }
 
+const OPENROUTER_CHEAP_MODEL = "openrouter/auto";
+
+/** Model id sent to the self-check. OpenRouter rejects bare OpenAI ids such as gpt-4o-mini. */
+export function reviewModelChoice(env: Record<string, string | undefined>): {
+  model: string;
+  plugins?: Array<{ id: string; cost_tier: "low" }>;
+} {
+  const override = env.SITE_TOOL_REVIEW_MODEL?.trim();
+  if (override) return { model: override };
+  const configured = env.LLM_MODEL?.trim();
+  if (configured) return { model: configured };
+  if (isOpenRouter(env.LLM_BASE_URL)) {
+    return {
+      model: OPENROUTER_CHEAP_MODEL,
+      plugins: [{ id: "auto-router", cost_tier: "low" }],
+    };
+  }
+  return { model: "gpt-4o-mini" };
+}
+
+function isOpenRouter(baseUrl: string | undefined): boolean {
+  const trimmed = baseUrl?.trim();
+  if (!trimmed) return false;
+  try {
+    const host = new URL(trimmed).hostname.toLowerCase();
+    return host === "openrouter.ai" || host.endsWith(".openrouter.ai");
+  } catch {
+    return false;
+  }
+}
+
 async function modelReview(
   input: ReviewInput,
   options: {
@@ -118,7 +149,7 @@ async function modelReview(
     /\/+$/,
     "",
   );
-  const model = options.env.SITE_TOOL_REVIEW_MODEL?.trim() || "gpt-4o-mini";
+  const choice = reviewModelChoice(options.env);
   const fetchImpl = options.fetchImpl ?? fetch;
   let signal: AbortSignal;
   try {
@@ -137,7 +168,8 @@ async function modelReview(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model,
+        model: choice.model,
+        ...(choice.plugins ? { plugins: choice.plugins } : {}),
         temperature: 0,
         max_tokens: 200,
         messages: [

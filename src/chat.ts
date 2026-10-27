@@ -9,7 +9,7 @@ import { findSecrets } from "./memory/scrub";
 import { encodeSse, ssePadding } from "./sse";
 import { titleFromMessage, type ConversationStore } from "./store";
 import type { LlmProvider } from "./llm";
-import { requiresApproval, type ApprovalGate } from "./tools/approval";
+import { approvalNeeded, type ApprovalGate } from "./tools/approval";
 import { runTool, type ToolRegistry } from "./tools/registry";
 import {
   activityTitle,
@@ -460,7 +460,7 @@ export async function streamChatTurn(options: {
         }
         const prepared = tool.prepare ? tool.prepare(parsed.args) : { args: parsed.args };
         if ("error" in prepared) return finish(call, "error", prepared.error);
-        if (requiresApproval(tool, prepared.args)) {
+        if (await approvalNeeded(tool, prepared.args, toolContext)) {
           call.status = "approval";
           await saveCall(call);
           const described = describeTool(call.name, JSON.stringify(prepared.args));

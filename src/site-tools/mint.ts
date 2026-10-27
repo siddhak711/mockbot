@@ -28,7 +28,15 @@ export type MintResult =
     };
 
 export async function mintSiteTool(
-  input: { userId: string; site: string; task: string; name?: string; signal?: AbortSignal },
+  input: {
+    userId: string;
+    site: string;
+    task: string;
+    name?: string;
+    signal?: AbortSignal;
+    /** True only after this mint call passed the submit approval card. */
+    allowSubmit?: boolean;
+  },
   deps: SiteToolDeps,
 ): Promise<MintResult> {
   const userId = input.userId.trim();
@@ -53,6 +61,7 @@ export async function mintSiteTool(
     site: site.url,
     steps: parsed.steps,
     signal: input.signal,
+    allowSubmit: input.allowSubmit === true,
   });
   if (!explored.ok) return { saved: false, stage: "explore", error: explored.error };
 
@@ -74,7 +83,13 @@ export async function mintSiteTool(
     };
   }
 
-  const ran = await executeScript(deps, compiled.script, compiled.sampleArgs, input.signal);
+  const ran = await executeScript(
+    deps,
+    compiled.script,
+    compiled.sampleArgs,
+    input.signal,
+    input.allowSubmit === true,
+  );
   if (!ran.ok) {
     return {
       saved: false,
@@ -110,7 +125,14 @@ export type RunToolResult =
   { ok: true; name: string; version: number; result: unknown } | { ok: false; error: string };
 
 export async function runSiteTool(
-  input: { userId: string; name: string; args: unknown; signal?: AbortSignal },
+  input: {
+    userId: string;
+    name: string;
+    args: unknown;
+    signal?: AbortSignal;
+    /** True only after this replay passed the submit approval card. */
+    allowSubmit?: boolean;
+  },
   deps: SiteToolDeps,
 ): Promise<RunToolResult> {
   const userId = input.userId.trim();
@@ -120,7 +142,13 @@ export async function runSiteTool(
   if (!record) return { ok: false, error: `No site tool named "${name}".` };
   const validated = validateSiteToolArgs(record.schema, input.args);
   if (!validated.ok) return validated;
-  const ran = await executeScript(deps, record.script, validated.args, input.signal);
+  const ran = await executeScript(
+    deps,
+    record.script,
+    validated.args,
+    input.signal,
+    input.allowSubmit === true,
+  );
   if (!ran.ok) return ran;
   return { ok: true, name: record.name, version: record.version, result: ran.result };
 }
@@ -129,9 +157,10 @@ async function executeScript(
   deps: SiteToolDeps,
   script: string,
   args: Record<string, string>,
-  signal?: AbortSignal,
+  signal: AbortSignal | undefined,
+  allowSubmit: boolean,
 ): Promise<ScriptRunResult> {
-  if (deps.runScript) return deps.runScript({ script, args, signal });
+  if (deps.runScript) return deps.runScript({ script, args, signal, allowSubmit });
   const host = deps.host();
   const driver = deps.driver();
   if (!host || !driver) return { ok: false, error: SITE_TOOL_UNAVAILABLE };
@@ -146,6 +175,7 @@ async function executeScript(
     args,
     timeoutMs: deps.timeoutMs,
     signal,
+    allowSubmit,
   });
 }
 

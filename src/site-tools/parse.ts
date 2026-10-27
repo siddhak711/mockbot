@@ -1,6 +1,8 @@
 import { MAX_SITE_TOOL_NAME, MAX_TASK_CHARS, type Binding, type PlannedStep } from "./types";
 
-const SELECTOR = String.raw`(?:\{[^}]+\}|#[\w-]+|\.[\w-]+|\[[^\]]+\])`;
+const SELECTOR_TOKEN =
+  /^(?:(?:button|input|label|a)?(?:#[\w-]+|\.[\w-]+|\[[^\]]+\])(?:\[[^\]]+\])?)$/;
+const SELECTOR = String.raw`(?:\{[^}]+\}|(?:button|input|label|a)?(?:#[\w-]+|\.[\w-]+|\[[^\]]+\])(?:\[[^\]]+\])?)`;
 const VALUE = String.raw`(?:"[^"]*"|\{[^}]+\}|\S+)`;
 
 type Found = { index: number; step: PlannedStep };
@@ -112,14 +114,8 @@ function collect(
 function parseSelector(token: string): Binding | null {
   const binding = parseBinding(token);
   if (!binding) return null;
-  if (binding.kind === "literal" && !/^(?:#[\w-]+|\.[\w-]+|\[[^\]]+\])$/.test(binding.value)) {
-    return null;
-  }
-  if (
-    binding.kind === "arg" &&
-    binding.example &&
-    !/^(?:#[\w-]+|\.[\w-]+|\[[^\]]+\])$/.test(binding.example)
-  ) {
+  if (binding.kind === "literal" && !SELECTOR_TOKEN.test(binding.value)) return null;
+  if (binding.kind === "arg" && binding.example && !SELECTOR_TOKEN.test(binding.example)) {
     return null;
   }
   return binding;

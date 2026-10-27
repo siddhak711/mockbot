@@ -60,6 +60,8 @@ export type ScriptRunRequest = {
   script: string;
   args: Record<string, string>;
   signal?: AbortSignal;
+  /** True only after the site-tool call itself passed the submit approval card. */
+  allowSubmit?: boolean;
 };
 
 export type ScriptRunResult = { ok: true; result: unknown } | { ok: false; error: string };

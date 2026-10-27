@@ -7,10 +7,13 @@ export async function exploreSite(options: {
   site: string;
   steps: PlannedStep[];
   signal?: AbortSignal;
+  /** True only after the mint call itself passed the submit approval card. */
+  allowSubmit?: boolean;
 }): Promise<{ ok: true; actions: string[] } | { ok: false; error: string }> {
   const tool = browseTool({
     driver: () => options.driver,
     maxActions: options.steps.length + 2,
+    allowSubmit: options.allowSubmit === true,
   });
   const context = { signal: options.signal, runCounters: new Map<string, number>() };
   const actions: string[] = [];

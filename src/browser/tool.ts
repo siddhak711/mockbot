@@ -28,6 +28,11 @@ export type BrowseToolOptions = {
   unavailable?: string;
   actionTimeoutMs?: number;
   maxActions?: number;
+  /**
+   * Forces the daemon submit flag for every step.
+   * Leave unset for chat browse: a submit is allowed only after this call itself was approved.
+   */
+  allowSubmit?: boolean;
 };
 
 /** Approval runs before submits and logins: on confirm, or when the selector names one. */
@@ -98,8 +103,10 @@ export function browseTool(options: BrowseToolOptions): ToolDefinition {
           ...(typeof step.selector === "string" ? { selector: step.selector } : {}),
           ...(typeof step.text === "string" ? { text: step.text } : {}),
           timeoutMs: action === "open" ? timeoutMs * 2 : timeoutMs,
-          // Reaching invoke means the approval layer already let this call through.
-          allowSubmit: browseNeedsApproval(step),
+          // Chat browse sets this from the selector. A caller that already passed
+          // the approval card, or that must not submit, overrides it.
+          allowSubmit:
+            options.allowSubmit === undefined ? browseNeedsApproval(step) : options.allowSubmit,
         },
         context.signal,
       );
