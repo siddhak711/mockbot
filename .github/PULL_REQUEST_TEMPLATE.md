@@ -7,6 +7,13 @@
 
 Reviewers flag a pull request whose screenshots or recordings contradict those invariants (a conversation list, New chat, rename, delete, or a "Start a conversation" empty state).
 
+## No mock providers outside tests
+
+- [ ] No mock, stub, or fake provider is reachable outside tests. A missing credential fails loudly with a visible error, not a silent mock fallback.
+- [ ] Grep result for `mock|stub|fake` in the non-test code this pull request touches:
+
+<!-- Paste the command and its output. Explain every hit. -->
+
 ## What changed
 
 ## Proof

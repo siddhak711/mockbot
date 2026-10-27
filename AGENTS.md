@@ -28,6 +28,20 @@ Reviewers check every pull request against these invariants. A change that break
 - Chat, routines, and delegate append to the target agent's thread. They do not open a second conversation for the same agent.
 - Screenshots and recordings in the pull request are evidence. If they show a conversation list, a New chat control, a rename control, a delete control, or an empty "Start a conversation" state, the reviewer flags the pull request.
 
+## 4. No mock providers outside tests
+
+- No mock, stub, or fake provider may be reachable outside tests. Mock data belongs in test files and test fixtures only.
+- A missing credential (token, API key, or env var) must fail loudly with a visible error in the UI and the tool result. It never falls back silently to mock data.
+- Every review greps the non-test code the pull request touches for `mock`, `stub`, and `fake`, for example `rg -n -i "mock|stub|fake" src app components --glob '!**/*.test.*' --glob '!tests/**' --glob '!e2e/**'`, and states the result in the review. A hit on a reachable code path blocks the pull request.
+
+## 5. Retry rule
+
+Every retry of failed work must change something: the failure evidence, the worker, a fresh context, or the plan. Running the same attempt again unchanged is not a retry.
+
+1. Attempt 2: the same worker, given the failure evidence.
+2. Attempt 3: a fresh context.
+3. After attempt 3: change the plan.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 ## This is NOT the Next.js you know

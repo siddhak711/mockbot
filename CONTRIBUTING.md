@@ -18,6 +18,14 @@ Every pull request description must include:
 
 Pull requests that change the UI or the data model must say which product-model invariants in [AGENTS.md](AGENTS.md) they touch and how the change keeps them. Reviewers flag a pull request whose screenshots or recordings contradict those invariants.
 
+## No mock providers outside tests
+
+No mock, stub, or fake provider may be reachable outside tests. A missing credential must fail loudly with a visible error, never a silent mock fallback. Every review greps the non-test code the pull request touches for `mock`, `stub`, and `fake` and states the result. See [AGENTS.md](AGENTS.md) section 4.
+
+## Retry rule
+
+Every retry of failed work must change something: the failure evidence, the worker, a fresh context, or the plan. Attempt 2 is the same worker with the failure evidence, attempt 3 is a fresh context, and after that the plan changes. See [AGENTS.md](AGENTS.md) section 5.
+
 ## Checks
 
 Requires Node.js 22 or newer.
