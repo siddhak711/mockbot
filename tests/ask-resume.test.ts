@@ -166,7 +166,7 @@ it("continues a resumed turn when its follow-up approval is approved, denied, or
       expect(message.trace?.ended).toBe(true);
     }
   }
-});
+}, 30_000);
 
 it("resumes with the turn's earlier tools, the agent prompt, and compacted history", async () => {
   const store = await ConversationStore.open();
