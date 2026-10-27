@@ -268,6 +268,7 @@ export class RunLog {
   /**
    * Insert one row. A failed insert is logged and does not reject, so a chat
    * turn, routine, or delegation can finish and close its stream.
+   * A primary-key clash with another logger on this run retries at the next seq.
    */
   append(row: AppendRow): Promise<void> {
     if (this.#held) {
@@ -276,15 +277,7 @@ export class RunLog {
     }
     const task = this.#tail.then(async () => {
       try {
-        this.#seq += 1;
-        const seq = this.#seq;
-        const input = clip(row.input == null ? null : redactSecrets(row.input));
-        const output = clip(row.output == null ? null : redactSecrets(row.output));
-        await this.db.query(
-          `INSERT INTO run_events (run_id, seq, type, input, output, tokens, cost_usd, ms)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-          [this.id, seq, row.type, input, output, row.tokens, row.costUsd, row.ms],
-        );
+        await this.#insert(row);
       } catch (error) {
         logRunEventFailure(error);
       }
@@ -401,16 +394,41 @@ export class RunLog {
    * logger. `runId` defaults to a new id. `seq` continues after any rows already
    * stored for that run. The promise never rejects.
    */
+  async #insert(row: AppendRow): Promise<void> {
+    const input = clip(row.input == null ? null : redactSecrets(row.input));
+    const output = clip(row.output == null ? null : redactSecrets(row.output));
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      this.#seq += 1;
+      const seq = this.#seq;
+      try {
+        await this.db.query(
+          `INSERT INTO run_events (run_id, seq, type, input, output, tokens, cost_usd, ms)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [this.id, seq, row.type, input, output, row.tokens, row.costUsd, row.ms],
+        );
+        return;
+      } catch (error) {
+        if (!isSeqConflict(error) || attempt === 7) throw error;
+        await this.#adoptStoredSeq();
+      }
+    }
+  }
+
+  /** Move `#seq` forward to the highest row already stored for this run. */
+  async #adoptStoredSeq(): Promise<void> {
+    const current = await this.db.query<{ seq: number | string | null }>(
+      `SELECT COALESCE(MAX(seq), 0) AS seq FROM run_events WHERE run_id = $1`,
+      [this.id],
+    );
+    const max = Number(current.rows[0]?.seq ?? 0);
+    if (Number.isFinite(max) && max > this.#seq) this.#seq = max;
+  }
+
   static recordModelRoute(db: Sql, route: ModelRouteLog & { runId?: string }): Promise<void> {
     const log = new RunLog(db, route.runId);
     const prepared = log.#tail.then(async () => {
       try {
-        const current = await db.query<{ seq: number | string | null }>(
-          `SELECT COALESCE(MAX(seq), 0) AS seq FROM run_events WHERE run_id = $1`,
-          [log.id],
-        );
-        const max = Number(current.rows[0]?.seq ?? 0);
-        if (Number.isFinite(max) && max > log.#seq) log.#seq = max;
+        await log.#adoptStoredSeq();
       } catch (error) {
         logRunEventFailure(error);
       }
@@ -424,6 +442,21 @@ export class RunLog {
       () => log.recordModelRoute(route),
     );
   }
+}
+
+function isSeqConflict(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  if ("code" in error && String((error as { code: unknown }).code) === "23505") return true;
+  if (
+    "constraint" in error &&
+    (error as { constraint: unknown }).constraint === "run_events_pkey"
+  ) {
+    return true;
+  }
+  return (
+    error instanceof Error &&
+    (error.message.includes("duplicate key") || error.message.includes("run_events_pkey"))
+  );
 }
 
 function finiteCount(value: number): number {

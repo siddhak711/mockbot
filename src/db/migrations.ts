@@ -306,6 +306,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS connectors_catalog_id_idx
   // 011_run_events. main already has 007_composio_connections and 008_connector_catalog.
   // PR #32 claims 009_one_thread_per_agent and PR #37 claims 010_ask_user.
   // This id stays 011 so schema_migrations does not collide with those.
+  // A preview already applied this table as 007_run_events. That SQL has the
+  // same columns, check, and primary key as this one, so every statement below
+  // is a no-op on that table. The stray schema_migrations row is removed.
   {
     id: "011_run_events",
     sql: `
@@ -320,6 +323,42 @@ CREATE TABLE IF NOT EXISTS run_events (
   ms INTEGER,
   PRIMARY KEY (run_id, seq)
 );
+
+ALTER TABLE run_events ADD COLUMN IF NOT EXISTS run_id TEXT;
+ALTER TABLE run_events ADD COLUMN IF NOT EXISTS seq INTEGER;
+ALTER TABLE run_events ADD COLUMN IF NOT EXISTS type TEXT;
+ALTER TABLE run_events ADD COLUMN IF NOT EXISTS input TEXT;
+ALTER TABLE run_events ADD COLUMN IF NOT EXISTS output TEXT;
+ALTER TABLE run_events ADD COLUMN IF NOT EXISTS tokens INTEGER;
+ALTER TABLE run_events ADD COLUMN IF NOT EXISTS cost_usd DOUBLE PRECISION;
+ALTER TABLE run_events ADD COLUMN IF NOT EXISTS ms INTEGER;
+
+CREATE UNIQUE INDEX IF NOT EXISTS run_events_pkey ON run_events (run_id, seq);
+
+DO $run_events_constraints$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.run_events'::regclass
+      AND conname = 'run_events_type_check'
+  ) THEN
+    ALTER TABLE run_events
+      ADD CONSTRAINT run_events_type_check
+      CHECK (type IN ('model', 'tool', 'event', 'error'));
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.run_events'::regclass
+      AND contype = 'p'
+  ) THEN
+    ALTER TABLE run_events
+      ADD CONSTRAINT run_events_pkey PRIMARY KEY (run_id, seq);
+  END IF;
+END
+$run_events_constraints$;
+
+DELETE FROM schema_migrations WHERE id = '007_run_events';
 `,
   },
 ];

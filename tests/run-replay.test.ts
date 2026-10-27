@@ -398,3 +398,50 @@ it("writes the parent model row before delegate rows", async () => {
   expect(parent!.seq).toBeLessThan(delegate!.seq);
   expect(rows.find((row) => row.type === "model")?.seq).toBe(parent!.seq);
 });
+
+it("persists both rows when a route write races the live logger on seq", async () => {
+  const store = await ConversationStore.open();
+  const db = store.connection;
+  const query = db.query.bind(db);
+  let inserts = 0;
+  let releaseSecond: () => void = () => {};
+  const secondEntered = new Promise<void>((resolve) => {
+    releaseSecond = resolve;
+  });
+  let releaseFirst: () => void = () => {};
+  const firstEntered = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  db.query = (async (text: string, params?: readonly unknown[]) => {
+    if (text.includes("INSERT INTO run_events")) {
+      inserts += 1;
+      if (inserts === 1) {
+        releaseFirst();
+        await secondEntered;
+      } else if (inserts === 2) {
+        releaseSecond();
+      }
+    }
+    return query(text, params);
+  }) as typeof db.query;
+
+  const live = new RunLog(db, "run_race");
+  const liveWrite = live.mark("run.started");
+  await firstEntered;
+  const routeWrite = RunLog.recordModelRoute(db, {
+    runId: "run_race",
+    tier: "cheap",
+    reason: "chat",
+    model: "mock-route",
+    costUsd: 0,
+    inputTokens: 2,
+    outputTokens: 2,
+  });
+  await Promise.all([liveWrite, routeWrite]);
+
+  const rows = await listRunEvents(db, "run_race");
+  expect(rows).toHaveLength(2);
+  expect(new Set(rows.map((row) => row.seq)).size).toBe(2);
+  expect(rows.some((row) => row.input?.includes("run.started"))).toBe(true);
+  expect(rows.some((row) => row.input?.includes('"name":"model.route"'))).toBe(true);
+});
