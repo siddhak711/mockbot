@@ -57,6 +57,8 @@ export async function beginComposioConnect(options: {
 export async function completeComposioConnect(options: {
   pending: PendingOAuth;
   userId: string;
+  /** Owner of the connector row. Null on the unscoped path, where the row is shared. */
+  ownerId?: string | null;
   returnedState: string;
   status: string;
   connectedAccountId: string;
@@ -100,6 +102,7 @@ export async function completeComposioConnect(options: {
     entry,
     toolkit,
     connectorId: options.pending.connectorId,
+    ownerId: options.ownerId ?? null,
     tools: listed.tools,
     error: listed.error,
   });
@@ -152,6 +155,7 @@ async function saveComposioConnector(options: {
   entry: CatalogEntry;
   toolkit: string;
   connectorId?: string;
+  ownerId: string | null;
   tools: {
     name: string;
     description: string;
@@ -163,7 +167,7 @@ async function saveComposioConnector(options: {
 }): Promise<ConnectorRecord> {
   const target = composioConnectorTarget(options.toolkit);
   const { store } = await getAppContext();
-  const existing = await store.listConnectors();
+  const existing = await store.listConnectors(options.ownerId);
   const current = options.connectorId
     ? existing.find((item) => item.id === options.connectorId)
     : existing.find((item) => item.catalogId === options.entry.id);
@@ -188,13 +192,17 @@ async function saveComposioConnector(options: {
     : discovered;
   const status = options.error ? "error" : "connected";
   if (current) {
-    const saved = await store.saveBrokerConnector(current.id, {
-      accountLabel: null,
-      target,
-      tools: settings,
-      status,
-      statusDetail: options.error,
-    });
+    const saved = await store.saveBrokerConnector(
+      current.id,
+      {
+        accountLabel: null,
+        target,
+        tools: settings,
+        status,
+        statusDetail: options.error,
+      },
+      options.ownerId,
+    );
     if (!saved) throw new Error("That connector no longer exists.");
     return saved;
   }
@@ -210,5 +218,6 @@ async function saveComposioConnector(options: {
     statusDetail: options.error,
     tools: settings,
     seenTools: [],
+    userId: options.ownerId,
   });
 }

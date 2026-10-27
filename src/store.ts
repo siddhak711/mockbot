@@ -76,10 +76,12 @@ type ConnectorRow = {
   seen_tools?: unknown;
   failures?: unknown;
   secret_cipher?: string | null;
+  user_id?: string | null;
 };
 
 const CONNECTOR_COLUMNS = `id, name, transport, target, secret_ref, enabled, created_at, updated_at,
-  catalog_id, auth_type, account_label, status, status_detail, tools, seen_tools, failures, secret_cipher`;
+  catalog_id, auth_type, account_label, status, status_detail, tools, seen_tools, failures, secret_cipher,
+  user_id`;
 
 function asIso(value: Date | string): string {
   const date = value instanceof Date ? value : new Date(value);
@@ -185,6 +187,7 @@ function mapConnector(row: ConnectorRow): ConnectorRecord {
     seenTools: jsonStringList(row.seen_tools),
     failures: jsonNumberList(row.failures),
     secretCipher: row.secret_cipher ?? null,
+    userId: row.user_id ?? null,
   };
 }
 
@@ -490,13 +493,30 @@ export class ConversationStore {
     );
   }
 
-  async listConnectors(): Promise<ConnectorRecord[]> {
+  /**
+   * Connectors one account owns. `ownerId` limits every connector query below;
+   * leaving it out is the unscoped path (tests and the pre-account app).
+   */
+  async listConnectors(ownerId?: string | null): Promise<ConnectorRecord[]> {
     const result = await this.db.query<ConnectorRow>(
       `SELECT ${CONNECTOR_COLUMNS}
        FROM connectors
+       WHERE ($1::text IS NULL OR user_id = $1)
        ORDER BY created_at ASC, id ASC`,
+      [ownerId ?? null],
     );
     return result.rows.map(mapConnector);
+  }
+
+  async getConnector(id: string, ownerId?: string | null): Promise<ConnectorRecord | null> {
+    const result = await this.db.query<ConnectorRow>(
+      `SELECT ${CONNECTOR_COLUMNS}
+       FROM connectors
+       WHERE id = $1 AND ($2::text IS NULL OR user_id = $2)`,
+      [id, ownerId ?? null],
+    );
+    const row = result.rows[0];
+    return row ? mapConnector(row) : null;
   }
 
   async createConnector(input: {
@@ -513,14 +533,15 @@ export class ConversationStore {
     tools?: Record<string, ConnectorToolSetting>;
     seenTools?: string[];
     secretCipher?: string | null;
+    userId?: string | null;
   }): Promise<ConnectorRecord> {
     const id = input.id ?? crypto.randomUUID();
     const result = await this.db.query<ConnectorRow>(
       `INSERT INTO connectors (
          id, name, transport, target, secret_ref, catalog_id, auth_type, account_label,
-         status, status_detail, tools, seen_tools, secret_cipher
+         status, status_detail, tools, seen_tools, secret_cipher, user_id
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13, $14)
        RETURNING ${CONNECTOR_COLUMNS}`,
       [
         id,
@@ -536,6 +557,7 @@ export class ConversationStore {
         JSON.stringify(input.tools ?? {}),
         JSON.stringify(input.seenTools ?? []),
         input.secretCipher ?? null,
+        input.userId ?? null,
       ],
     );
     const row = result.rows[0];
@@ -544,7 +566,7 @@ export class ConversationStore {
   }
 
   /**
-   * One shared row per catalog app. A concurrent insert loses and returns the row that won.
+   * One row per account and catalog app. A concurrent insert loses and returns the row that won.
    */
   async insertCatalogConnector(input: {
     name: string;
@@ -559,15 +581,16 @@ export class ConversationStore {
     tools?: Record<string, ConnectorToolSetting>;
     seenTools?: string[];
     secretCipher?: string | null;
+    userId?: string | null;
   }): Promise<ConnectorRecord> {
     const id = crypto.randomUUID();
     const inserted = await this.db.query<ConnectorRow>(
       `INSERT INTO connectors (
          id, name, transport, target, secret_ref, catalog_id, auth_type, account_label,
-         status, status_detail, tools, seen_tools, secret_cipher
+         status, status_detail, tools, seen_tools, secret_cipher, user_id
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13)
-       ON CONFLICT (catalog_id) WHERE catalog_id IS NOT NULL DO NOTHING
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13, $14)
+       ON CONFLICT (user_id, catalog_id) WHERE catalog_id IS NOT NULL DO NOTHING
        RETURNING ${CONNECTOR_COLUMNS}`,
       [
         id,
@@ -583,6 +606,7 @@ export class ConversationStore {
         JSON.stringify(input.tools ?? {}),
         JSON.stringify(input.seenTools ?? []),
         input.secretCipher ?? null,
+        input.userId ?? null,
       ],
     );
     const created = inserted.rows[0];
@@ -590,10 +614,10 @@ export class ConversationStore {
     const existing = await this.db.query<ConnectorRow>(
       `SELECT ${CONNECTOR_COLUMNS}
        FROM connectors
-       WHERE catalog_id = $1
+       WHERE catalog_id = $1 AND user_id IS NOT DISTINCT FROM $2
        ORDER BY created_at ASC, id ASC
        LIMIT 1`,
-      [input.catalogId],
+      [input.catalogId, input.userId ?? null],
     );
     const row = existing.rows[0];
     if (!row) throw new Error("Failed to create connector");
@@ -610,6 +634,7 @@ export class ConversationStore {
       status: ConnectorStatus;
       statusDetail: string | null;
     },
+    ownerId?: string | null,
   ): Promise<ConnectorRecord | null> {
     const result = await this.db.query<ConnectorRow>(
       `UPDATE connectors
@@ -623,7 +648,7 @@ export class ConversationStore {
            failures = '[]'::jsonb,
            auth_type = 'oauth',
            updated_at = NOW()
-       WHERE id = $1
+       WHERE id = $1 AND ($8::text IS NULL OR user_id = $8)
        RETURNING ${CONNECTOR_COLUMNS}`,
       [
         id,
@@ -633,31 +658,40 @@ export class ConversationStore {
         JSON.stringify(input.tools),
         input.status,
         input.statusDetail,
+        ownerId ?? null,
       ],
     );
     const row = result.rows[0];
     return row ? mapConnector(row) : null;
   }
 
-  async setConnectorSecret(id: string, secretCipher: string): Promise<ConnectorRecord | null> {
+  async setConnectorSecret(
+    id: string,
+    secretCipher: string,
+    ownerId?: string | null,
+  ): Promise<ConnectorRecord | null> {
     const result = await this.db.query<ConnectorRow>(
       `UPDATE connectors
        SET secret_cipher = $2, secret_ref = NULL, updated_at = NOW()
-       WHERE id = $1
+       WHERE id = $1 AND ($3::text IS NULL OR user_id = $3)
        RETURNING ${CONNECTOR_COLUMNS}`,
-      [id, secretCipher],
+      [id, secretCipher, ownerId ?? null],
     );
     const row = result.rows[0];
     return row ? mapConnector(row) : null;
   }
 
-  async setConnectorEnabled(id: string, enabled: boolean): Promise<ConnectorRecord | null> {
+  async setConnectorEnabled(
+    id: string,
+    enabled: boolean,
+    ownerId?: string | null,
+  ): Promise<ConnectorRecord | null> {
     const result = await this.db.query<ConnectorRow>(
       `UPDATE connectors
        SET enabled = $2, updated_at = NOW()
-       WHERE id = $1
+       WHERE id = $1 AND ($3::text IS NULL OR user_id = $3)
        RETURNING ${CONNECTOR_COLUMNS}`,
-      [id, enabled],
+      [id, enabled, ownerId ?? null],
     );
     const row = result.rows[0];
     return row ? mapConnector(row) : null;
@@ -668,6 +702,7 @@ export class ConversationStore {
     status: ConnectorStatus,
     statusDetail: string | null,
     failures?: number[],
+    ownerId?: string | null,
   ): Promise<ConnectorRecord | null> {
     const result = await this.db.query<ConnectorRow>(
       `UPDATE connectors
@@ -675,9 +710,9 @@ export class ConversationStore {
            status_detail = $3,
            failures = COALESCE($4::jsonb, failures),
            updated_at = NOW()
-       WHERE id = $1
+       WHERE id = $1 AND ($5::text IS NULL OR user_id = $5)
        RETURNING ${CONNECTOR_COLUMNS}`,
-      [id, status, statusDetail, failures ? JSON.stringify(failures) : null],
+      [id, status, statusDetail, failures ? JSON.stringify(failures) : null, ownerId ?? null],
     );
     const row = result.rows[0];
     return row ? mapConnector(row) : null;
@@ -687,24 +722,27 @@ export class ConversationStore {
     id: string,
     tools: Record<string, ConnectorToolSetting>,
     seenTools?: string[],
+    ownerId?: string | null,
   ): Promise<ConnectorRecord | null> {
     const result = await this.db.query<ConnectorRow>(
       `UPDATE connectors
        SET tools = $2::jsonb,
            seen_tools = COALESCE($3::jsonb, seen_tools),
            updated_at = NOW()
-       WHERE id = $1
+       WHERE id = $1 AND ($4::text IS NULL OR user_id = $4)
        RETURNING ${CONNECTOR_COLUMNS}`,
-      [id, JSON.stringify(tools), seenTools ? JSON.stringify(seenTools) : null],
+      [id, JSON.stringify(tools), seenTools ? JSON.stringify(seenTools) : null, ownerId ?? null],
     );
     const row = result.rows[0];
     return row ? mapConnector(row) : null;
   }
 
-  async deleteConnector(id: string): Promise<boolean> {
+  async deleteConnector(id: string, ownerId?: string | null): Promise<boolean> {
     const result = await this.db.query<{ id: string }>(
-      `DELETE FROM connectors WHERE id = $1 RETURNING id`,
-      [id],
+      `DELETE FROM connectors
+       WHERE id = $1 AND ($2::text IS NULL OR user_id = $2)
+       RETURNING id`,
+      [id, ownerId ?? null],
     );
     return result.rows.length > 0;
   }
@@ -793,6 +831,7 @@ export class ConversationStore {
       status: ConnectorStatus;
       statusDetail: string | null;
     },
+    ownerId?: string | null,
   ): Promise<ConnectorRecord | null> {
     const result = await this.db.query<ConnectorRow>(
       `UPDATE connectors
@@ -806,7 +845,7 @@ export class ConversationStore {
            failures = '[]'::jsonb,
            auth_type = 'oauth',
            updated_at = NOW()
-       WHERE id = $1
+       WHERE id = $1 AND ($7::text IS NULL OR user_id = $7)
        RETURNING ${CONNECTOR_COLUMNS}`,
       [
         id,
@@ -815,6 +854,7 @@ export class ConversationStore {
         JSON.stringify(input.tools),
         input.status,
         input.statusDetail,
+        ownerId ?? null,
       ],
     );
     const row = result.rows[0];

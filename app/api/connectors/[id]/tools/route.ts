@@ -25,7 +25,8 @@ export async function PATCH(request: Request, context: RouteContext): Promise<Re
   const parsed = parseToolSettingsBody(body);
   if (!parsed.ok) return Response.json({ error: parsed.error }, { status: 400 });
   const { store } = await getAppContext();
-  const existing = (await store.listConnectors()).find((connector) => connector.id === id);
+  const owner = actor.scoped ? actor.user.id : undefined;
+  const existing = await store.getConnector(id, owner);
   if (!existing) return Response.json({ error: "Connector not found" }, { status: 404 });
   const next: Record<string, ConnectorToolSetting> = { ...(existing.tools ?? {}) };
   for (const [name, patch] of Object.entries(parsed.tools)) {
@@ -44,7 +45,7 @@ export async function PATCH(request: Request, context: RouteContext): Promise<Re
     };
   }
   const seen = parsed.markSeen ? Object.keys(next) : undefined;
-  const connector = await store.updateConnectorTools(id, next, seen);
+  const connector = await store.updateConnectorTools(id, next, seen, owner);
   if (!connector) return Response.json({ error: "Connector not found" }, { status: 404 });
   return Response.json({ connector: toPublicConnector(connector) });
 }

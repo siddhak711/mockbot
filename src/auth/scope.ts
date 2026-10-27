@@ -22,7 +22,29 @@ async function claimOrphans(db: Sql, userId: string): Promise<void> {
      FROM first_user
      WHERE row.user_id IS NULL
        AND first_user.id = $1`;
-  for (const table of ["agents", "conversations", "memories"] as const) {
+  for (const table of ["agents", "conversations", "memories", "connectors"] as const) {
+    if (table === "connectors") {
+      await db.query(
+        `WITH first_user AS (
+           SELECT id FROM users ORDER BY created_at ASC, id ASC LIMIT 1
+         )
+         UPDATE connectors AS row
+         SET user_id = first_user.id
+         FROM first_user
+         WHERE row.user_id IS NULL
+           AND first_user.id = $1
+           AND (
+             row.catalog_id IS NULL
+             OR NOT EXISTS (
+               SELECT 1 FROM connectors existing
+               WHERE existing.user_id = first_user.id
+                 AND existing.catalog_id = row.catalog_id
+             )
+           )`,
+        [userId],
+      );
+      continue;
+    }
     if (table === "agents") {
       await db.query(
         `WITH first_user AS (

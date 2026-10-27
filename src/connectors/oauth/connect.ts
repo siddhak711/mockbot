@@ -101,8 +101,9 @@ export async function handleOAuthCallback(request: Request): Promise<Response> {
   if (!pending) {
     return fail("Sign-in expired", "Start the connection again. The sign-in session expired.");
   }
+  const owner = actor.scoped ? actor.user.id : null;
   if (pending.broker === "composio") {
-    return finishComposio(request, pending, actor.user.id, origin, secure, fail);
+    return finishComposio(request, pending, actor.user.id, owner, origin, secure, fail);
   }
   const entry = catalogById(pending.catalogId);
   if (!entry || !catalogIsWired(entry)) {
@@ -152,6 +153,7 @@ export async function handleOAuthCallback(request: Request): Promise<Response> {
       token: stored,
       accountLabel: account,
       connectorId: pending.connectorId,
+      ownerId: owner,
       signal: request.signal,
     });
     return htmlResponse(
@@ -199,6 +201,7 @@ async function finishComposio(
   request: Request,
   pending: PendingOAuth,
   userId: string,
+  ownerId: string | null,
   origin: string,
   secure: boolean,
   fail: (title: string, message: string, status?: number) => Response,
@@ -210,6 +213,7 @@ async function finishComposio(
     const finished = await completeComposioConnect({
       pending,
       userId,
+      ownerId,
       returnedState: url.searchParams.get("state") ?? "",
       status: url.searchParams.get("status") ?? "",
       connectedAccountId: url.searchParams.get("connected_account_id") ?? "",
@@ -237,13 +241,15 @@ async function saveCatalogConnector(options: {
   token: StoredOAuthToken;
   accountLabel: string;
   connectorId?: string;
+  /** Signed-in owner. Null on the unscoped path. */
+  ownerId: string | null;
   signal?: AbortSignal;
 }): Promise<ConnectorRecord> {
   const target = catalogTarget(options.entry);
   if (!target) throw new Error(`${options.entry.name} is not available yet.`);
   const secretCipher = await encryptSecret(serializeOAuthToken(options.token));
   const { store } = await getAppContext();
-  const existing = await store.listConnectors();
+  const existing = await store.listConnectors(options.ownerId);
   const current = options.connectorId
     ? existing.find((item) => item.id === options.connectorId)
     : existing.find((item) => item.catalogId === options.entry.id);
@@ -282,14 +288,18 @@ async function saveCatalogConnector(options: {
   const status = listed.error ? "error" : "connected";
   const statusDetail = listed.error;
   if (current) {
-    const saved = await store.saveOAuthConnector(current.id, {
-      secretCipher,
-      accountLabel: options.accountLabel,
-      target,
-      tools: settings,
-      status,
-      statusDetail,
-    });
+    const saved = await store.saveOAuthConnector(
+      current.id,
+      {
+        secretCipher,
+        accountLabel: options.accountLabel,
+        target,
+        tools: settings,
+        status,
+        statusDetail,
+      },
+      options.ownerId,
+    );
     if (!saved) throw new Error("That connector no longer exists.");
     return saved;
   }
@@ -306,6 +316,7 @@ async function saveCatalogConnector(options: {
     statusDetail,
     tools: settings,
     seenTools: [],
+    userId: options.ownerId,
   });
 }
 

@@ -527,4 +527,24 @@ $run_events_constraints$;
 DELETE FROM schema_migrations WHERE id = '007_run_events';
 `,
   },
+  // Connectors belong to one account. Rows from before this migration keep a
+  // null owner: nobody can tell whose key they hold, so signed-in accounts do
+  // not see them. The first account adopts them, as it adopts other orphan rows
+  // (src/auth/scope.ts). Each account gets its own row per catalog app.
+  {
+    id: "012_connectors_user",
+    sql: `
+ALTER TABLE connectors ADD COLUMN IF NOT EXISTS user_id TEXT REFERENCES users(id) ON DELETE CASCADE;
+
+CREATE INDEX IF NOT EXISTS connectors_user_idx ON connectors (user_id, created_at ASC);
+
+DROP INDEX IF EXISTS connectors_catalog_id_idx;
+
+CREATE UNIQUE INDEX IF NOT EXISTS connectors_user_catalog_idx
+  ON connectors (user_id, catalog_id) NULLS NOT DISTINCT
+  WHERE catalog_id IS NOT NULL;
+`,
+  },
+`,
+  },
 ];

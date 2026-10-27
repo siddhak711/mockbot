@@ -35,6 +35,8 @@ export type ConnectorRecord = {
   failures?: number[];
   /** Server-only ciphertext. Never include this in an API response. */
   secretCipher?: string | null;
+  /** Owning account. Null for rows from before accounts, which signed-in users do not see. */
+  userId?: string | null;
 };
 
 export type PublicConnector = Omit<ConnectorRecord, "secretCipher">;
