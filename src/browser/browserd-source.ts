@@ -3,6 +3,8 @@
  * The host uploads it to `.mockbot/browserd.cjs` and runs
  * `node browserd.cjs send <base64 step>`. The first send starts `serve` in the
  * background, which keeps one headless Chromium page open between actions.
+ * The daemon takes a lock before launching Chromium, and closes that browser
+ * if it never binds its port, so a second starter cannot orphan a process.
  *
  * The daemon refuses form submits, login clicks, and password typing unless the
  * step has `allowSubmit`, which the host sets only after the approval layer.
@@ -71,22 +73,113 @@ function classifyType(el) {
   return null;
 }
 
-async function serve() {
-  const { chromium } = require("playwright-core");
-  const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ viewport: VIEWPORT, acceptDownloads: false });
-  const page = await context.newPage();
-  let shots = 0;
-  let queue = Promise.resolve();
-  let idle = null;
+function lockPath() {
+  return path.join(__dirname, "browserd.lock");
+}
 
-  const shutdown = async () => {
+function processAlive(pid) {
+  if (!pid || pid < 1) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return Boolean(error && error.code === "EPERM");
+  }
+}
+
+function readLockPid() {
+  try {
+    const pid = Number(fs.readFileSync(path.join(lockPath(), "pid"), "utf8").trim());
+    return Number.isFinite(pid) ? pid : 0;
+  } catch (error) {
+    return 0;
+  }
+}
+
+function lockHeldByOther() {
+  const pid = readLockPid();
+  if (pid === process.pid) return false;
+  if (processAlive(pid)) return true;
+  if (pid > 0) return false;
+  try {
+    const stat = fs.statSync(lockPath());
+    return Date.now() - stat.mtimeMs < 3000;
+  } catch (error) {
+    return false;
+  }
+}
+
+function acquireServeLock() {
+  const dir = lockPath();
+  for (let attempt = 0; attempt < 5; attempt += 1) {
     try {
-      await browser.close();
-    } finally {
-      process.exit(0);
+      fs.mkdirSync(dir);
+      fs.writeFileSync(path.join(dir, "pid"), String(process.pid));
+      return true;
+    } catch (error) {
+      if (!error || error.code !== "EEXIST") throw error;
+      const pid = readLockPid();
+      if (processAlive(pid) || pid === process.pid) return false;
+      if (pid < 1 && lockHeldByOther()) return false;
+      try {
+        fs.rmSync(dir, { recursive: true, force: true });
+      } catch (unlinkError) {
+        return false;
+      }
     }
-  };
+  }
+  return false;
+}
+
+function releaseServeLock() {
+  try {
+    if (readLockPid() !== process.pid) return;
+    fs.rmSync(lockPath(), { recursive: true, force: true });
+  } catch (error) {
+    // Already released.
+  }
+}
+
+function bindServer(server) {
+  return new Promise((resolve, reject) => {
+    const onError = (error) => {
+      server.removeListener("listening", onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      server.removeListener("error", onError);
+      resolve();
+    };
+    server.once("error", onError);
+    server.listen(PORT, "127.0.0.1", onListening);
+  });
+}
+
+async function serve() {
+  if (!acquireServeLock()) {
+    process.exit(0);
+  }
+  let browser = null;
+  try {
+    const { chromium } = require("playwright-core");
+    browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({ viewport: VIEWPORT, acceptDownloads: false });
+    const page = await context.newPage();
+    let shots = 0;
+    let queue = Promise.resolve();
+    let idle = null;
+    let stopped = false;
+
+    const shutdown = async () => {
+      if (stopped) return;
+      stopped = true;
+      try {
+        await browser.close();
+      } finally {
+        releaseServeLock();
+        process.exit(0);
+      }
+    };
   const touch = () => {
     if (idle) clearTimeout(idle);
     idle = setTimeout(shutdown, IDLE_MS);
@@ -182,7 +275,23 @@ async function serve() {
       });
     });
   });
-  server.listen(PORT, "127.0.0.1", touch);
+    await bindServer(server);
+    server.on("error", (error) => {
+      process.stderr.write(message(error) + "\n");
+      shutdown();
+    });
+    touch();
+  } catch (error) {
+    if (browser) {
+      try {
+        await browser.close();
+      } catch (closeError) {
+        process.stderr.write(message(closeError) + "\n");
+      }
+    }
+    releaseServeLock();
+    throw error;
+  }
 }
 
 function ping() {
@@ -200,20 +309,23 @@ function ping() {
 }
 
 async function ensureServer(timeoutMs) {
-  if (await ping()) return true;
-  const log = fs.openSync(path.join(__dirname, "browserd.log"), "a");
-  const child = spawn(process.execPath, [__filename, "serve"], {
-    detached: true,
-    stdio: ["ignore", log, log],
-    env: process.env,
-  });
-  child.unref();
   const deadline = Date.now() + timeoutMs;
+  let spawned = false;
   while (Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 200));
     if (await ping()) return true;
+    if (!spawned && !lockHeldByOther()) {
+      spawned = true;
+      const log = fs.openSync(path.join(__dirname, "browserd.log"), "a");
+      const child = spawn(process.execPath, [__filename, "serve"], {
+        detached: true,
+        stdio: ["ignore", log, log],
+        env: process.env,
+      });
+      child.unref();
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
   }
-  return false;
+  return ping();
 }
 
 function post(step, timeoutMs) {

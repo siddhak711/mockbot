@@ -1,3 +1,4 @@
+import { throwIfAborted, withSignal } from "../sandbox/abort";
 import type { ExecOutcome } from "../sandbox/runtime";
 import { BROWSERD_SOURCE } from "./browserd-source";
 import { browserInstallCommand, browserInstallScript, type BrowserPaths } from "./install";
@@ -80,24 +81,27 @@ export class SandboxBrowser implements BrowserDriver {
     return pairs.join(" ");
   }
 
+  /**
+   * One installer at a time. Aborting the caller stops the wait only.
+   * Daytona leaves the remote command running after the local exec rejects, so
+   * forgetting this promise would start a second installer over the first.
+   */
   #ensureInstalled(signal?: AbortSignal): Promise<void> {
     if (!this.options.install) return Promise.resolve();
-    if (!this.#installed) {
-      this.#installed = this.#install(signal).catch((error: unknown) => {
-        this.#installed = null;
-        throw error;
-      });
-    }
-    return this.#installed;
+    throwIfAborted(signal);
+    this.#installed ??= this.#install().catch((error: unknown) => {
+      this.#installed = null;
+      throw error;
+    });
+    return withSignal(this.#installed, signal);
   }
 
-  async #install(signal?: AbortSignal): Promise<void> {
+  async #install(): Promise<void> {
     const wrote = await this.host.write(INSTALL_PATH, browserInstallScript());
     if (!wrote.ok) throw new Error(wrote.error);
     const outcome = await this.host.exec(
       browserInstallCommand(INSTALL_PATH),
       BROWSER_INSTALL_TIMEOUT_MS,
-      signal,
     );
     if (outcome.timedOut) throw new Error("Installing the sandbox browser timed out.");
     if (outcome.exitCode !== 0) {
