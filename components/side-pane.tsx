@@ -98,7 +98,6 @@ export function SidePane({
         <TokenStreamPanel messages={messages} activities={activities} />
       ) : (
         <ComputerPane
-          embedded
           activities={activities}
           selectedId={selectedId}
           onSelect={onSelect}

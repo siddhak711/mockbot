@@ -3,8 +3,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import type { ComputerSnapshot, SandboxRun } from "../src/sandbox/types";
 import { formatToolPayload, type ToolActivity } from "../src/tools/display";
-import { IconTip } from "./icon-tip";
-import { HidePanelIcon } from "./icons";
 
 const OUTPUT_PREVIEW_LINES = 20;
 const OUTPUT_PREVIEW_CHARS = 1_500;
@@ -23,16 +21,12 @@ export function ComputerPane({
   onSelect,
   snapshot = null,
   status = "ready",
-  onHide,
-  embedded = false,
 }: {
   activities?: ToolActivity[];
   selectedId?: string | null;
   onSelect?: (id: string) => void;
   snapshot?: ComputerSnapshot | null;
   status?: "loading" | "ready" | "error";
-  onHide?: () => void;
-  embedded?: boolean;
 }) {
   const runs = snapshot?.runs ?? [];
   const latestId = runs[0]?.id ?? null;
@@ -176,23 +170,13 @@ export function ComputerPane({
       </div>
     );
 
-  if (embedded) return <div className="computer-embedded">{content}</div>;
-
+  // The side pane owns the header and tabs. The provider label stays visible so mock output
+  // is always marked as mock (AGENTS.md section 4).
   return (
-    <aside className="computer" aria-label="Computer">
-      <header className="pane-h">
-        <div>
-          <h2>Computer</h2>
-          <p className="computer-kicker">{provider}</p>
-        </div>
-        {onHide ? (
-          <IconTip label="Hide" onClick={onHide}>
-            <HidePanelIcon />
-          </IconTip>
-        ) : null}
-      </header>
+    <div className="computer-embedded">
+      <p className="computer-kicker computer-provider">{provider}</p>
       {content}
-    </aside>
+    </div>
   );
 }
 

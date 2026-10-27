@@ -1761,6 +1761,11 @@ summary:focus-visible {
   margin: 0 0 4px;
 }
 
+.computer-provider {
+  margin: 0;
+  padding: 8px 12px 0;
+}
+
 .computer-exit {
   margin: 0;
   font-size: 15px;

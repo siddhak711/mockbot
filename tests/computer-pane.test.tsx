@@ -8,6 +8,7 @@ import {
   filesChanged,
   previewOutput,
 } from "../components/computer-pane";
+import { SidePane } from "../components/side-pane";
 import type { ComputerSnapshot, SandboxRun } from "../src/sandbox/types";
 
 afterEach(() => {
@@ -130,6 +131,22 @@ describe("computer trace", () => {
       runs,
     };
   }
+
+  it("labels mock and Daytona output inside the side pane", () => {
+    const props = {
+      tab: "computer" as const,
+      onTab: () => {},
+      memories: [],
+      memoryError: null,
+      agentId: "agent",
+      onMemoriesChanged: async () => {},
+    };
+    const { rerender } = render(<SidePane {...props} snapshot={snapshot()} />);
+    expect(screen.getByText("Mock sandbox")).toBeTruthy();
+    rerender(<SidePane {...props} snapshot={{ ...snapshot(), provider: "daytona" }} />);
+    expect(screen.getByText("Daytona sandbox")).toBeTruthy();
+    expect(screen.queryByText("Mock sandbox")).toBeNull();
+  });
 
   it("shows files changed, keeps the full tree folded, and collapses reads", () => {
     render(<ComputerPane snapshot={snapshot()} />);
