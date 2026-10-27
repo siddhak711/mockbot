@@ -28,7 +28,7 @@ Every retry of failed work must change something: the failure evidence, the work
 
 ## Tool credentials in production
 
-Every tool declares its credential source (env var or per-user OAuth). A pull request that adds or changes a tool lists those sources and confirms production provides each one: `vercel env ls --environment production` names only for env vars, or the OAuth path shown working live in a screenshot or screen recording (required), optionally plus a test log or live API output (a real call returning real data, tokens redacted). A tool with no credential in production must fail visibly. Production uses per-user GitHub OAuth; `GITHUB_TOKEN` is for local development only. Until per-user GitHub OAuth exists in production, the GitHub tool must fail visibly in production with the message `GitHub not connected`. See [AGENTS.md](AGENTS.md) section 6.
+Every tool declares its credential source (env var or per-user OAuth). A pull request that adds or changes a tool lists those sources and confirms production provides each one: `vercel env ls --environment production` names only for env vars, or, for OAuth, a test log or live API output from a real call returning real data, with tokens redacted (a screenshot or recording is optional, never required; Screenshot/recording proof paused per Siddha, Oct 26, 2026.) A tool with no credential in production must fail visibly. Production uses per-user GitHub OAuth; `GITHUB_TOKEN` is for local development only. Until per-user GitHub OAuth exists in production, the GitHub tool must fail visibly in production with the message `GitHub not connected`. See [AGENTS.md](AGENTS.md) section 6.
 
 ## Checks
 
