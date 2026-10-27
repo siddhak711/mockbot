@@ -470,6 +470,16 @@ CREATE UNIQUE INDEX conversations_user_agent_key
   ON conversations (user_id, agent_id) NULLS NOT DISTINCT;
 `,
   },
+  // 010_ask_user sits between 009_one_thread_per_agent and 011_run_events.
+  // Main reserved 010 for this pull request.
+  {
+    id: "010_ask_user",
+    sql: `
+ALTER TABLE tool_calls DROP CONSTRAINT IF EXISTS tool_calls_status_check;
+ALTER TABLE tool_calls ADD CONSTRAINT tool_calls_status_check
+  CHECK (status IN ('running', 'approval', 'ask', 'done', 'denied', 'error'));
+`,
+  },
   // 011_run_events stays after 009_one_thread_per_agent. PR #37 claims
   // 010_ask_user, so this id is 011. A preview already applied this table as
   // 007_run_events. That SQL has the same columns, check, and primary key, so
@@ -525,6 +535,33 @@ END
 $run_events_constraints$;
 
 DELETE FROM schema_migrations WHERE id = '007_run_events';
+`,
+  },
+  // 012_plan_mode. 008, 009, 010, and 011 are already used on main and other branches.
+  {
+    id: "012_plan_mode",
+    sql: `
+ALTER TABLE tool_calls DROP CONSTRAINT IF EXISTS tool_calls_status_check;
+ALTER TABLE tool_calls ADD CONSTRAINT tool_calls_status_check
+  CHECK (status IN ('running', 'approval', 'ask', 'plan', 'done', 'denied', 'error'));
+`,
+  },
+  {
+    id: "013_site_tools",
+    sql: `
+CREATE TABLE IF NOT EXISTS site_tools (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  "schema" JSONB NOT NULL,
+  script TEXT NOT NULL,
+  version INTEGER NOT NULL CHECK (version >= 1),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (user_id, name, version)
+);
+
+CREATE INDEX IF NOT EXISTS site_tools_latest_idx
+  ON site_tools (user_id, lower(name), version DESC);
 `,
   },
 ];

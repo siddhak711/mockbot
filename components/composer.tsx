@@ -8,6 +8,7 @@ export function canSendMessage(streaming: boolean, awaitingApproval: boolean): b
 export function Composer({
   streaming,
   awaitingApproval = false,
+  busyHint,
   onSend,
   onStop,
   placeholder = "Message Mockbot",
@@ -17,7 +18,8 @@ export function Composer({
 }: {
   streaming: boolean;
   awaitingApproval?: boolean;
-  onSend: (text: string) => void;
+  busyHint?: string;
+  onSend: (text: string, options?: { plan?: boolean }) => void;
   onStop: () => void;
   placeholder?: string;
   value?: string;
@@ -26,6 +28,7 @@ export function Composer({
 }) {
   const [internalValue, setInternalValue] = useState("");
   const [menu, setMenu] = useState(false);
+  const [plan, setPlan] = useState(false);
   const value = controlledValue ?? internalValue;
 
   function setValue(next: string) {
@@ -39,7 +42,7 @@ export function Composer({
     const text = value.trim();
     if (!text || busy) return;
     setValue("");
-    onSend(text);
+    onSend(text, plan ? { plan: true } : undefined);
   }
 
   return (
@@ -94,8 +97,19 @@ export function Composer({
               ) : null}
             </div>
           ) : null}
+          <button
+            type="button"
+            className={plan ? "plan-toggle on" : "plan-toggle"}
+            aria-pressed={plan}
+            disabled={busy}
+            onClick={() => setPlan((current) => !current)}
+          >
+            Plan
+          </button>
           {busy ? (
-            <span className="hint">{awaitingApproval ? "Needs approval" : "Responding"}</span>
+            <span className="hint">
+              {busyHint ?? (awaitingApproval ? "Needs approval" : "Responding")}
+            </span>
           ) : null}
           <span className="grow" />
           {busy ? (

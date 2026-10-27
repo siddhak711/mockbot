@@ -1,11 +1,13 @@
 import { planMockTurn } from "./memory/mock-turn";
 import { isProductionBuild, mockEnabled } from "./mock-gate";
 import { SYSTEM_PROMPT } from "./memory/prompt";
+import { mockPlanCall, parseStepCommand, PROPOSE_PLAN_TOOL } from "./tools/plan";
 import type { LlmMessage, LlmStreamEvent, ProviderId } from "./types";
 
 export { SYSTEM_PROMPT };
 import { readModelUsage, readOpenAiEvents } from "./openai-events";
 import { SseParser } from "./sse";
+import type { ModelRouteEvent } from "./run-events";
 import type { ToolDefinition } from "./tools/types";
 
 const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
@@ -19,6 +21,17 @@ export const MOCK_TOOL_RESULT =
 export type StreamOptions = {
   tools?: readonly ToolDefinition[];
   signal?: AbortSignal;
+  /** Composer Plan switch. The mock proposes a plan before any other tool. */
+  plan?: boolean;
+  /** Overrides the provider model for this request. The router sets it per turn. */
+  model?: string;
+  conversationId?: string;
+  /** The previous attempt on this turn failed. The router escalates when this is set. */
+  retryAfterFailure?: boolean;
+  /** Completion cap for this request. The router sets it from the chosen tier. */
+  maxTokens?: number;
+  /** Called once with the router's tier and cost when this request ends. */
+  onRoute?: (event: ModelRouteEvent) => void;
 };
 
 export interface LlmProvider {
@@ -33,8 +46,23 @@ export interface LlmProvider {
 export function streamOptions(input?: StreamOptions | AbortSignal): StreamOptions {
   if (!input) return {};
   if (input instanceof AbortSignal) {
-    const tools = (input as AbortSignal & { tools?: readonly ToolDefinition[] }).tools;
-    return tools ? { signal: input, tools } : { signal: input };
+    const extra = input as AbortSignal & {
+      tools?: readonly ToolDefinition[];
+      plan?: boolean;
+      model?: string;
+      conversationId?: string;
+      retryAfterFailure?: boolean;
+      maxTokens?: number;
+    };
+    return {
+      signal: input,
+      ...(extra.tools ? { tools: extra.tools } : {}),
+      ...(extra.plan ? { plan: true } : {}),
+      ...(extra.model ? { model: extra.model } : {}),
+      ...(extra.conversationId ? { conversationId: extra.conversationId } : {}),
+      ...(extra.retryAfterFailure ? { retryAfterFailure: true } : {}),
+      ...(typeof extra.maxTokens === "number" ? { maxTokens: extra.maxTokens } : {}),
+    };
   }
   return input;
 }
@@ -250,8 +278,49 @@ export class MockProvider implements LlmProvider {
     input?: StreamOptions | AbortSignal,
   ): AsyncIterable<LlmStreamEvent> {
     this.options.onMessages?.(messages);
-    const { signal, tools = [] } = streamOptions(input);
+    const { signal, tools = [], plan = false } = streamOptions(input);
     const userText = lastUserText(messages);
+    const step = parseStepCommand(userText);
+    if (step && !this.options.reply && !this.options.tools) {
+      const requested = namedToolRequest(step.detail, tools);
+      if (signal?.aborted) return;
+      yield { type: "start", role: "assistant" };
+      yield { type: "text", text: `Finished: ${step.title}\n` };
+      if (requested?.found && step.detail.trim().startsWith("Call ")) {
+        const id = `call_${crypto.randomUUID()}`;
+        yield {
+          type: "tool_call",
+          index: 0,
+          id,
+          name: requested.name,
+          arguments: JSON.stringify(requested.args),
+        };
+        yield { type: "end", finishReason: "tool_calls" };
+        return;
+      }
+      yield { type: "end", finishReason: "stop" };
+      return;
+    }
+    const planned =
+      !this.options.reply && !this.options.tools && !this.options.scriptToolCall
+        ? mockPlanCall(userText, plan)
+        : null;
+    if (
+      planned &&
+      tools.some((tool) => tool.name === PROPOSE_PLAN_TOOL) &&
+      toolResultsThisTurn(messages) === 0
+    ) {
+      yield* this.#emitCall(
+        {
+          name: PROPOSE_PLAN_TOOL,
+          args: {
+            steps: planned.steps.map((item) => ({ title: item.title, detail: item.detail })),
+          },
+        },
+        signal,
+      );
+      return;
+    }
     if (this.options.demoTools && !this.options.reply && !this.options.tools) {
       const next = demoPlan(userText)[toolResultsThisTurn(messages)];
       if (next) {
@@ -527,7 +596,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     messages: LlmMessage[],
     input?: StreamOptions | AbortSignal,
   ): AsyncIterable<LlmStreamEvent> {
-    const { signal, tools = [] } = streamOptions(input);
+    const { signal, tools = [], model, maxTokens } = streamOptions(input);
     let response: Response;
     try {
       response = await fetch(`${this.#baseUrl}/chat/completions`, {
@@ -538,10 +607,11 @@ export class OpenAiCompatibleProvider implements LlmProvider {
           Accept: "text/event-stream",
         },
         body: JSON.stringify({
-          model: this.model,
+          model: model || this.model,
           stream: true,
           stream_options: { include_usage: true },
           messages: messages.map(wireMessage),
+          ...(typeof maxTokens === "number" ? { max_tokens: maxTokens } : {}),
           ...(tools.length > 0 ? { tools: wireTools(tools), tool_choice: "auto" } : {}),
         }),
         signal,

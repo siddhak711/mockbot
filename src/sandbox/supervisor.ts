@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { BrowserHost } from "../browser/sandbox-browser";
 import { isAbortError, throwIfAborted } from "./abort";
 import {
   formatExecResult,
@@ -73,6 +74,28 @@ export class ComputerSupervisor {
 
   async close(): Promise<void> {
     await this.store.close();
+  }
+
+  /**
+   * Raw write and exec for the browser daemon, or null when the runtime cannot
+   * run one. The mock computer has no processes, so only Daytona qualifies.
+   */
+  browserHost(agentId = DEFAULT_AGENT_ID): BrowserHost | null {
+    if (this.runtime.kind !== "daytona") return null;
+    const id = this.#agent(agentId);
+    const runtime = this.runtime;
+    return {
+      write: (path, content) => runtime.write(id, path, content),
+      async exec(command, timeoutMs, signal) {
+        await runtime.prepare(id, signal);
+        return runtime.exec(id, command, timeoutMs, signal);
+      },
+      prepare: (signal) => runtime.prepare(id, signal),
+      sandboxId: async () => {
+        const computer = await this.store.getComputer(id);
+        return computer?.sandboxId ?? null;
+      },
+    };
   }
 
   async snapshot(agentId = DEFAULT_AGENT_ID): Promise<ComputerSnapshot> {
