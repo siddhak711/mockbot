@@ -7,6 +7,7 @@ import { loadRouterConfig, RoutingProvider } from "./model-router";
 import { RoutineStore } from "./routines/store";
 import { sandboxBrowseTool } from "./browser/open";
 import { BROWSE_TOOL_NAME, browseTool } from "./browser/tool";
+import { siteToolsForApp } from "./site-tools/tools";
 import { openComputer, sandboxUnavailableReason } from "./sandbox/open";
 import type { ComputerSupervisor } from "./sandbox/supervisor";
 import { createComputerTools, createUnavailableComputerTools } from "./sandbox/tools";
@@ -66,6 +67,17 @@ export function registerComputerTools(
   if (!registry.get(BROWSE_TOOL_NAME)) registry.register(sandboxBrowseTool(sandbox, env));
 }
 
+export function registerSiteTools(
+  registry: ToolRegistry,
+  store: ConversationStore,
+  sandbox?: ComputerSupervisor,
+  env: Record<string, string | undefined> = {},
+): void {
+  for (const tool of siteToolsForApp({ store, sandbox, env })) {
+    if (!registry.get(tool.name)) registry.register(tool);
+  }
+}
+
 export function registerUnavailableComputerTools(registry: ToolRegistry, reason: string): void {
   for (const tool of createUnavailableComputerTools(reason)) {
     if (!registry.get(tool.name)) registry.register(tool);
@@ -97,6 +109,7 @@ export function setAppContext(context: {
   if (!context.tools) registerMemoryTools(tools, context.store);
   if (context.sandbox) registerComputerTools(tools, context.sandbox);
   else if (context.sandboxError) registerUnavailableComputerTools(tools, context.sandboxError);
+  registerSiteTools(tools, context.store, context.sandbox, process.env);
   current = {
     store: context.store,
     provider: context.provider,
@@ -167,6 +180,7 @@ async function openApp(): Promise<AppContext> {
     registerMemoryTools(tools, store);
     if (sandbox) registerComputerTools(tools, sandbox, process.env);
     else registerUnavailableComputerTools(tools, sandboxError ?? "The sandbox is not available.");
+    registerSiteTools(tools, store, sandbox, process.env);
     const agents = await AgentDirectory.attach(store);
     const inner = new RoutingProvider({
       inner: withAgentMock(selectProvider(process.env)),

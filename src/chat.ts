@@ -13,7 +13,7 @@ import { PLAN_MODE_ON } from "./memory/prompt";
 import { streamDecision } from "./model-router";
 import type { ModelRouteEvent } from "./run-events";
 import { ASK_UNATTENDED, ASK_USER_TOOL, type AskGate } from "./tools/ask-user";
-import { requiresApproval, type ApprovalGate } from "./tools/approval";
+import { approvalNeeded, type ApprovalGate } from "./tools/approval";
 import {
   approvedPlanMessage,
   PLAN_UNATTENDED,
@@ -1006,7 +1006,7 @@ async function runChatTurn(
           if (options.unattended) return finish(call, "error", ASK_UNATTENDED);
           return askPerson(call, prepared.args);
         }
-        if (requiresApproval(tool, prepared.args)) {
+        if (await approvalNeeded(tool, prepared.args, toolContext)) {
           if (options.unattended) return finish(call, "denied", UNATTENDED_APPROVAL);
           // Store what will run if approved, not the raw model arguments.
           call.arguments = JSON.stringify(prepared.args);

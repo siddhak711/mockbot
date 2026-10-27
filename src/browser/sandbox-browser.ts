@@ -30,6 +30,11 @@ export const DAEMON_PATH = ".mockbot/browserd.cjs";
 export const INSTALL_PATH = ".mockbot/install-browser.sh";
 export const DEFAULT_BROWSER_PORT = 9417;
 
+/** Env prefix for Node and playwright-core inside the sandbox. Shared with site-tool scripts. */
+export function browserCommandPrefix(paths: BrowserPaths, port = DEFAULT_BROWSER_PORT): string {
+  return [`NODE_PATH=${quote(paths.nodePath)}`, `MOCKBOT_BROWSER_PORT=${port}`].join(" ");
+}
+
 /**
  * Drives the browser daemon inside a sandbox. Every action is one exec of
  * `node browserd.cjs send`. The daemon connects over CDP to a remote browser
@@ -55,11 +60,8 @@ export class SandboxBrowser implements BrowserDriver {
   ) {}
 
   async perform(step: BrowseStep, signal?: AbortSignal): Promise<BrowseOutcome> {
-    try {
-      await this.#ensureInstalled(signal);
-    } catch (error) {
-      return { ok: false, error: errorText(error, "The sandbox browser could not be installed.") };
-    }
+    const ready = await this.ensureReady(signal);
+    if (!ready.ok) return ready;
     let outcome = await this.#withSession(step, signal);
     // A session that ended early, such as at its time limit, is replaced once.
     if (!outcome.ok && outcome.sessionEnded && !signal?.aborted) {
@@ -67,6 +69,19 @@ export class SandboxBrowser implements BrowserDriver {
     }
     if (signal?.aborted) await this.close().catch(() => undefined);
     return outcome;
+  }
+
+  /**
+   * Installs Node and playwright-core on first use. Site tools call this before
+   * running a saved script, which connects to its own remote session.
+   */
+  async ensureReady(signal?: AbortSignal): Promise<{ ok: true } | { ok: false; error: string }> {
+    try {
+      await this.#ensureInstalled(signal);
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: errorText(error, "The sandbox browser could not be installed.") };
+    }
   }
 
   /** Stops the daemon and releases the remote session. Safe when neither is running. */
@@ -119,11 +134,7 @@ export class SandboxBrowser implements BrowserDriver {
   }
 
   #env(): string {
-    const { paths, port } = this.options;
-    return [
-      `NODE_PATH=${quote(paths.nodePath)}`,
-      `MOCKBOT_BROWSER_PORT=${port ?? DEFAULT_BROWSER_PORT}`,
-    ].join(" ");
+    return browserCommandPrefix(this.options.paths, this.options.port ?? DEFAULT_BROWSER_PORT);
   }
 
   /**
