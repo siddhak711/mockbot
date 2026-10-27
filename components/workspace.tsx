@@ -1179,12 +1179,8 @@ export function Workspace({
             />
             <span className="thread-title">{speaking?.name ?? "Mockbot"}</span>
           </h1>
-          {active && replayIds[active.id] ? (
-            <a className="ghost-text" href={`/runs/${replayIds[active.id]}`}>
-              Replay
-            </a>
-          ) : null}
           <ThreadActions
+            replayHref={active && replayIds[active.id] ? `/runs/${replayIds[active.id]}` : null}
             computerOpen={computerOpen}
             onMemory={showMemory}
             onShowComputer={() => setComputerOpen(true)}
@@ -1253,6 +1249,8 @@ export function Workspace({
             memories={memories}
             memoryError={memoryError}
             agentId={speakingId}
+            agentName={spriteName}
+            spriteColor={spriteColor}
             onMemoriesChanged={refreshMemories}
             activities={activities}
             snapshot={computer}
@@ -1272,6 +1270,8 @@ export function Workspace({
           memories={memories}
           memoryError={memoryError}
           agentId={speakingId}
+          agentName={spriteName}
+          spriteColor={spriteColor}
           onMemoriesChanged={refreshMemories}
           activities={activities}
           snapshot={computer}

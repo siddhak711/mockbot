@@ -166,6 +166,16 @@ export function MonitorIcon() {
   );
 }
 
+export function ReplayIcon() {
+  return (
+    <Icon>
+      <path d="M4 12a8 8 0 1 0 2.3-5.6" strokeLinecap="round" />
+      <path d="M4 4v4h4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="m10 9 5 3-5 3z" strokeLinejoin="round" />
+    </Icon>
+  );
+}
+
 export function TraceIcon() {
   return (
     <Icon>

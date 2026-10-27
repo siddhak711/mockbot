@@ -157,6 +157,15 @@ describe("computer pane", () => {
     expect(screen.queryByText("Nothing has run")).toBeNull();
   });
 
+  it("names the computer after the agent that owns the sandbox", () => {
+    render(<ComputerPane snapshot={snapshot()} agentName="Jerry" />);
+
+    expect(screen.getByRole("heading", { name: /Jerry's computer/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "Browser" }));
+    expect(screen.getByText("Browser pages show up here when Jerry opens one.")).toBeTruthy();
+    expect(screen.queryByText(/mockbot/)).toBeNull();
+  });
+
   it("names the provider and keeps the files list free of phase-2 chrome", () => {
     const onContentTab = vi.fn();
     render(<ComputerPane snapshot={snapshot()} onContentTab={onContentTab} />);
