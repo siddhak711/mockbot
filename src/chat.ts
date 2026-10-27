@@ -6,6 +6,7 @@ import { runWithDelegate, runWithDelegateUnlessPlan } from "./agents/stream";
 import { toolsForSpeaker } from "./agents/tool";
 import type { AgentMemoryPort, ComputerPort, ConnectorPort } from "./agents/types";
 import { findSecrets } from "./memory/scrub";
+import { beginLiveTurn } from "./live-turns";
 import { encodeSse, ssePadding } from "./sse";
 import { titleFromMessage, type ConversationStore } from "./store";
 import type { LlmProvider } from "./llm";
@@ -154,6 +155,11 @@ export type ChatTurnOptions = {
   /** Routine and other background runs must not wait for a person. */
   unattended?: boolean;
   signal?: AbortSignal;
+  /**
+   * Keep generating when `signal` aborts because the client went away, such as
+   * a page reload. Only the Stop route (stopLiveTurn) ends the turn then.
+   */
+  detach?: boolean;
   agents?: AgentDirectory;
   memory?: AgentMemoryPort;
   computer?: ComputerPort;
@@ -385,7 +391,12 @@ async function runChatTurn(
   const planText = lastUserText(history);
   const memoryDeps = prepared.deps;
 
-  const { store, provider, approvals, asks, plans, signal } = options;
+  const { store, provider, approvals, asks, plans } = options;
+  const live = beginLiveTurn(conversation.id);
+  const signal =
+    options.detach || !options.signal
+      ? live.signal
+      : AbortSignal.any([options.signal, live.signal]);
   const runLog = new RunLog(store.connection, options.runId);
   const tools = toolsForSpeaker(options.tools, speaker, {
     directory: agents,
@@ -891,6 +902,7 @@ async function runChatTurn(
           await persist(partial, trace);
           await ignoreRunLog(runLog.mark("run.finished", { status: runStatus }));
         } finally {
+          live.end();
           resume?.release();
           close();
         }

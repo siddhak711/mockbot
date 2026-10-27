@@ -200,6 +200,17 @@ export function applyClientEvent(
   return message;
 }
 
+/** The phase a stored, still-running turn is in: the kind of its newest segment. */
+export function phaseFromTrace(trace: MessageTrace | null | undefined): LivePhase {
+  if (!trace?.started) return "start";
+  if (trace.ended) return "end";
+  const last = trace.segments?.at(-1);
+  if (last) return last.type;
+  if (trace.text) return "text";
+  if (trace.tools.length > 0) return "tool";
+  return trace.reasoning ? "reasoning" : "start";
+}
+
 export function phaseFromEvent(event: string): LivePhase | null {
   if (event === "start") return "start";
   if (event === "reasoning") return "reasoning";
