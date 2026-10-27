@@ -16,6 +16,7 @@ import {
   defaultToolSetting,
   detectInput,
   discoverTool,
+  PASTED_OAUTH_UNSUPPORTED_MESSAGE,
   resolveToolSettings,
 } from "../src/connectors/policy";
 import { noteConnectorOutcome } from "../src/connectors/runtime";
@@ -633,7 +634,7 @@ it("passes a saved stdio api key to the child as MCP_PROBE_KEY", async () => {
   expect(result?.content).not.toContain("stdio-secret");
 });
 
-it("creates a pasted oauth connector when the server asks for sign-in", async () => {
+it("refuses pasted oauth connectors instead of saving a made-up token", async () => {
   const server = await startMockMcpServer({ auth: "oauth" });
   try {
     const store = await ConversationStore.open();
@@ -642,22 +643,17 @@ it("creates a pasted oauth connector when the server asks for sign-in", async ()
       provider: new MockProvider({ delayMs: 0 }),
       tools: createDefaultTools({}),
     });
-    const created = await createConnector(
-      jsonRequest({
-        name: "Acme",
-        transport: "http",
-        target: server.url,
-        oauth: true,
-      }),
-    );
-    const createdText = await created.text();
-    expect(created.status, createdText).toBe(201);
-    const body = JSON.parse(createdText) as { connector: { authType?: string; id: string } };
-    expect(body.connector.authType).toBe("oauth");
-    const rejected = await createConnector(
-      jsonRequest({ name: "Acme", transport: "http", target: server.url }),
-    );
-    expect(rejected.status).toBe(400);
+    for (const body of [
+      { name: "Acme", transport: "http", target: server.url, oauth: true },
+      { name: "Acme", transport: "http", target: server.url },
+    ]) {
+      const created = await createConnector(jsonRequest(body));
+      expect(created.status).toBe(400);
+      expect(((await created.json()) as { error: string }).error).toBe(
+        PASTED_OAUTH_UNSUPPORTED_MESSAGE,
+      );
+    }
+    expect(await store.listConnectors()).toEqual([]);
   } finally {
     await server.close();
   }
@@ -709,8 +705,8 @@ it("returns a JSON error when connector creation cannot encrypt a secret", async
       jsonRequest({ name: "Acme", transport: "http", target: oauth.url, oauth: true }),
     );
     const oauthBody = (await pastedOauth.json()) as { error?: string };
-    expect(pastedOauth.status).toBe(500);
-    expect(oauthBody.error).toMatch(/CONNECTOR_SECRET_KEY/);
+    expect(pastedOauth.status).toBe(400);
+    expect(oauthBody.error).toBe(PASTED_OAUTH_UNSUPPORTED_MESSAGE);
 
     const pastedKey = await createConnector(
       jsonRequest({

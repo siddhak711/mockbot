@@ -30,6 +30,9 @@ const DESTRUCTIVE_NAME = /(^|_)(delete|remove|drop)(_|$)/i;
 export const INVALID_TARGET_MESSAGE =
   "That isn't a valid URL or command. Try https://… or npx package-name.";
 
+export const PASTED_OAUTH_UNSUPPORTED_MESSAGE =
+  "Sign-in for pasted servers isn't supported yet; use an API key or a catalog connector.";
+
 export function classifyToolRisk(name: string, hints?: ToolHints): ToolRisk {
   if (hints?.destructiveHint) return "destructive";
   if (hints?.readOnlyHint) return "read";
@@ -242,7 +245,7 @@ export function unreachableMessage(host: string, timedOut: boolean): string {
 }
 
 export function isAuthFailure(message: string): boolean {
-  return /401|unauthorized|invalid_token|access_denied|token expired|token has expired|revoked/i.test(
+  return /\b(?:401|unauthorized|invalid_token|access_denied|token expired|token has expired|revoked)\b/i.test(
     message,
   );
 }

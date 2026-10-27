@@ -46,7 +46,13 @@ export function readCookie(header: string | null, name: string): string | null {
     if (eq === -1) continue;
     if (trimmed.slice(0, eq) !== name) continue;
     const value = trimmed.slice(eq + 1);
-    return value ? decodeURIComponent(value) : null;
+    if (!value) return null;
+    try {
+      return decodeURIComponent(value);
+    } catch {
+      // A malformed escape like %E0 is not a session token we issued.
+      return null;
+    }
   }
   return null;
 }

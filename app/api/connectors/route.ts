@@ -1,7 +1,15 @@
-import { randomBytes } from "node:crypto";
 import { catalogById, catalogIsWired } from "../../../src/connectors/catalog";
 import { composioToolkitForConnector } from "../../../src/connectors/composio/config";
-import { resolveToolSettings, type DiscoveredTool } from "../../../src/connectors/policy";
+import {
+  isHostedRuntime,
+  SECRET_REF_DISABLED_MESSAGE,
+  STDIO_DISABLED_MESSAGE,
+} from "../../../src/connectors/guard";
+import {
+  PASTED_OAUTH_UNSUPPORTED_MESSAGE,
+  resolveToolSettings,
+  type DiscoveredTool,
+} from "../../../src/connectors/policy";
 import { probeConnector } from "../../../src/connectors/probe";
 import {
   parseConnectorInput,
@@ -78,6 +86,14 @@ export async function POST(request: Request): Promise<Response> {
 
   const parsed = parseConnectorInput(body);
   if (!parsed.ok) return Response.json({ error: parsed.error }, { status: 400 });
+  if (record.oauth === true) {
+    return Response.json(
+      { error: PASTED_OAUTH_UNSUPPORTED_MESSAGE, code: "auth" },
+      { status: 400 },
+    );
+  }
+  const hostedError = hostedConnectorError(parsed.value);
+  if (hostedError) return Response.json({ error: hostedError }, { status: 400 });
   const apiKey = typeof record.apiKey === "string" ? record.apiKey : "";
   if (apiKey.length > 2_000)
     return Response.json({ error: "API key is too long." }, { status: 400 });
@@ -126,17 +142,10 @@ export async function POST(request: Request): Promise<Response> {
       return Response.json({ error: "The connection was cancelled." }, { status: 400 });
     }
     if (!probe.ok) {
-      if (record.oauth === true && probe.code === "auth" && probe.auth === "oauth") {
-        const connector = await store.createConnector({
-          ...parsed.value,
-          secretRef: null,
-          secretCipher: await encryptSecret(randomBytes(32).toString("base64url")),
-          authType: "oauth",
-          tools: {},
-        });
+      if (probe.code === "auth" && probe.auth === "oauth") {
         return Response.json(
-          { connector: toPublicConnector(connector), tools: [] },
-          { status: 201 },
+          { error: PASTED_OAUTH_UNSUPPORTED_MESSAGE, code: probe.code },
+          { status: 400 },
         );
       }
       return Response.json({ error: probe.message, code: probe.code }, { status: 400 });
@@ -167,6 +176,14 @@ export async function POST(request: Request): Promise<Response> {
     await listing.catch(() => undefined);
     return connectorCreateFailure(error, request.signal);
   }
+}
+
+/** A hosted deploy never spawns pasted commands or hands out server env secrets. */
+function hostedConnectorError(input: { transport: string; secretRef: string | null }) {
+  if (!isHostedRuntime()) return null;
+  if (input.transport === "stdio") return STDIO_DISABLED_MESSAGE;
+  if (input.secretRef) return SECRET_REF_DISABLED_MESSAGE;
+  return null;
 }
 
 function createCatalogConnector(catalogId: string, _accountLabel: unknown): Response {

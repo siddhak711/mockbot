@@ -1,6 +1,7 @@
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { getDefaultEnvironment, StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { splitCommand, type ConnectorRecord } from "../connectors";
+import { guardedFetch, isHostedRuntime, STDIO_DISABLED_MESSAGE } from "../connectors/guard";
 import { isAbortError } from "../tools/http";
 import { redactSecrets, resolveConnectorSecret } from "./secrets";
 
@@ -49,7 +50,7 @@ async function withClient<T>(
     }
   }
   const client = new Client({ name: "mockbot", version: "0.1.0" });
-  const transport = createTransport(connector, resolved.secret);
+  const transport = createTransport(connector, resolved.secret, env);
   if (transport instanceof StdioClientTransport && transport.stderr) {
     transport.stderr.on("data", () => undefined);
   }
@@ -74,14 +75,24 @@ async function closeClient(
   await client.close().catch(() => undefined);
 }
 
-function createTransport(connector: ConnectorRecord, secret: string | undefined) {
+function createTransport(
+  connector: ConnectorRecord,
+  secret: string | undefined,
+  env: Record<string, string | undefined>,
+) {
+  // A caller-built env must not switch the hosted checks off.
+  const runtimeEnv = isHostedRuntime(process.env) ? process.env : env;
   if (connector.transport === "http") {
     const headers: Record<string, string> = {};
     if (secret) headers.Authorization = `Bearer ${secret}`;
     return new StreamableHTTPClientTransport(new URL(connector.target), {
       requestInit: secret ? { headers } : undefined,
+      fetch: guardedFetch(runtimeEnv),
     });
   }
+  // Backstop for the connector routes: a stdio connector runs a program on
+  // this server, so a hosted deploy never spawns one.
+  if (isHostedRuntime(runtimeEnv)) throw new McpClientError(STDIO_DISABLED_MESSAGE);
   const command = splitCommand(connector.target);
   if (!command) throw new McpClientError("The connector command is not valid.");
   const childEnv = getDefaultEnvironment();

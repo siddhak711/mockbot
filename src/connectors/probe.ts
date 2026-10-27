@@ -2,6 +2,13 @@ import type { ConnectorAuth, ConnectorRecord } from "../connectors";
 import { McpClientError, listMcpTools } from "../mcp/client";
 import { isAbortError } from "../tools/http";
 import {
+  assertPublicTarget,
+  BlockedTargetError,
+  guardedFetch,
+  isHostedRuntime,
+  STDIO_DISABLED_MESSAGE,
+} from "./guard";
+import {
   discoverTool,
   hostFromTarget,
   isAuthFailure,
@@ -52,10 +59,26 @@ export async function probeConnector(input: {
     draft.secretRef = "MCP_PROBE_KEY";
     env.MCP_PROBE_KEY = input.apiKey;
   }
+  // A caller-built env must not switch the hosted checks off.
+  const guardEnv = isHostedRuntime(process.env) ? process.env : env;
+  if (input.transport === "stdio" && isHostedRuntime(guardEnv)) {
+    return { ok: false, code: "unreachable", message: STDIO_DISABLED_MESSAGE, elapsedMs: 0 };
+  }
+  if (input.transport === "http") {
+    try {
+      await assertPublicTarget(input.target, guardEnv);
+    } catch (error) {
+      if (!(error instanceof BlockedTargetError)) throw error;
+      return { ok: false, code: "unreachable", message: error.message, elapsedMs: 0 };
+    }
+  }
+  const peekFetch = guardedFetch(guardEnv);
   try {
     const listed = await listMcpTools(draft, env, input.apiKey ? [input.apiKey] : [], input.signal);
     const peeked =
-      input.transport === "http" ? await peekTransport(input.target, input.signal) : null;
+      input.transport === "http"
+        ? await peekTransport(input.target, peekFetch, input.signal)
+        : null;
     return {
       ok: true,
       transport: input.transport,
@@ -80,7 +103,9 @@ export async function probeConnector(input: {
       return { ok: false, code: "unreachable", message, elapsedMs };
     }
     const peeked =
-      input.transport === "http" ? await peek(input.target, input.signal).catch(() => null) : null;
+      input.transport === "http"
+        ? await peek(input.target, peekFetch, input.signal).catch(() => null)
+        : null;
     const auth = classifyAuth(peeked, message);
     if (input.apiKey && (auth === "apikey" || auth === "oauth" || isAuthFailure(message))) {
       return {
@@ -133,10 +158,11 @@ function classifyAuth(
 
 async function peekTransport(
   url: string,
+  fetcher: typeof fetch,
   signal?: AbortSignal,
 ): Promise<{ status: number; www: string; sse: boolean } | null> {
   try {
-    return await peek(url, signal);
+    return await peek(url, fetcher, signal);
   } catch (error) {
     if (signal?.aborted || isAbortError(error)) throw error;
     return null;
@@ -145,9 +171,10 @@ async function peekTransport(
 
 async function peek(
   url: string,
+  fetcher: typeof fetch,
   signal?: AbortSignal,
 ): Promise<{ status: number; www: string; sse: boolean }> {
-  const response = await fetch(url, { method: "GET", signal, redirect: "manual" });
+  const response = await fetcher(url, { method: "GET", signal, redirect: "manual" });
   return {
     status: response.status,
     www: response.headers.get("www-authenticate") ?? "",

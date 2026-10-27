@@ -1,5 +1,6 @@
 import { Workspace } from "../../../components/workspace";
 import { requirePageUser } from "../../../src/auth/guard";
+import { fixturePreview } from "../../../src/connectors/guard";
 
 function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -22,7 +23,7 @@ export default async function AddConnectorPage({
 }) {
   const user = await requirePageUser();
   const params = await searchParams;
-  const preview = first(params.preview);
+  const preview = fixturePreview(first(params.preview));
   const query = first(params.q) ?? "";
   return (
     <Workspace

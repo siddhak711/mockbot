@@ -1,5 +1,6 @@
 import { requireApiUser } from "../../../../src/auth/guard";
 import { searchCatalog } from "../../../../src/connectors/catalog";
+import { isHostedRuntime, STDIO_DISABLED_MESSAGE } from "../../../../src/connectors/guard";
 import { detectInput, INVALID_TARGET_MESSAGE } from "../../../../src/connectors/policy";
 import { probeConnector } from "../../../../src/connectors/probe";
 import { isAbortError } from "../../../../src/tools/http";
@@ -44,6 +45,12 @@ export async function POST(request: Request): Promise<Response> {
       : detected.kind === "config"
         ? detected.transport!
         : "http";
+  if (transport === "stdio" && isHostedRuntime()) {
+    return Response.json(
+      { kind: detected.kind, code: "invalid", error: STDIO_DISABLED_MESSAGE },
+      { status: 400 },
+    );
+  }
   const target = detected.target;
   try {
     const probe = await probeConnector({
