@@ -4,6 +4,9 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 type Command = { id: string; label: string; run: () => void };
 
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 export function CommandPalette({
   open,
   onClose,
@@ -15,6 +18,9 @@ export function CommandPalette({
 }) {
   const titleId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
   const matches = useMemo(() => {
@@ -32,23 +38,69 @@ export function CommandPalette({
   }, [open]);
 
   useEffect(() => {
+    if (!open) return;
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey) return;
+      const root = dialogRef.current;
+      if (!root) return;
+      const items = [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
+        (el) => el.tabIndex >= 0,
+      );
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (!first || !last) {
+        event.preventDefault();
+        return;
+      }
+      const active = document.activeElement;
+      const inside = active instanceof Node && root.contains(active);
+      if (!inside || (event.shiftKey && active === first)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      // Give focus back to what opened the palette, unless a command moved it elsewhere.
+      const now = document.activeElement;
+      const lost = !now || now === document.body || Boolean(dialogRef.current?.contains(now));
+      if (lost && opener?.isConnected) opener.focus();
+    };
+  }, [open]);
+
+  useEffect(() => {
     setIndex(0);
   }, [query]);
 
   if (!open) return null;
 
   return (
-    <div className="command-modal">
+    <div
+      className="command-modal"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
       <div
+        ref={dialogRef}
         className="command-window"
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
         onKeyDown={(event) => {
-          if (event.key === "Escape") {
-            event.preventDefault();
-            onClose();
-          } else if (event.key === "ArrowDown") {
+          if (event.key === "ArrowDown") {
             event.preventDefault();
             setIndex((current) => Math.min(matches.length - 1, current + 1));
           } else if (event.key === "ArrowUp") {

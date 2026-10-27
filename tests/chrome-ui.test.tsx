@@ -1,7 +1,9 @@
 // @vitest-environment happy-dom
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import { useState } from "react";
 import { AgentPanel } from "../components/agent-panel";
+import { CommandPalette } from "../components/command-palette";
 import { Sidebar } from "../components/sidebar";
 import { SidePane } from "../components/side-pane";
 import { ThreadActions } from "../components/thread-actions";
@@ -215,4 +217,59 @@ it("unlocks the new-agent dialog and shows the error when create throws", async 
   fireEvent.keyDown(document, { key: "Escape" });
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(screen.getByRole("button", { name: "Send" }).closest("[inert]")).toBeNull();
+});
+
+function PaletteHarness() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)}>
+        Open palette
+      </button>
+      <CommandPalette
+        open={open}
+        onClose={() => setOpen(false)}
+        commands={[{ id: "routines", label: "Routines", run: () => {} }]}
+      />
+    </>
+  );
+}
+
+it("closes the command palette from Escape anywhere and the backdrop, and restores focus", () => {
+  render(<PaletteHarness />);
+  const opener = screen.getByRole("button", { name: "Open palette" });
+
+  opener.focus();
+  fireEvent.click(opener);
+  expect(screen.getByRole("dialog")).toBeTruthy();
+  document.body.focus();
+  fireEvent.keyDown(document, { key: "Escape" });
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(document.activeElement).toBe(opener);
+
+  fireEvent.click(opener);
+  fireEvent.mouseDown(screen.getByRole("dialog"));
+  expect(screen.getByRole("dialog")).toBeTruthy();
+  fireEvent.mouseDown(document.querySelector(".command-modal") as Element);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(document.activeElement).toBe(opener);
+});
+
+it("keeps Tab inside the command palette", () => {
+  render(<PaletteHarness />);
+  const opener = screen.getByRole("button", { name: "Open palette" });
+  fireEvent.click(opener);
+  const search = screen.getByRole("textbox", { name: "Command" });
+  const option = screen.getByRole("option", { name: "Routines" });
+
+  option.focus();
+  fireEvent.keyDown(document, { key: "Tab" });
+  expect(document.activeElement).toBe(search);
+
+  fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+  expect(document.activeElement).toBe(option);
+
+  opener.focus();
+  fireEvent.keyDown(document, { key: "Tab" });
+  expect(document.activeElement).toBe(search);
 });
