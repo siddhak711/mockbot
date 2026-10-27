@@ -1,5 +1,4 @@
 import { LEAD_AGENT_ID } from "./agents/ids";
-import { applyAgentSchema } from "./agents/migration";
 import type {
   ConnectorAuth,
   ConnectorRecord,
@@ -244,7 +243,6 @@ export class ConversationStore {
   private static async fromSql(db: Sql): Promise<ConversationStore> {
     try {
       await migrate(db);
-      await applyAgentSchema(db);
     } catch (error) {
       await db.close();
       throw error;

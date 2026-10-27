@@ -1,7 +1,7 @@
 import type { Sql } from "../db/sql";
 import type { ConversationStore } from "../store";
 import { CronError, nextCron } from "./cron";
-import { ROUTINES_MIGRATION } from "./migration";
+import { ADOPT_OWNERLESS_ROUTINES } from "./migration";
 import type { Routine, RoutineEvent, RoutineRun, RoutineStatus } from "./types";
 import {
   RoutineInputError,
@@ -148,7 +148,7 @@ export class RoutineStore {
   private constructor(private readonly conversations: ConversationStore) {}
 
   static async attach(conversations: ConversationStore): Promise<RoutineStore> {
-    await conversations.connection.exec(ROUTINES_MIGRATION);
+    await conversations.connection.query(ADOPT_OWNERLESS_ROUTINES);
     return new RoutineStore(conversations);
   }
 

@@ -2,7 +2,6 @@ import type { Sql } from "../db/sql";
 import { SYSTEM_PROMPT } from "../llm";
 import type { ConversationStore } from "../store";
 import { LEAD_AGENT_ID, LEAD_AGENT_NAME } from "./ids";
-import { applyAgentSchema } from "./migration";
 import type { Agent, AgentGrant, GrantKind } from "./types";
 
 const NAME_MAX = 48;
@@ -97,7 +96,6 @@ export class AgentDirectory {
   ) {}
 
   static async attach(store: ConversationStore): Promise<AgentDirectory> {
-    await applyAgentSchema(store.connection);
     const directory = new AgentDirectory(store.connection);
     await directory.seedLead();
     return directory;
