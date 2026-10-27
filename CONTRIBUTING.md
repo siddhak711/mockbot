@@ -42,4 +42,4 @@ npm run format:check
 npm run test
 ```
 
-GitHub Actions runs lint, typecheck, the format check, and tests on every push and pull request.
+GitHub Actions runs lint, typecheck, the format check, and tests on every push and pull request. A separate `e2e-smoke` workflow signs in against the Vercel deployment for that commit. It is the check to require on `main`. See the Smoke test section in the README for the GitHub secrets and the Vercel bypass secret.
