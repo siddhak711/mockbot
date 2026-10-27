@@ -28,6 +28,32 @@ Reviewers check every pull request against these invariants. A change that break
 - Chat, routines, and delegate append to the target agent's thread. They do not open a second conversation for the same agent.
 - Screenshots and recordings in the pull request are evidence. If they show a conversation list, a New chat control, a rename control, a delete control, or an empty "Start a conversation" state, the reviewer flags the pull request.
 
+## 4. No mock providers outside tests
+
+- No mock, stub, or fake provider may be reachable outside tests unless it meets the three conditions below.
+- A missing credential (token, API key, or env var) must fail loudly with a visible error in the UI and the tool result. It never falls back silently to mock data.
+- A mock outside tests is allowed only if all three hold:
+  1. It sits behind an explicit opt-in flag such as `MOCK_<SERVICE>=1`, off by default.
+  2. It hard-fails when that flag is set in a production build (`NODE_ENV=production` or `VERCEL_ENV=production`).
+  3. Its output is labeled as mock to the user.
+- A silent fallback to mock data when a credential is missing always blocks the pull request.
+- Every review greps the non-test code the pull request touches for `mock`, `stub`, and `fake`, for example `rg -n -i "mock|stub|fake" src app components --glob '!**/*.test.*' --glob '!tests/**' --glob '!e2e/**'`, and states the result in the review. A hit on a reachable code path blocks the pull request unless it meets those conditions.
+
+## 5. Retry rule
+
+Every retry of failed work must change something: the failure evidence, the worker, a fresh context, or the plan. Running the same attempt again unchanged is not a retry.
+
+1. Attempt 2: the same worker, given the failure evidence.
+2. Attempt 3: a fresh context.
+3. After attempt 3: change the plan.
+
+## 6. Tool credentials in production
+
+- Every tool declares its credential source: an env var, or per-user OAuth.
+- A pull request that adds or changes a tool lists each tool's credential source and confirms that production provides it. For env vars, paste `vercel env ls --environment production` names only, never values. For OAuth, the proof is a test log or live API output from a real call returning real data, with tokens redacted. A screenshot or screen recording is optional, never required. Screenshot/recording proof paused per Siddha, Oct 26, 2026.
+- A tool whose credential production does not provide must fail visibly. It never falls back to mock data (see section 4).
+- GitHub: production uses per-user GitHub OAuth. `GITHUB_TOKEN` is for local development only and is not a production credential. Until per-user GitHub OAuth exists in production, the GitHub tool must fail visibly in production with the message `GitHub not connected`.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 ## This is NOT the Next.js you know
