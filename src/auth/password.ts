@@ -15,6 +15,9 @@ const NAME_MAX = 80;
  */
 const DUMMY_PASSWORD_HASH = "$2b$12$cXHn4SWeiDHpwnVl7OpNwOf12f/jMCDR63MQsr2yvvar6cvC1L.IO";
 
+export const SIGN_UP_FAILED =
+  "Couldn't sign up with that email and password. If you already have an account, sign in.";
+
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export class PasswordAuthError extends Error {
@@ -118,9 +121,15 @@ export async function signUpWithPassword(
     const session = await createDatabaseSession(db, row.id);
     return { user: mapUser(row), ...session };
   } catch (error) {
-    if (isUniqueViolation(error)) {
-      throw new PasswordAuthError("An account with that email already exists.", 409);
-    }
+    if (!isUniqueViolation(error)) throw error;
+  }
+  // The email is taken. Saying "already exists" would confirm the account to
+  // anyone probing emails, so treat this like a sign-in: the right password
+  // signs the owner in, and anything else gets a reply that names no account.
+  try {
+    return await signInWithPassword(db, { email, password });
+  } catch (error) {
+    if (error instanceof PasswordAuthError) throw new PasswordAuthError(SIGN_UP_FAILED, 400);
     throw error;
   }
 }

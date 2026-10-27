@@ -11,6 +11,8 @@ import { googleCallbackUrl } from "../src/auth/google";
 import { resetAppContext, setAppContext } from "../src/context";
 import { MockProvider } from "../src/llm";
 import type { LlmMessage } from "../src/types";
+import { SIGN_UP_FAILED } from "../src/auth/password";
+import { passwordAttempts } from "../src/auth/rate-limit";
 import { prepareUser } from "../src/auth/scope";
 import { AgentDirectory } from "../src/agents/directory";
 import { SseParser } from "../src/sse";
@@ -28,6 +30,7 @@ afterEach(async () => {
   else process.env.GOOGLE_CLIENT_ID = originalGoogleId;
   if (originalGoogleSecret === undefined) delete process.env.GOOGLE_CLIENT_SECRET;
   else process.env.GOOGLE_CLIENT_SECRET = originalGoogleSecret;
+  passwordAttempts.reset();
   await resetAppContext();
 });
 
@@ -129,7 +132,19 @@ it("signs up, stores a bcrypt hash, and restores the session from the cookie", a
       password: "another strong password",
     }),
   );
-  expect(duplicate.status).toBe(409);
+  expect(duplicate.status).toBe(400);
+  const duplicateError = ((await duplicate.json()) as { error: string }).error;
+  expect(duplicateError).not.toMatch(/exists/i);
+  expect(duplicateError).toBe(SIGN_UP_FAILED);
+
+  const ownerAgain = await signInPassword(
+    passwordRequest({
+      intent: "sign-up",
+      email: "ada@example.com",
+      password: "correct horse battery",
+    }),
+  );
+  expect(ownerAgain.status).toBe(200);
 
   const short = await signInPassword(
     passwordRequest({ intent: "sign-up", email: "short@example.com", password: "short" }),
