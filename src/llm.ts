@@ -1,4 +1,5 @@
 import { planMockTurn } from "./memory/mock-turn";
+import { isProductionBuild, mockEnabled } from "./mock-gate";
 import { SYSTEM_PROMPT } from "./memory/prompt";
 import type { LlmMessage, LlmStreamEvent, ProviderId } from "./types";
 
@@ -622,32 +623,61 @@ function httpBaseUrl(value: string | undefined): string | undefined {
 }
 
 export function selectProvider(env: Record<string, string | undefined> = process.env): LlmProvider {
-  const name = (env.LLM_PROVIDER ?? "mock").trim().toLowerCase() || "mock";
+  const name = env.LLM_PROVIDER?.trim().toLowerCase() ?? "";
   const mock = () =>
     new MockProvider({
       delayMs: numberFrom(env.MOCK_STREAM_DELAY_MS, 60),
       chunkSize: numberFrom(env.MOCK_CHUNK_SIZE, 8),
     });
-  if (name === "mock") return mock();
+  try {
+    if (name === "mock" || (!name && mockEnabled(env, "LLM"))) {
+      if (isProductionBuild(env)) {
+        return new UnconfiguredProvider(
+          "LLM_PROVIDER=mock is not allowed in a production build. Set LLM_PROVIDER=openai and LLM_API_KEY.",
+        );
+      }
+      return mock();
+    }
+  } catch (error) {
+    return new UnconfiguredProvider(error instanceof Error ? error.message : String(error));
+  }
+  if (!name) {
+    return new UnconfiguredProvider(
+      "No model is configured: LLM_PROVIDER is not set. Set LLM_PROVIDER=openai and LLM_API_KEY, or LLM_PROVIDER=mock (or MOCK_LLM=1) for a labeled mock outside production.",
+    );
+  }
   const apiKey = env.LLM_API_KEY?.trim() ?? "";
   if (!apiKey) {
-    throw new Error(
+    return new UnconfiguredProvider(
       name === "openai"
-        ? "LLM_API_KEY is required when LLM_PROVIDER=openai"
-        : `Unknown LLM_PROVIDER "${name}". Expected "mock" or "openai".`,
+        ? "LLM_API_KEY is required when LLM_PROVIDER=openai."
+        : `Unknown LLM_PROVIDER "${name}". Expected "openai", or "mock" outside production.`,
     );
   }
   const configured = env.LLM_BASE_URL?.trim();
   const baseUrl = httpBaseUrl(configured);
   if (configured && !baseUrl) {
-    console.warn(
-      "LLM is using a mock implementation because LLM_BASE_URL is not a valid http(s) URL.",
-    );
-    return mock();
+    return new UnconfiguredProvider("LLM_BASE_URL is not a valid http(s) URL.");
   }
   return new OpenAiCompatibleProvider({
     apiKey,
     baseUrl: baseUrl || DEFAULT_OPENAI_BASE_URL,
     model: env.LLM_MODEL?.trim() || DEFAULT_OPENAI_MODEL,
   });
+}
+
+/**
+ * Stands in when the model is missing or misconfigured. Every turn fails with
+ * the reason, so the chat shows an error instead of a quiet mock reply.
+ */
+export class UnconfiguredProvider implements LlmProvider {
+  readonly id = "unconfigured" as const;
+  readonly model = null;
+
+  constructor(readonly reason: string) {}
+
+  // eslint-disable-next-line require-yield
+  async *stream(): AsyncIterable<LlmStreamEvent> {
+    throw new Error(this.reason);
+  }
 }

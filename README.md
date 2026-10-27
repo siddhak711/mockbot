@@ -18,7 +18,7 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). A visitor who is not signed in sees the Daylight landing page and can join the waitlist in the browser. The waitlist does not call a server. Sign in at [http://localhost:3000/login](http://localhost:3000/login) to open the workspace on the same address. With no API key, chat uses the built-in mock provider. Each mock turn streams a start token, a short reasoning trace, the answer, and an end token (`finish stop`). The live mock does not invent a connector tool call. Asking it to remember a fact calls `memory_write`. A message that asks for a handoff calls `delegate`. Tool-call cards still render when a stream includes them. The agent's thread and memories are stored in embedded Postgres (PGlite) under `.data/pglite`. A refresh restores that thread, memories, and every streamed phase. The token-by-token animation is live only. Stopping a turn keeps the partial reasoning and answer that have already been saved.
+Open [http://localhost:3000](http://localhost:3000). A visitor who is not signed in sees the Daylight landing page and can join the waitlist in the browser. The waitlist does not call a server. Sign in at [http://localhost:3000/login](http://localhost:3000/login) to open the workspace on the same address. With `LLM_PROVIDER=mock` (and `MOCK_SANDBOX=1` for the computer), chat uses the built-in mock provider. Without a provider configured, chat shows an error instead. Each mock turn streams a start token, a short reasoning trace, the answer, and an end token (`finish stop`). The live mock does not invent a connector tool call. Asking it to remember a fact calls `memory_write`. A message that asks for a handoff calls `delegate`. Tool-call cards still render when a stream includes them. The agent's thread and memories are stored in embedded Postgres (PGlite) under `.data/pglite`. A refresh restores that thread, memories, and every streamed phase. The token-by-token animation is live only. Stopping a turn keeps the partial reasoning and answer that have already been saved.
 
 The first agent is Mockbot, seeded with the original assistant prompt. Create another agent in the sidebar (name, instructions, an optional memory note, and optional computer or connector ids). Select an agent to open that agent's thread. From Mockbot, send:
 
@@ -91,13 +91,13 @@ When a conversation grows past about 60% of `LLM_CONTEXT_TOKENS` (default 8192),
 
 The browser only talks to Mockbot. `LLM_API_KEY` is read on the server and is never sent to the page.
 
-Mock provider (the default):
+Mock provider (opt-in, refused in production builds):
 
 ```bash
-npm run dev
+LLM_PROVIDER=mock npm run dev
 ```
 
-`LLM_PROVIDER` can be omitted or set to `mock`. Leave `LLM_API_KEY` unset.
+`MOCK_LLM=1` does the same. With `LLM_PROVIDER` unset, every chat turn fails with a visible error that names the missing setting. Every mock reply says it is a mock.
 
 OpenAI-compatible provider:
 
@@ -125,7 +125,7 @@ You can put the same variables in `.env.local`. Names are listed in `.env.exampl
 
 ## Tools
 
-The server keeps a tool registry. Each tool has a name, a JSON schema, and an invoke function, in the same shape as an MCP tool. A turn exposes at most 15 tools to the model. `tool_search` is always one of them and finds the rest by name or description. With no keys configured, the tools return mock data and do not touch the network. The live mock provider answers an ordinary message without inventing a tool call. A message that asks for the sandbox computer asks the registry to run the computer tools. Any other model that requests tools still runs them through the registry. Tests can opt the mock provider into a multi-step demo that searches the catalog and then calls another tool.
+The server keeps a tool registry. Each tool has a name, a JSON schema, and an invoke function, in the same shape as an MCP tool. A turn exposes at most 15 tools to the model. `tool_search` is always one of them and finds the rest by name or description. With a key missing, a tool returns an error that names it. `MOCK_WEB=1`, `MOCK_GITHUB=1`, and `MOCK_CALENDAR=1` return labeled mock data instead and do not touch the network. Those flags are refused in production builds (`NODE_ENV=production` or `VERCEL_ENV=production`). The live mock provider answers an ordinary message without inventing a tool call. A message that asks for the sandbox computer asks the registry to run the computer tools. Any other model that requests tools still runs them through the registry. Tests can opt the mock provider into a multi-step demo that searches the catalog and then calls another tool.
 
 Reads run immediately. A tool whose name or action sends, posts, deletes, or pays waits for approval. Creating a calendar event that includes attendees is an invite, so it waits too. The transcript shows an approval card; `POST /api/tools/approvals` with `{ "id", "decision": "approve" | "deny" }` resolves it. Deny, or a stop, skips the action and the model can finish the reply.
 
@@ -135,7 +135,7 @@ Reads run immediately. A tool whose name or action sends, posts, deletes, or pay
 TAVILY_API_KEY=tvly-...
 ```
 
-`web_search` and `web_fetch` call Tavily when `TAVILY_API_KEY` is set. Otherwise they return deterministic mock results and do not touch the network.
+`web_search` and `web_fetch` call Tavily when `TAVILY_API_KEY` is set. Otherwise they return an error, or deterministic labeled mock results with `MOCK_WEB=1`.
 
 ### GitHub
 
@@ -143,11 +143,11 @@ TAVILY_API_KEY=tvly-...
 GITHUB_TOKEN=github_pat_...
 ```
 
-`github` reads issues, pull requests, and file contents when `GITHUB_TOKEN` is set. Otherwise it returns mock data. It does not write to GitHub.
+`github` reads issues, pull requests, and file contents when `GITHUB_TOKEN` is set, in local development only. In a production build it returns `GitHub not connected` until per-user GitHub OAuth exists. Without the token it returns that error, or labeled mock data with `MOCK_GITHUB=1`. It does not write to GitHub.
 
 ### Google Calendar
 
-`google_calendar` can list events or create one. Inviting attendees asks for approval before the event is created. Calendar OAuth is not part of this version. Until that exists, the tool returns mock data and does not call Google. If you already have an access token, `GOOGLE_CALENDAR_ACCESS_TOKEN` uses the Calendar API directly. That variable is optional and is not an OAuth setup.
+`google_calendar` can list events or create one. Inviting attendees asks for approval before the event is created. Calendar OAuth is not part of this version. Until that exists, the tool returns an error, or labeled mock data with `MOCK_CALENDAR=1`, and does not call Google. If you already have an access token, `GOOGLE_CALENDAR_ACCESS_TOKEN` uses the Calendar API directly. That variable is optional and is not an OAuth setup.
 
 ## Connectors
 
@@ -209,7 +209,7 @@ node scripts/mock-mcp-server.mjs
 
 Each agent has one computer. The current build has a single implicit agent, so every conversation shares that computer. The browser only talks to Mockbot. `DAYTONA_API_KEY` stays on the server.
 
-`list`, `read`, `write`, and `exec` are registered with the tool registry. With no key, the computer is an in-process mock. It can list, read, write, and run a small set of commands (`echo`, `cat`, `ls`, `pwd`, `sleep`, `printenv`). It does not read the host filesystem and it does not start a host shell. Ask the mock model to create a file and print it:
+`list`, `read`, `write`, and `exec` are registered with the tool registry. With no key, the tools return an error that names `DAYTONA_API_KEY`, and the Computer pane shows the same message. With `MOCK_SANDBOX=1` (refused in production builds), the computer is an in-process mock whose output is labeled mock. It can list, read, write, and run a small set of commands (`echo`, `cat`, `ls`, `pwd`, `sleep`, `printenv`). It does not read the host filesystem and it does not start a host shell. Ask the mock model to create a file and print it:
 
 > Create a file named hello.txt that says hello from the sandbox, read it back, and run a command that prints it.
 
@@ -302,6 +302,18 @@ The same form is on the Routines page.
 - `PATCH /api/routines/:id` with `{ "status": "paused" }` or `{ "status": "active" }` pauses or resumes it.
 - `POST /api/routines/events` with `{ "name", "payload": "optional" }` stores an event and schedules one run for each active routine listening for that name.
 
+## Smoke test
+
+`npm run test:e2e` drives a real browser against a running app. It does not stub Auth.js. With `SMOKE_BASE_URL` unset, Playwright starts `npm run dev` on `127.0.0.1:3000` with a scratch data directory and the labeled mock model (`LLM_PROVIDER=mock`), and uses a local throwaway smoke account. To test a deployment instead, point `SMOKE_BASE_URL` at it and set `SMOKE_TEST_EMAIL` and `SMOKE_TEST_PASSWORD` (at least 10 characters).
+
+The Playwright global setup calls `POST /api/auth/password` with `intent: "sign-up"`, the same handler as **Create an account**. That inserts the user into whatever database that server uses (embedded PGlite locally, Neon on Vercel). There is no separate seed script and no SQL to run. If the email already exists, setup signs in with the same password instead. If that password is wrong, delete the user or change `SMOKE_TEST_PASSWORD` to the password already stored for that email.
+
+The test then signs in through the login form, checks that the sidebar lists the agent with no New chat action, checks that the sidebar footer shows that email, logs out, and checks that `/` sends an anonymous visitor back to `/login`. A second spec (local dev server only) creates a fresh account, sends a message to the agent, and checks that it is still in that agent's one thread after a reload. Later connector and run-view specs can sit next to `e2e/smoke.spec.ts` and reuse the same account.
+
+Preview URLs and `https://mockbot-jet.vercel.app` are covered by Vercel Authentication. For those hosts, set `VERCEL_AUTOMATION_BYPASS_SECRET` to the project's Protection Bypass for Automation secret. The test sends it as `x-vercel-protection-bypass`.
+
+GitHub Actions workflow `e2e-smoke` runs this on pull requests against that commit's preview deployment, and on `main` against that commit's production deployment. The job name is `e2e-smoke`. The status check in a ruleset is `e2e-smoke / e2e-smoke`.
+
 ## Checks
 
 ```bash
@@ -311,4 +323,4 @@ npm run format:check
 npm test
 ```
 
-`npm run format` rewrites files with Prettier. GitHub Actions runs lint, typecheck, the format check, and tests on every push and pull request.
+`npm run format` rewrites files with Prettier. GitHub Actions runs lint, typecheck, the format check, and tests on every push and pull request. The deployment smoke test is the separate `e2e-smoke` workflow, not part of `npm test`.

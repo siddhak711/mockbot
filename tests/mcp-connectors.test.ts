@@ -197,7 +197,7 @@ it("rejects secret references that do not start with MCP_", async () => {
   setAppContext({
     store,
     provider: new MockProvider({ delayMs: 0 }),
-    tools: createDefaultTools({}),
+    tools: createDefaultTools(process.env),
   });
   try {
     for (const secretRef of ["LLM_API_KEY", "GITHUB_TOKEN", "TAVILY_API_KEY", "PATH"]) {
@@ -249,7 +249,7 @@ it("keeps a connector secret out of the prompt, logs, traces, and client respons
   const provider = new RecordingProvider("demo_echo");
   try {
     const store = await ConversationStore.open();
-    setAppContext({ store, provider, tools: createDefaultTools({}) });
+    setAppContext({ store, provider, tools: createDefaultTools(process.env) });
     const created = await addConnector({
       name: "Demo",
       transport: "http",
@@ -288,7 +288,7 @@ it("drops a removed connector's tools on the next turn and keeps the built-ins",
   const provider = new RecordingProvider("demo_echo");
   try {
     const store = await ConversationStore.open();
-    setAppContext({ store, provider, tools: createDefaultTools({}) });
+    setAppContext({ store, provider, tools: createDefaultTools(process.env) });
     const created = await addConnector({
       name: "Demo",
       transport: "http",
@@ -340,7 +340,7 @@ it("drops a disabled connector's tools on the next turn", async () => {
   const provider = new RecordingProvider(null);
   try {
     const store = await ConversationStore.open();
-    setAppContext({ store, provider, tools: createDefaultTools({}) });
+    setAppContext({ store, provider, tools: createDefaultTools(process.env) });
     const created = await addConnector({
       name: "Demo",
       transport: "http",
@@ -374,7 +374,7 @@ it("calls the mock server from the live mock provider and stops after removal", 
     setAppContext({
       store,
       provider: new MockProvider({ delayMs: 0, chunkSize: 80 }),
-      tools: createDefaultTools({}),
+      tools: createDefaultTools(process.env),
     });
     const created = await addConnector({
       name: "Demo",
@@ -428,7 +428,7 @@ it("passes only the referenced secret into a stdio server", async () => {
   process.env.MCP_DEMO_TOKEN = DEMO_TOKEN;
   const provider = new RecordingProvider("demo_env_probe");
   const store = await ConversationStore.open();
-  setAppContext({ store, provider, tools: createDefaultTools({}) });
+  setAppContext({ store, provider, tools: createDefaultTools(process.env) });
   const script = join(process.cwd(), "scripts/mock-mcp-server.mjs");
   await addConnector({
     name: "Demo",
@@ -455,7 +455,7 @@ it("does not invent a tool call for an ordinary mock message", async () => {
     setAppContext({
       store,
       provider: new MockProvider({ delayMs: 0, chunkSize: 40 }),
-      tools: createDefaultTools({}),
+      tools: createDefaultTools(process.env),
     });
     await addConnector({ name: "Demo", transport: "http", target: server.url });
     const events = await readSse(await chat("Say hello"));
@@ -587,7 +587,7 @@ it("does not save a connector when the request is aborted while another connecto
     setAppContext({
       store,
       provider: new MockProvider({ delayMs: 0 }),
-      tools: createDefaultTools({}),
+      tools: createDefaultTools(process.env),
     });
     await store.createConnector({
       name: "Existing",
