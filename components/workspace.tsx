@@ -24,7 +24,13 @@ import {
   memoriesAfterAgentSwitch,
 } from "../src/memory/panel-state";
 import { SseParser } from "../src/sse";
-import { applyClientEvent, emptyTrace, phaseFromEvent, streamedWeight } from "../src/trace";
+import {
+  applyClientEvent,
+  emptyTrace,
+  phaseFromEvent,
+  phaseFromTrace,
+  streamedWeight,
+} from "../src/trace";
 import { ComputerUnavailableError, fetchComputerSnapshot } from "../src/sandbox/refresh";
 import type { ComputerSnapshot } from "../src/sandbox/types";
 import type { RuntimeStatusView } from "../src/token-stream";
@@ -50,6 +56,8 @@ function isAbort(error: unknown): boolean {
 }
 
 const RESUME_POLL_MS = 500;
+/** How often a reloaded page re-reads a reply that is still generating. */
+const LIVE_POLL_MS = 400;
 /** About ten minutes, the longest a resumed turn's tools may run. */
 const RESUME_POLL_ATTEMPTS = 1200;
 
@@ -88,6 +96,8 @@ export function Workspace({
   const [streaming, setStreaming] = useState(false);
   // A paused turn running again after a decision made with no live stream.
   const [resuming, setResuming] = useState(false);
+  /** A conversation whose reply kept generating on the server after this page loaded. */
+  const [followId, setFollowId] = useState<string | null>(null);
   const resumingRef = useRef(false);
   const [livePhase, setLivePhase] = useState<LivePhase | null>(null);
   const [alert, setAlert] = useState<SpriteAlert | null>(null);
@@ -187,8 +197,10 @@ export function Workspace({
         const data = (await response.json()) as {
           conversation: Conversation;
           messages: Message[];
+          running?: boolean;
         };
         applyThread(data.conversation, data.messages, "c");
+        if (data.running && !abortRef.current) setFollowId(data.conversation.id);
         return true;
       } catch {
         return false;
@@ -200,11 +212,12 @@ export function Workspace({
   const loadAgentConversation = useCallback(
     async (agentId: string) => {
       const request = ++agentLoadRequest.current;
-      let data: { conversation: Conversation; messages: Message[] } | null = null;
+      type Thread = { conversation: Conversation; messages: Message[]; running?: boolean };
+      let data: Thread | null = null;
       try {
         const response = await fetch(`/api/agents/${encodeURIComponent(agentId)}/conversation`);
         if (response.ok) {
-          data = (await response.json()) as { conversation: Conversation; messages: Message[] };
+          data = (await response.json()) as Thread;
         }
       } catch {
         data = null;
@@ -220,6 +233,7 @@ export function Workspace({
         return;
       }
       applyThread(data.conversation, data.messages, "agent");
+      if (data.running && !abortRef.current) setFollowId(data.conversation.id);
     },
     [applyThread, releaseApprovalLock],
   );
@@ -440,6 +454,57 @@ export function Workspace({
     return null;
   }
 
+  // After a reload mid-reply the server is still generating. Lock the composer,
+  // show Stop, and re-read the thread until the turn ends.
+  useEffect(() => {
+    if (!followId) return;
+    const id = followId;
+    let cancelled = false;
+    setStreaming(true);
+    void (async () => {
+      let finished = false;
+      try {
+        while (!cancelled) {
+          await wait(LIVE_POLL_MS);
+          if (cancelled || activeIdRef.current !== id) return;
+          const response = await fetch(`/api/conversations/${id}`);
+          if (cancelled || activeIdRef.current !== id) return;
+          if (!response.ok) return;
+          const data = (await response.json()) as {
+            conversation: Conversation;
+            messages: Message[];
+            running?: boolean;
+          };
+          if (cancelled || activeIdRef.current !== id) return;
+          setMessages(data.messages);
+          setActivities(activitiesFromMessages(data.messages));
+          const last = data.messages.at(-1);
+          setLivePhase(last?.role === "assistant" ? phaseFromTrace(last.trace) : "start");
+          if (!data.running) {
+            finished = true;
+            return;
+          }
+        }
+      } finally {
+        if (!cancelled) {
+          setStreaming(false);
+          setLivePhase(null);
+          setFollowId(null);
+          if (finished) {
+            void refreshAgents();
+            void refreshMemories();
+            void refreshComputer();
+          }
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+      setStreaming(false);
+      setLivePhase(null);
+    };
+  }, [followId, refreshAgents, refreshMemories, refreshComputer]);
+
   async function reloadKeepingLonger(id: string) {
     releaseApprovalLock();
     let data: { conversation: Conversation; messages: Message[] };
@@ -571,6 +636,8 @@ export function Workspace({
           conversationId: conversationId ?? undefined,
           agentId: activeAgentId,
           ...(options?.plan ? { plan: true } : {}),
+          // Keep generating if this page reloads. Stop goes through /api/chat/stop.
+          detach: true,
         }),
         signal: controller.signal,
       });
@@ -1004,6 +1071,14 @@ export function Workspace({
         activity.state === "approval" || activity.state === "ask" || activity.state === "plan",
     );
     if (pending.length > 0) setActivities((current) => activitiesAfterStop(current));
+    const conversationId = activeIdRef.current;
+    if (conversationId) {
+      void fetch("/api/chat/stop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversationId }),
+      });
+    }
     abortRef.current?.abort();
     stopDecision(decidingRef);
     setDecidingId(null);
